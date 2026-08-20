@@ -196,14 +196,16 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB BILANCIO -->
       <div id="tabBilancio" class="tab-content">
         <div class="panel">
-          <div class="panel-title">📑 BILANCIO / CONTO ECONOMICO</div>
-          <div class="empty-state">
-            <div class="ic">🚧</div>
-            <p>In lavorazione</p>
-            <div style="font-size:11px;color:var(--dim);margin-top:10px;max-width:480px;margin-left:auto;margin-right:auto;text-transform:none;letter-spacing:0;">
-              I dati di bilancio (ricavi, utili, margini) su Yahoo Finance richiedono un endpoint diverso da quello dei prezzi, con un sistema di autenticazione che Yahoo cambia spesso e blocca facilmente dai server. Lo svilupperemo come modulo separato per non rischiare di rompere il resto del sito se Yahoo cambia qualcosa.
-            </div>
+          <div class="panel-title">📑 BILANCIO / CONTO ECONOMICO
+            <button class="btn primary" style="font-size:10px;" onclick="loadFundamentals()">📥 CARICA DATI</button>
           </div>
+          <div id="fundStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;">Dati forniti da Alpha Vantage — premi CARICA DATI (max ~5 richieste/minuto sul piano gratuito).</div>
+          <div id="fundCardsWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"></div>
+          <div style="height:240px;margin-top:6px;"><canvas id="fundChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📋 CONTO ECONOMICO E STATO PATRIMONIALE PER ANNO</div>
+          <div id="fundTableWrap" style="overflow-x:auto;"></div>
         </div>
       </div>
     </div>
@@ -749,6 +751,106 @@ window.renderRisk=function(){
     card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b")+
     card("Beta"+(BENCH?" vs "+BENCH.ticker:""), beta!=null?beta.toFixed(2):"--", beta==null?"var(--dim)":Math.abs(beta-1)<0.2?"#ffd23f":beta>1?"#ff9f1c":"#00d4b8");
 };
+
+// ── BILANCIO (Alpha Vantage) ────────────────────────────────────────
+let fundChartObj=null;
+async function fetchFundamental(ticker,statement){
+  const res=await fetch(`/.netlify/functions/fundamentals?ticker=${encodeURIComponent(ticker)}&statement=${statement}`);
+  const data=await res.json();
+  if(data.error) throw new Error(data.error);
+  if(data.Note || data.Information) throw new Error(data.Note||data.Information); // limite chiamate Alpha Vantage
+  return data;
+}
+function numOrNull(v){ if(v==null||v==="None") return null; const n=parseFloat(v); return isNaN(n)?null:n; }
+
+window.loadFundamentals=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  el("fundStatus").textContent="⏳ Scarico dati di bilancio (3 richieste ad Alpha Vantage)...";
+  try{
+    const [income,balance,cashflow]=await Promise.all([
+      fetchFundamental(STOCK.ticker,"income"),
+      fetchFundamental(STOCK.ticker,"balance"),
+      fetchFundamental(STOCK.ticker,"cashflow")
+    ]);
+    const incReports=(income.annualReports||[]).slice(0,8);
+    const balReports=(balance.annualReports||[]).slice(0,8);
+    const cfReports=(cashflow.annualReports||[]).slice(0,8);
+    if(incReports.length===0) throw new Error("Nessun dato di bilancio disponibile per questo ticker su Alpha Vantage");
+
+    const rows=incReports.map((inc,i)=>{
+      const bal=balReports[i]||{}, cf=cfReports[i]||{};
+      const revenue=numOrNull(inc.totalRevenue), netIncome=numOrNull(inc.netIncome);
+      const opCF=numOrNull(cf.operatingCashflow), capex=numOrNull(cf.capitalExpenditures);
+      return {
+        year: inc.fiscalDateEnding,
+        revenue, netIncome,
+        netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
+        ebitda: numOrNull(inc.ebitda),
+        totalAssets: numOrNull(bal.totalAssets),
+        totalEquity: numOrNull(bal.totalShareholderEquity),
+        totalLiab: numOrNull(bal.totalLiabilities),
+        fcf: (opCF!=null&&capex!=null)?(opCF+capex):null // capex è già negativo in Alpha Vantage
+      };
+    }).reverse(); // dal più vecchio al più recente
+
+    renderFundamentals(rows);
+    el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker}`;
+  }catch(err){
+    el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
+  }
+};
+
+function fmtBig(v){
+  if(v==null) return "--";
+  const abs=Math.abs(v);
+  if(abs>=1e9) return (v/1e9).toFixed(2)+" Mld";
+  if(abs>=1e6) return (v/1e6).toFixed(1)+" Mln";
+  return v.toFixed(0);
+}
+
+function renderFundamentals(rows){
+  const last=rows[rows.length-1], prev=rows[rows.length-2];
+  const revGrowth = (last&&prev&&prev.revenue) ? ((last.revenue-prev.revenue)/prev.revenue*100) : null;
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("fundCardsWrap").innerHTML=
+    card("Ricavi (ultimo anno)", fmtBig(last?.revenue))+
+    card("Utile Netto (ultimo anno)", fmtBig(last?.netIncome), last?.netIncome>=0?"#00d4b8":"#ff6b6b")+
+    card("Margine Netto", last?.netMargin!=null?last.netMargin.toFixed(1)+"%":"--", last?.netMargin>=15?"#00d4b8":last?.netMargin>=5?"#ffd23f":"#ff6b6b")+
+    card("Crescita Ricavi YoY", revGrowth!=null?fmtPct(revGrowth):"--", revGrowth>=0?"#00d4b8":"#ff6b6b")+
+    card("Free Cash Flow", fmtBig(last?.fcf), last?.fcf>=0?"#00d4b8":"#ff6b6b");
+
+  const ctx=el("fundChart");
+  if(fundChartObj) fundChartObj.destroy();
+  fundChartObj=new Chart(ctx.getContext("2d"),{
+    type:"bar",
+    data:{labels:rows.map(r=>r.year.slice(0,4)),
+      datasets:[
+        {label:"Ricavi",data:rows.map(r=>r.revenue),backgroundColor:"#4fa3ff"},
+        {label:"Utile Netto",data:rows.map(r=>r.netIncome),backgroundColor:rows.map(r=>r.netIncome>=0?"#00d4b8":"#ff6b6b")}
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{x:{ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",callback:v=>fmtBig(v)},grid:{color:"#1e2d45"}}}}
+  });
+
+  let h=`<table><tr><th>Anno</th><th>Ricavi</th><th>Utile Netto</th><th>Margine Netto</th><th>EBITDA</th><th>Attivo Totale</th><th>Patrimonio Netto</th><th>Debiti Totali</th><th>Free Cash Flow</th></tr>`;
+  rows.slice().reverse().forEach(r=>{
+    h+=`<tr>
+      <td style="font-weight:700;">${r.year.slice(0,4)}</td>
+      <td>${fmtBig(r.revenue)}</td>
+      <td style="color:${r.netIncome>=0?'#00d4b8':'#ff6b6b'};">${fmtBig(r.netIncome)}</td>
+      <td style="color:${r.netMargin>=0?'#00d4b8':'#ff6b6b'};">${r.netMargin!=null?r.netMargin.toFixed(1)+'%':'--'}</td>
+      <td>${fmtBig(r.ebitda)}</td>
+      <td>${fmtBig(r.totalAssets)}</td>
+      <td>${fmtBig(r.totalEquity)}</td>
+      <td>${fmtBig(r.totalLiab)}</td>
+      <td style="color:${r.fcf>=0?'#00d4b8':'#ff6b6b'};">${fmtBig(r.fcf)}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  el("fundTableWrap").innerHTML=h;
+}
 </script>
 </body>
 </html>
