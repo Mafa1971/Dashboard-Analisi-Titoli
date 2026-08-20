@@ -147,8 +147,17 @@ document.getElementById("btnLogout").addEventListener("click", () => {
 function el(id) { return document.getElementById(id); }
 
 // ── YAHOO FETCH (stesso proxy Netlify del sito principale) ─────────────
-async function fetchYahoo(ticker, range="max", interval="1d") {
-  const res = await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&range=${range}&interval=${interval}`);
+async function fetchYahoo(ticker, range="max", interval="1d", period1=null, period2=null) {
+  let url = `/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(interval)}`;
+  if (period1 != null && period2 != null) {
+    // Query con date esplicite: forza Yahoo a restituire dati giornalieri reali
+    // anche su archi lunghi, invece di aggregarli automaticamente (bug che
+    // causava solo ~40 punti "trimestrali" invece delle ~2500 sessioni attese.
+    url += `&period1=${period1}&period2=${period2}`;
+  } else {
+    url += `&range=${range}`;
+  }
+  const res = await fetch(url);
   return await res.json();
 }
 
@@ -164,7 +173,11 @@ window.analyzeTicker = async function() {
   el("emptyWrap").style.display = "none";
 
   try {
-    const data = await fetchYahoo(ticker, "max", "1d");
+    const period2 = Math.floor(Date.now() / 1000);
+    const period1 = years < 9999
+      ? period2 - Math.ceil(years * 365.25 * 86400) - 30 * 86400 // piccolo margine
+      : 0; // 0 = dall'inizio dello storico disponibile
+    const data = await fetchYahoo(ticker, "max", "1d", period1, period2);
     const result = data?.chart?.result?.[0];
     if (!result) throw new Error("Nessun dato trovato per questo ticker");
 
@@ -200,6 +213,7 @@ window.analyzeTicker = async function() {
     const firstPrice = closes[0];
     const totalReturn = ((lastPrice-firstPrice)/firstPrice*100);
 
+    el("resultsWrap").style.display = "block"; // deve essere visibile PRIMA di creare il grafico
     el("chartTitle").textContent = `📉 ${ticker} — ${name} (${currency})`;
     renderCandles(dates, opens, highs, lows, closes);
 
@@ -212,7 +226,6 @@ window.analyzeTicker = async function() {
     renderPeriodStats(weekly, monthly, annual);
     renderCycleStats(cycles);
 
-    el("resultsWrap").style.display = "block";
     el("analyzeStatus").textContent = `✅ ${ticker}: ${dates.length} sessioni analizzate (${dates[0].toLocaleDateString("it-IT")} → ${dates[dates.length-1].toLocaleDateString("it-IT")})`;
   } catch(err) {
     el("analyzeStatus").textContent = "❌ Errore: " + err.message;
