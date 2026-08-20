@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FMP — Analizzatore Singolo Titolo</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{--bg:#070d1a;--panel:#111827;--panel2:#1a2030;--line:#1e2d45;--txt:#eef1f7;--dim:#7d8aa3;--gold:#d4a017;--gold2:#f0c040;--green:#00d4b8;--red:#ff6b6b;--blue:#4fa3ff;}
+body{background:var(--bg);color:var(--txt);font-family:'Manrope',sans-serif;font-size:14px;}
+#loginScreen{display:flex;position:fixed;inset:0;background:var(--bg);z-index:999;align-items:center;justify-content:center;flex-direction:column;gap:20px;}
+.logo{font-family:'Syne',sans-serif;font-size:24px;font-weight:800;background:linear-gradient(135deg,var(--gold),var(--gold2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.lcard{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;width:100%;max-width:340px;}
+.lcard label{display:block;font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:6px;text-transform:uppercase;}
+.lcard input{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:11px 14px;font-family:'Manrope',sans-serif;font-size:13px;border-radius:8px;outline:none;margin-bottom:14px;box-sizing:border-box;}
+.btn-login{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border:none;padding:12px;border-radius:10px;font-family:'Manrope',sans-serif;font-weight:800;font-size:13px;cursor:pointer;}
+.err{font-size:11px;color:var(--red);text-align:center;min-height:16px;margin-top:6px;}
+#appContent{display:none;}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap;gap:8px;}
+.hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.btn{padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-family:'Manrope',sans-serif;font-size:11px;font-weight:700;}
+.btn.primary{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border:none;}
+.btn.ghost{background:transparent;}
+main{padding:16px 20px;max-width:1200px;margin:0 auto;padding-bottom:60px;}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;}
+.panel-title{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;}
+.card .v{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;line-height:1;margin-bottom:3px;}
+.card .v2{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--red);margin-top:2px;}
+.card .l{font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;}
+input[type=text],input[type=number]{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-family:'Manrope',sans-serif;font-size:13px;outline:none;}
+select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-size:12px;}
+.empty-state{text-align:center;padding:36px 20px;color:var(--dim);}
+.empty-state .ic{font-size:28px;margin-bottom:8px;}
+.empty-state p{font-size:11px;letter-spacing:1px;text-transform:uppercase;}
+#candleChart{width:100%;height:420px;}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div style="text-align:center;"><div class="logo">FMP ANALYZER</div><div style="font-size:10px;color:var(--dim);letter-spacing:3px;margin-top:4px;">ANALISI SINGOLO TITOLO</div></div>
+  <div class="lcard">
+    <label>Password</label>
+    <input type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn-login" onclick="doLogin()">ACCEDI →</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div id="appContent">
+  <header class="hdr">
+    <div>
+      <div class="logo" style="font-size:17px;">📈 ANALIZZATORE</div>
+      <div style="font-size:9px;color:var(--dim);letter-spacing:2px;margin-top:2px;">MARIN</div>
+    </div>
+    <div class="hdr-right">
+      <span style="font-size:9px;color:var(--dim);" id="hLastUpdate"></span>
+      <button class="btn ghost" id="btnLogout" style="font-size:10px;">ESCI</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="panel">
+      <div class="panel-title">🔍 RICERCA TITOLO</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="tickerInput" placeholder="Es. AAPL, GOOGL, AMZN, ENI.MI" style="width:200px;text-transform:uppercase;" onkeydown="if(event.key==='Enter')analyzeTicker()">
+        <select id="yearsSelect">
+          <option value="5">Ultimi 5 anni</option>
+          <option value="10" selected>Ultimi 10 anni</option>
+          <option value="15">Ultimi 15 anni</option>
+          <option value="20">Ultimi 20 anni</option>
+          <option value="9999">Tutto lo storico</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);">
+          Soglia cicli %
+          <input type="number" id="zigzagThreshold" value="10" min="2" max="40" style="width:60px;">
+        </label>
+        <button class="btn primary" onclick="analyzeTicker()">🔍 ANALIZZA</button>
+      </div>
+      <div id="analyzeStatus" style="margin-top:8px;font-size:11px;min-height:16px;color:var(--gold);"></div>
+    </div>
+
+    <div id="resultsWrap" style="display:none;">
+      <div class="cards" id="heroCards"></div>
+
+      <div class="panel">
+        <div class="panel-title" id="chartTitle">📉 GRAFICO A CANDELE</div>
+        <div id="candleChart"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">📊 RENDIMENTI PER PERIODO</div>
+        <div id="periodStatsWrap"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">🔄 CICLI RIALZO / RIBASSO (zigzag)</div>
+        <div id="cycleStatsWrap"></div>
+      </div>
+    </div>
+
+    <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
+  </main>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────
+// ⚠️ CAMBIA_PASSWORD: sostituisci con la tua password prima di deployare
+const APP_PASSWORD = "MarinAnalyzer2026.";
+const AUTH_KEY = "analyzer_auth_v1";
+
+let chart = null;
+let candleSeries = null;
+
+// ── AUTH ──────────────────────────────────────────────────────────────
+window.doLogin = function() {
+  const pwd = document.getElementById("loginPassword").value;
+  if (pwd === APP_PASSWORD) {
+    try { localStorage.setItem(AUTH_KEY, "1"); } catch(e) {}
+    showApp();
+  } else {
+    document.getElementById("loginErr").textContent = "Password errata.";
+    document.getElementById("loginPassword").value = "";
+  }
+};
+
+function showApp() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("appContent").style.display = "block";
+}
+
+document.getElementById("btnLogout").addEventListener("click", () => {
+  try { localStorage.removeItem(AUTH_KEY); } catch(e) {}
+  document.getElementById("appContent").style.display = "none";
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("loginPassword").value = "";
+});
+
+(function() {
+  try { if (localStorage.getItem(AUTH_KEY) === "1") showApp(); } catch(e) {}
+})();
+
+function el(id) { return document.getElementById(id); }
+
+// ── YAHOO FETCH (stesso proxy Netlify del sito principale) ─────────────
+async function fetchYahoo(ticker, range="max", interval="1d") {
+  const res = await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&range=${range}&interval=${interval}`);
+  return await res.json();
+}
+
+// ── ANALYZE ───────────────────────────────────────────────────────────
+window.analyzeTicker = async function() {
+  const ticker = el("tickerInput").value.trim().toUpperCase();
+  if (!ticker) { alert("Inserisci un ticker"); return; }
+  const years = parseInt(el("yearsSelect").value);
+  const threshold = parseFloat(el("zigzagThreshold").value) || 10;
+
+  el("analyzeStatus").textContent = `⏳ Scarico dati storici per ${ticker}...`;
+  el("resultsWrap").style.display = "none";
+  el("emptyWrap").style.display = "none";
+
+  try {
+    const data = await fetchYahoo(ticker, "max", "1d");
+    const result = data?.chart?.result?.[0];
+    if (!result) throw new Error("Nessun dato trovato per questo ticker");
+
+    const ts = result.timestamp || [];
+    const q = result.indicators?.quote?.[0] || {};
+    const adj = result.indicators?.adjclose?.[0]?.adjclose || null;
+
+    let dates = [], opens = [], highs = [], lows = [], closes = [], volumes = [];
+    for (let i = 0; i < ts.length; i++) {
+      if (q.close[i] == null || q.open[i] == null || q.high[i] == null || q.low[i] == null) continue;
+      dates.push(new Date(ts[i]*1000));
+      opens.push(q.open[i]);
+      highs.push(q.high[i]);
+      lows.push(q.low[i]);
+      closes.push(q.close[i]);
+      volumes.push(q.volume?.[i] || 0);
+    }
+    if (closes.length < 20) throw new Error("Dati insufficienti per questo ticker");
+
+    // Filtra per anni selezionati
+    if (years < 9999) {
+      const cutoff = new Date();
+      cutoff.setFullYear(cutoff.getFullYear() - years);
+      let startIdx = dates.findIndex(d => d >= cutoff);
+      if (startIdx === -1) startIdx = 0;
+      dates = dates.slice(startIdx); opens = opens.slice(startIdx); highs = highs.slice(startIdx);
+      lows = lows.slice(startIdx); closes = closes.slice(startIdx); volumes = volumes.slice(startIdx);
+    }
+
+    const name = result.meta?.longName || result.meta?.shortName || ticker;
+    const currency = result.meta?.currency || "";
+    const lastPrice = closes[closes.length-1];
+    const firstPrice = closes[0];
+    const totalReturn = ((lastPrice-firstPrice)/firstPrice*100);
+
+    el("chartTitle").textContent = `📉 ${ticker} — ${name} (${currency})`;
+    renderCandles(dates, opens, highs, lows, closes);
+
+    const weekly = computePeriodReturns(dates, closes, "week");
+    const monthly = computePeriodReturns(dates, closes, "month");
+    const annual = computePeriodReturns(dates, closes, "year");
+    const cycles = computeCycles(dates, closes, threshold);
+
+    renderHero(ticker, name, lastPrice, currency, totalReturn, dates);
+    renderPeriodStats(weekly, monthly, annual);
+    renderCycleStats(cycles);
+
+    el("resultsWrap").style.display = "block";
+    el("analyzeStatus").textContent = `✅ ${ticker}: ${dates.length} sessioni analizzate (${dates[0].toLocaleDateString("it-IT")} → ${dates[dates.length-1].toLocaleDateString("it-IT")})`;
+  } catch(err) {
+    el("analyzeStatus").textContent = "❌ Errore: " + err.message;
+    el("emptyWrap").style.display = "block";
+  }
+};
+
+// ── CANDLESTICK CHART (lightweight-charts) ─────────────────────────────
+function renderCandles(dates, opens, highs, lows, closes) {
+  const container = el("candleChart");
+  container.innerHTML = "";
+  chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 420,
+    layout: { background: { color: "#111827" }, textColor: "#7d8aa3" },
+    grid: { vertLines: { color: "#1e2d45" }, horzLines: { color: "#1e2d45" } },
+    timeScale: { borderColor: "#1e2d45" },
+    rightPriceScale: { borderColor: "#1e2d45" }
+  });
+  candleSeries = chart.addCandlestickSeries({
+    upColor: "#00d4b8", downColor: "#ff6b6b",
+    borderUpColor: "#00d4b8", borderDownColor: "#ff6b6b",
+    wickUpColor: "#00d4b8", wickDownColor: "#ff6b6b"
+  });
+  const candleData = dates.map((d, i) => ({
+    time: d.toISOString().slice(0,10),
+    open: opens[i], high: highs[i], low: lows[i], close: closes[i]
+  }));
+  candleSeries.setData(candleData);
+  chart.timeScale().fitContent();
+  window.addEventListener("resize", () => { if (chart) chart.applyOptions({ width: container.clientWidth }); });
+}
+
+// ── RENDIMENTI PER PERIODO (settimana / mese / anno) ────────────────────
+function computePeriodReturns(dates, closes, granularity) {
+  const map = new Map(); // key -> ultimo close del periodo
+  for (let i = 0; i < dates.length; i++) {
+    const d = dates[i];
+    let key;
+    if (granularity === "week") {
+      const tmp = new Date(d); tmp.setHours(0,0,0,0);
+      tmp.setDate(tmp.getDate() + 3 - ((tmp.getDay()+6)%7)); // giovedì della settimana ISO
+      const yearStart = new Date(tmp.getFullYear(),0,1);
+      const weekNo = Math.ceil((((tmp-yearStart)/86400000)+1)/7);
+      key = tmp.getFullYear()+"-W"+weekNo;
+    } else if (granularity === "month") {
+      key = d.getFullYear()+"-"+d.getMonth();
+    } else {
+      key = d.getFullYear();
+    }
+    map.set(key, closes[i]); // sovrascrive: resta l'ultimo close del periodo
+  }
+  const vals = [...map.values()];
+  const returns = [];
+  for (let i = 1; i < vals.length; i++) {
+    returns.push((vals[i]-vals[i-1])/vals[i-1]*100);
+  }
+  if (returns.length === 0) return { avg: null, worst: null, best: null, count: 0 };
+  const avg = returns.reduce((a,b)=>a+b,0)/returns.length;
+  const worst = Math.min(...returns);
+  const best = Math.max(...returns);
+  return { avg, worst, best, count: returns.length };
+}
+
+// ── CICLI ZIGZAG (rialzo / ribasso) ──────────────────────────────────────
+function computeZigzagPivots(closes, thresholdPct) {
+  if (closes.length < 2) return [];
+  const pivots = [{ idx: 0, price: closes[0] }];
+  let trend = null; // 'up' | 'down'
+  let extremeIdx = 0, extremePrice = closes[0];
+  for (let i = 1; i < closes.length; i++) {
+    const price = closes[i];
+    if (trend === null) {
+      const changePct = (price - closes[0]) / closes[0] * 100;
+      if (Math.abs(changePct) >= thresholdPct) {
+        trend = changePct > 0 ? "up" : "down";
+        extremeIdx = i; extremePrice = price;
+      }
+      continue;
+    }
+    if (trend === "up") {
+      if (price >= extremePrice) { extremePrice = price; extremeIdx = i; continue; }
+      const retracePct = (extremePrice - price) / extremePrice * 100;
+      if (retracePct >= thresholdPct) {
+        pivots.push({ idx: extremeIdx, price: extremePrice });
+        trend = "down"; extremeIdx = i; extremePrice = price;
+      }
+    } else {
+      if (price <= extremePrice) { extremePrice = price; extremeIdx = i; continue; }
+      const risePct = (price - extremePrice) / extremePrice * 100;
+      if (risePct >= thresholdPct) {
+        pivots.push({ idx: extremeIdx, price: extremePrice });
+        trend = "up"; extremeIdx = i; extremePrice = price;
+      }
+    }
+  }
+  pivots.push({ idx: extremeIdx, price: extremePrice });
+  return pivots;
+}
+
+function computeCycles(dates, closes, thresholdPct) {
+  const pivots = computeZigzagPivots(closes, thresholdPct);
+  const swings = [];
+  for (let i = 1; i < pivots.length; i++) {
+    const a = pivots[i-1], b = pivots[i];
+    const days = Math.round((dates[b.idx]-dates[a.idx])/86400000);
+    const retPct = (b.price-a.price)/a.price*100;
+    if (days <= 0) continue;
+    swings.push({ type: retPct >= 0 ? "up" : "down", days, retPct,
+      from: dates[a.idx], to: dates[b.idx] });
+  }
+  const ups = swings.filter(s=>s.type==="up");
+  const downs = swings.filter(s=>s.type==="down");
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  return {
+    threshold: thresholdPct,
+    totalSwings: swings.length,
+    up: { count: ups.length, avgDays: avg(ups.map(s=>s.days)), avgReturn: avg(ups.map(s=>s.retPct)) },
+    down: { count: downs.length, avgDays: avg(downs.map(s=>s.days)), avgReturn: avg(downs.map(s=>s.retPct)) },
+    swings
+  };
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────
+function renderHero(ticker, name, lastPrice, currency, totalReturn, dates) {
+  const wrap = el("heroCards");
+  const years = ((dates[dates.length-1]-dates[0])/86400000/365.25).toFixed(1);
+  wrap.innerHTML = `
+    <div class="card"><div class="v" style="color:var(--gold);">${currency} ${lastPrice.toFixed(2)}</div><div class="l">Prezzo Attuale</div></div>
+    <div class="card"><div class="v" style="color:${totalReturn>=0?'#00d4b8':'#ff6b6b'};">${totalReturn>=0?'+':''}${totalReturn.toFixed(1)}%</div><div class="l">Rendimento Periodo (${years}y)</div></div>
+    <div class="card"><div class="v">${dates.length}</div><div class="l">Sessioni Analizzate</div></div>
+  `;
+  el("hLastUpdate").textContent = new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+}
+
+function fmtPct(v) { return v==null ? "--" : (v>=0?"+":"")+v.toFixed(2)+"%"; }
+
+function renderPeriodStats(weekly, monthly, annual) {
+  const wrap = el("periodStatsWrap");
+  const row = (label, stats) => `
+    <div class="card">
+      <div class="l" style="margin-bottom:8px;">${label} (${stats.count} periodi)</div>
+      <div class="v" style="color:${stats.avg>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(stats.avg)}</div>
+      <div class="l" style="margin-top:2px;">Rendimento Medio</div>
+      <div class="v2">${fmtPct(stats.worst)}</div>
+      <div class="l" style="margin-top:2px;">Perdita Massima (peggior periodo)</div>
+    </div>`;
+  wrap.innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    ${row("📅 Settimanale", weekly)}
+    ${row("🗓️ Mensile", monthly)}
+    ${row("📆 Annuale", annual)}
+  </div>`;
+}
+
+function renderCycleStats(cycles) {
+  const wrap = el("cycleStatsWrap");
+  if (cycles.totalSwings === 0) {
+    wrap.innerHTML = `<div style="color:var(--dim);font-size:11px;">Nessun ciclo rilevato con soglia ${cycles.threshold}%. Prova ad abbassare la soglia.</div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div style="font-size:11px;color:var(--dim);margin-bottom:12px;">Soglia inversione: <strong style="color:var(--gold);">${cycles.threshold}%</strong> — ${cycles.totalSwings} cicli rilevati sul periodo</div>
+    <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+      <div class="card">
+        <div class="l" style="margin-bottom:8px;color:#00d4b8;">🟢 Ciclo Medio Rialzista</div>
+        <div class="v" style="color:#00d4b8;">${cycles.up.avgDays!=null?Math.round(cycles.up.avgDays)+" gg":"--"}</div>
+        <div class="l" style="margin-top:2px;">Durata Media</div>
+        <div class="v2" style="color:#00d4b8;">${fmtPct(cycles.up.avgReturn)}</div>
+        <div class="l" style="margin-top:2px;">Rendimento Medio (${cycles.up.count} cicli)</div>
+      </div>
+      <div class="card">
+        <div class="l" style="margin-bottom:8px;color:#ff6b6b;">🔴 Ciclo Medio Ribassista</div>
+        <div class="v" style="color:#ff6b6b;">${cycles.down.avgDays!=null?Math.round(cycles.down.avgDays)+" gg":"--"}</div>
+        <div class="l" style="margin-top:2px;">Durata Media</div>
+        <div class="v2" style="color:#ff6b6b;">${fmtPct(cycles.down.avgReturn)}</div>
+        <div class="l" style="margin-top:2px;">Rendimento Medio (${cycles.down.count} cicli)</div>
+      </div>
+    </div>`;
+}
+</script>
+</body>
+</html>
