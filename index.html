@@ -152,16 +152,15 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <div id="tabStagionalita" class="tab-content">
         <div class="panel">
           <div class="panel-title">🔮 FORECAST STAGIONALE (un anno = una linea, come TradingView)</div>
-          <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
-            <label style="font-size:11px;color:var(--dim);">Mostra:</label>
-            <select id="seasonForecastYears" onchange="renderSeasonalForecast()">
-              <option value="5">Ultimi 5 anni</option>
-              <option value="10" selected>Ultimi 10 anni</option>
-              <option value="15">Ultimi 15 anni</option>
-              <option value="20">Ultimi 20 anni</option>
-              <option value="9999">Tutti gli anni disponibili</option>
-            </select>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(5)">Ultimi 5</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(10)">Ultimi 10</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(15)">Ultimi 15</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(20)">Ultimi 20</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(9999)">Tutti</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(0)">Nessuno</button>
           </div>
+          <div id="seasonYearChecks" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
           <div style="height:340px;"><canvas id="seasonForecastChart"></canvas></div>
           <div style="font-size:10px;color:var(--dim);margin:10px 0 6px;">Ogni linea è il rendimento cumulato reale Gen→Dic di quell'anno. L'anno corrente è evidenziato in blu spesso.</div>
           <div id="correlationCardsWrap" style="overflow-x:auto;"></div>
@@ -335,6 +334,7 @@ window.analyzeTicker=async function(){
     if(parsed.closes.length<20) throw new Error("Dati insufficienti per questo ticker");
 
     STOCK={ ticker, ...parsed };
+    SEASON_ALL_YEARS=[]; // forza rigenerazione checkbox anno per il nuovo titolo
 
     const totalReturn=((STOCK.closes[STOCK.closes.length-1]-STOCK.closes[0])/STOCK.closes[0]*100);
 
@@ -580,18 +580,51 @@ const MONTH_NAMES_SHORT=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","
 function yearColor(i){ const hue=Math.round((i*137.508)%360); return `hsl(${hue},65%,58%)`; }
 
 let seasonForecastChartObj=null;
+let SEASON_ALL_YEARS=[]; // anni disponibili, ordinati crescente
+let SEASON_CURRENT_YEAR=null;
+
+function populateSeasonYearChecks(){
+  const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
+  SEASON_ALL_YEARS=Object.keys(byYear).map(Number).sort((a,b)=>a-b);
+  SEASON_CURRENT_YEAR=SEASON_ALL_YEARS[SEASON_ALL_YEARS.length-1];
+  const defaultShow=10; // di default: ultimi 10 anni pre-selezionati
+  const wrap=el("seasonYearChecks");
+  wrap.innerHTML = SEASON_ALL_YEARS.slice().reverse().map((y,idxRev)=>{
+    const idx = SEASON_ALL_YEARS.length-1-idxRev;
+    const checked = idx >= SEASON_ALL_YEARS.length-defaultShow;
+    const isCurrent = y===SEASON_CURRENT_YEAR;
+    return `<label class="chk" style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;">
+      <input type="checkbox" class="seasonYearChk" value="${y}" ${checked?'checked':''} onchange="renderSeasonalForecast()">
+      ${y}${isCurrent?' <span style="color:#2563eb;font-weight:700;">●</span>':''}
+    </label>`;
+  }).join("");
+}
+window.quickSelectYears=function(n){
+  const boxes=document.querySelectorAll(".seasonYearChk");
+  boxes.forEach(b=>{
+    const y=parseInt(b.value);
+    if(n===0) b.checked=false;
+    else if(n>=9999) b.checked=true;
+    else b.checked = y > SEASON_CURRENT_YEAR-n;
+  });
+  renderSeasonalForecast();
+};
+
 window.renderSeasonalForecast=function(){
   if(!STOCK) return;
+  if(SEASON_ALL_YEARS.length===0) populateSeasonYearChecks();
   const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
-  const allYears=Object.keys(byYear).map(Number).sort((a,b)=>a-b);
-  const currentYear=allYears[allYears.length-1];
-  const nShow=parseInt(el("seasonForecastYears").value);
-  const years = nShow>=9999 ? allYears : allYears.slice(Math.max(0,allYears.length-nShow));
+  const years=[...document.querySelectorAll(".seasonYearChk:checked")].map(c=>parseInt(c.value)).sort((a,b)=>a-b);
 
   const datasets=[]; const legendRows=[];
+  if(years.length===0){
+    if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
+    el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun anno selezionato — spunta almeno un anno qui sopra.</div>`;
+    return;
+  }
   years.forEach((y,idx)=>{
     const curve=byYear[y]; if(!curve||curve.length===0) return;
-    const isCurrent = y===currentYear;
+    const isCurrent = y===SEASON_CURRENT_YEAR;
     const data=new Array(366).fill(null);
     curve.forEach(pt=>{ data[pt.doy-1]=parseFloat(pt.cumRet.toFixed(2)); });
     const color = isCurrent ? "#2563eb" : yearColor(idx);
