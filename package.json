@@ -1,0 +1,6 @@
+{
+  "name": "analizzatore-titolo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Analizzatore singolo titolo azionario - candele, rendimenti periodici, cicli rialzo/ribasso"
+}
