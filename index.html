@@ -151,6 +151,22 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB STAGIONALITA -->
       <div id="tabStagionalita" class="tab-content">
         <div class="panel">
+          <div class="panel-title">🔮 FORECAST STAGIONALE (overlay multi-periodo)</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <label class="chk"><input type="checkbox" class="fcYear" value="current" checked onchange="renderSeasonalForecast()"> <span style="color:#ff3d71;">■</span> Anno corrente</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="1" onchange="renderSeasonalForecast()"> <span style="color:#c0392b;">■</span> 1 anno</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="3" checked onchange="renderSeasonalForecast()"> <span style="color:#ff9f1c;">■</span> 3 anni</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="5" onchange="renderSeasonalForecast()"> <span style="color:#f0c040;">■</span> 5 anni</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="7" onchange="renderSeasonalForecast()"> <span style="color:#4fa3ff;">■</span> 7 anni</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="10" checked onchange="renderSeasonalForecast()"> <span style="color:#00d4b8;">■</span> 10 anni</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="15" onchange="renderSeasonalForecast()"> <span style="color:#c77dff;">■</span> 15 anni</label>
+            <label class="chk"><input type="checkbox" class="fcYear" value="all" checked onchange="renderSeasonalForecast()"> <span style="color:#2ecc71;">■</span> Tutto lo storico</label>
+          </div>
+          <div style="height:280px;"><canvas id="seasonForecastChart"></canvas></div>
+          <div style="font-size:10px;color:var(--dim);margin:10px 0 6px;">Ogni linea (tranne "Anno corrente") è la MEDIA del percorso stagionale (rendimento cumulato Gen→Dic) di quegli anni.</div>
+          <div class="cards" id="correlationCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));"></div>
+        </div>
+        <div class="panel">
           <div class="panel-title">📅 STAGIONALITÀ MENSILE
             <select id="seasonYears" onchange="renderSeasonality()" style="margin-left:8px;">
               <option value="1">Ultimo 1 anno</option>
@@ -239,7 +255,7 @@ window.switchTab=function(name){
   el("tab"+name).classList.add("active");
   el("tabBtn"+name).classList.add("active");
   const tn = el("tn"+name); if(tn) tn.classList.add("active");
-  if(name==="Stagionalita" && STOCK) renderSeasonality();
+  if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
   if(name==="Rischio" && STOCK) renderRisk();
 };
 
@@ -535,6 +551,105 @@ function computeMonthlyGrid(dates,closes){
     prevClose=val;
   });
   return grid;
+}
+
+// ── FORECAST STAGIONALE MULTI-PERIODO ────────────────────────────────
+function buildYearCurves(dates,closes){
+  // Per ogni anno: array di {doy, cumRet} = rendimento cumulato dal 1° gennaio di quell'anno
+  const byYear={};
+  let curYear=null, yearStartClose=null;
+  dates.forEach((d,i)=>{
+    const y=d.getFullYear();
+    if(y!==curYear){ curYear=y; yearStartClose=closes[i]; byYear[y]=[]; }
+    const doy=Math.floor((Date.UTC(y,d.getMonth(),d.getDate())-Date.UTC(y,0,1))/86400000)+1;
+    byYear[y].push({doy, cumRet:(closes[i]-yearStartClose)/yearStartClose*100});
+  });
+  return byYear;
+}
+function averageCurve(byYear,years){
+  const sumMap=new Map(), cntMap=new Map();
+  years.forEach(y=>{ (byYear[y]||[]).forEach(pt=>{
+    sumMap.set(pt.doy,(sumMap.get(pt.doy)||0)+pt.cumRet);
+    cntMap.set(pt.doy,(cntMap.get(pt.doy)||0)+1);
+  }); });
+  const map=new Map();
+  [...sumMap.keys()].forEach(doy=> map.set(doy, sumMap.get(doy)/cntMap.get(doy)) );
+  return map; // doy -> valore medio
+}
+function pearsonCorr(xs,ys){
+  const n=xs.length; if(n<10) return null;
+  const mx=xs.reduce((a,b)=>a+b,0)/n, my=ys.reduce((a,b)=>a+b,0)/n;
+  let num=0,dx2=0,dy2=0;
+  for(let i=0;i<n;i++){ const dx=xs[i]-mx, dy=ys[i]-my; num+=dx*dy; dx2+=dx*dx; dy2+=dy*dy; }
+  const den=Math.sqrt(dx2*dy2);
+  return den>0?(num/den):null;
+}
+const MONTH_STARTS=[1,32,60,91,121,152,182,213,244,274,305,335];
+const MONTH_NAMES_SHORT=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+
+let seasonForecastChartObj=null;
+window.renderSeasonalForecast=function(){
+  if(!STOCK) return;
+  const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
+  const allYears=Object.keys(byYear).map(Number).sort((a,b)=>a-b);
+  const currentYear=allYears[allYears.length-1];
+  const pastYears=allYears.filter(y=>y<currentYear);
+
+  const selected=[...document.querySelectorAll(".fcYear:checked")].map(c=>c.value);
+  const colors={current:"#ff3d71",1:"#c0392b",3:"#ff9f1c",5:"#f0c040",7:"#4fa3ff",10:"#00d4b8",15:"#c77dff",all:"#2ecc71"};
+  const labelsMap={current:"Anno corrente",1:"1 anno",3:"3 anni",5:"5 anni",7:"7 anni",10:"10 anni",15:"15 anni",all:"Tutto lo storico"};
+
+  const datasets=[];
+  const currentCurve=byYear[currentYear]||[];
+  const currentDoyVal=new Map(currentCurve.map(p=>[p.doy,p.cumRet]));
+  const corrResults=[];
+
+  selected.forEach(sel=>{
+    let curveMap;
+    if(sel==="current"){
+      curveMap=currentDoyVal;
+    } else {
+      const n=sel==="all"?pastYears.length:parseInt(sel);
+      const years=pastYears.slice(Math.max(0,pastYears.length-n));
+      if(years.length===0) return;
+      curveMap=averageCurve(byYear,years);
+      // correlazione con l'anno corrente sui giorni in comune
+      const xs=[],ys=[];
+      currentDoyVal.forEach((v,doy)=>{ if(curveMap.has(doy)){ xs.push(v); ys.push(curveMap.get(doy)); } });
+      const corr=pearsonCorr(xs,ys);
+      corrResults.push({label:labelsMap[sel], corr, years:years.length});
+    }
+    const doys=[...curveMap.keys()].sort((a,b)=>a-b);
+    const data=new Array(366).fill(null);
+    doys.forEach(doy=>{ data[doy-1]=parseFloat(curveMap.get(doy).toFixed(2)); });
+    datasets.push({ label:labelsMap[sel], data, borderColor:colors[sel], backgroundColor:colors[sel],
+      borderWidth:sel==="current"?2.5:1.5, pointRadius:0, tension:0.15, spanGaps:true });
+  });
+
+  const ctx=el("seasonForecastChart");
+  if(seasonForecastChartObj) seasonForecastChartObj.destroy();
+  seasonForecastChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels:Array.from({length:366},(_,i)=>i+1), datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}},
+        tooltip:{callbacks:{title:items=>{ const doy=items[0].parsed.x+1; return dayOfYearToLabel(doy); }}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:9},callback:(v,i)=>{ const doy=i+1; const mi=MONTH_STARTS.indexOf(doy); return mi>=0?MONTH_NAMES_SHORT[mi]:""; },
+              autoSkip:false,maxRotation:0}, grid:{color:"#1e2d45"}},
+        y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+  });
+
+  el("correlationCardsWrap").innerHTML = corrResults.map(r=>{
+    const pct = r.corr!=null ? (r.corr*100) : null;
+    const col = pct==null?"var(--dim)":pct>=80?"#00d4b8":pct>=50?"#80ed99":pct>=20?"#ffd23f":"#ff6b6b";
+    return `<div class="card"><div class="v" style="color:${col};">${pct!=null?pct.toFixed(1)+"%":"--"}</div><div class="l">${r.label} (${r.years}y) — Correlazione</div></div>`;
+  }).join("");
+};
+function dayOfYearToLabel(doy){
+  let mi=0; for(let i=0;i<MONTH_STARTS.length;i++){ if(doy>=MONTH_STARTS[i]) mi=i; }
+  const day = doy - MONTH_STARTS[mi] + 1;
+  return `${day} ${MONTH_NAMES_SHORT[mi]}`;
 }
 
 let seasonChartObj=null;
