@@ -765,13 +765,14 @@ function numOrNull(v){ if(v==null||v==="None") return null; const n=parseFloat(v
 
 window.loadFundamentals=async function(){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
-  el("fundStatus").textContent="⏳ Scarico dati di bilancio (3 richieste ad Alpha Vantage)...";
+  el("fundStatus").textContent="⏳ Scarico dati di bilancio (3 richieste ad Alpha Vantage, con pausa per rispettare il limite 1/sec)...";
   try{
-    const [income,balance,cashflow]=await Promise.all([
-      fetchFundamental(STOCK.ticker,"income"),
-      fetchFundamental(STOCK.ticker,"balance"),
-      fetchFundamental(STOCK.ticker,"cashflow")
-    ]);
+    // Le richieste vanno spaziate: il piano gratuito Alpha Vantage accetta max 1 richiesta/secondo
+    const income=await fetchFundamental(STOCK.ticker,"income");
+    await new Promise(r=>setTimeout(r,1300));
+    const balance=await fetchFundamental(STOCK.ticker,"balance");
+    await new Promise(r=>setTimeout(r,1300));
+    const cashflow=await fetchFundamental(STOCK.ticker,"cashflow");
     const incReports=(income.annualReports||[]).slice(0,8);
     const balReports=(balance.annualReports||[]).slice(0,8);
     const cfReports=(cashflow.annualReports||[]).slice(0,8);
