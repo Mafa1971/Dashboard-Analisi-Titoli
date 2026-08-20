@@ -4,7 +4,7 @@
 // la function chiama Yahoo dal server e restituisce il JSON al browser.
 
 exports.handler = async function (event) {
-  const { ticker, range = "max", interval = "1d" } = event.queryStringParameters || {};
+  const { ticker, range = "max", interval = "1d", period1, period2 } = event.queryStringParameters || {};
 
   if (!ticker) {
     return {
@@ -14,7 +14,12 @@ exports.handler = async function (event) {
     };
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
+  // Con period1/period2 espliciti Yahoo restituisce dati giornalieri reali
+  // anche su archi lunghi, evitando l'aggregazione automatica che avviene
+  // a volte con range=max (che può ridurre i punti a poche decine).
+  const url = (period1 && period2)
+    ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${encodeURIComponent(period1)}&period2=${encodeURIComponent(period2)}&interval=${encodeURIComponent(interval)}`
+    : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
 
   try {
     const res = await fetch(url, {
