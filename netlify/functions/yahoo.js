@@ -1,58 +1,623 @@
-// netlify/functions/yahoo.js
-// Proxy verso l'API pubblica di Yahoo Finance (chart endpoint).
-// Serve a bypassare il CORS: il browser chiama questa function,
-// la function chiama Yahoo dal server e restituisce il JSON al browser.
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FMP — Analizzatore Singolo Titolo</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{--bg:#070d1a;--panel:#111827;--panel2:#1a2030;--line:#1e2d45;--txt:#eef1f7;--dim:#7d8aa3;--gold:#d4a017;--gold2:#f0c040;--green:#00d4b8;--red:#ff6b6b;--blue:#4fa3ff;--purple:#c77dff;}
+body{background:var(--bg);color:var(--txt);font-family:'Manrope',sans-serif;font-size:14px;}
+#loginScreen{display:flex;position:fixed;inset:0;background:var(--bg);z-index:999;align-items:center;justify-content:center;flex-direction:column;gap:20px;}
+.logo{font-family:'Syne',sans-serif;font-size:24px;font-weight:800;background:linear-gradient(135deg,var(--gold),var(--gold2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.lcard{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;width:100%;max-width:340px;}
+.lcard label{display:block;font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:6px;text-transform:uppercase;}
+.lcard input{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:11px 14px;font-family:'Manrope',sans-serif;font-size:13px;border-radius:8px;outline:none;margin-bottom:14px;box-sizing:border-box;}
+.btn-login{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border:none;padding:12px;border-radius:10px;font-family:'Manrope',sans-serif;font-weight:800;font-size:13px;cursor:pointer;}
+.err{font-size:11px;color:var(--red);text-align:center;min-height:16px;margin-top:6px;}
+#appContent{display:none;}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap;gap:8px;}
+.hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.btn{padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-family:'Manrope',sans-serif;font-size:11px;font-weight:700;}
+.btn.primary{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border:none;}
+.btn.ghost{background:transparent;}
+main{padding:16px 20px;max-width:1200px;margin:0 auto;padding-bottom:80px;}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;}
+.panel-title{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;}
+.card .v{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;line-height:1;margin-bottom:3px;}
+.card .v2{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--red);margin-top:2px;}
+.card .l{font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;}
+input[type=text],input[type=number]{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-family:'Manrope',sans-serif;font-size:13px;outline:none;}
+select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-size:12px;}
+.empty-state{text-align:center;padding:36px 20px;color:var(--dim);}
+.empty-state .ic{font-size:28px;margin-bottom:8px;}
+.empty-state p{font-size:11px;letter-spacing:1px;text-transform:uppercase;}
+#candleChart{width:100%;height:380px;}
+#rsiChart{width:100%;height:120px;margin-top:6px;}
+#benchChart{width:100%;height:340px;}
+.chk{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);cursor:pointer;user-select:none;}
+.chk input{cursor:pointer;}
+.tab-bar{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);display:flex;z-index:100;}
+.tab-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:9px 4px;background:none;border:none;color:var(--dim);cursor:pointer;font-family:'Manrope',sans-serif;gap:2px;}
+.tab-btn.active{color:var(--gold);}
+.tab-icon{font-size:16px;}
+.tab-label{font-size:9px;font-weight:600;text-transform:uppercase;}
+.tab-content{display:none;}
+.tab-content.active{display:block;}
+table{width:100%;border-collapse:collapse;font-size:11px;}
+th{font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;padding:6px 6px;text-align:center;border-bottom:1px solid var(--line);}
+td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
+</style>
+</head>
+<body>
 
-exports.handler = async function (event) {
-  const { ticker, range = "max", interval = "1d", period1, period2 } = event.queryStringParameters || {};
+<div id="loginScreen">
+  <div style="text-align:center;"><div class="logo">FMP ANALYZER</div><div style="font-size:10px;color:var(--dim);letter-spacing:3px;margin-top:4px;">ANALISI SINGOLO TITOLO</div></div>
+  <div class="lcard">
+    <label>Password</label>
+    <input type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn-login" onclick="doLogin()">ACCEDI →</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
 
-  if (!ticker) {
-    return {
-      statusCode: 400,
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify({ error: "Parametro 'ticker' mancante" })
-    };
+<div id="appContent">
+  <header class="hdr">
+    <div>
+      <div class="logo" style="font-size:17px;">📈 ANALIZZATORE</div>
+      <div style="font-size:9px;color:var(--dim);letter-spacing:2px;margin-top:2px;">MARIN</div>
+    </div>
+    <div class="hdr-right">
+      <span style="font-size:9px;color:var(--dim);" id="hLastUpdate"></span>
+      <button class="btn ghost" id="btnLogout" style="font-size:10px;">ESCI</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="panel">
+      <div class="panel-title">🔍 RICERCA TITOLO</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="tickerInput" placeholder="Es. AAPL, GOOGL, ENI.MI" style="width:180px;text-transform:uppercase;" onkeydown="if(event.key==='Enter')analyzeTicker()">
+        <select id="yearsSelect">
+          <option value="5">Ultimi 5 anni</option>
+          <option value="10" selected>Ultimi 10 anni</option>
+          <option value="15">Ultimi 15 anni</option>
+          <option value="20">Ultimi 20 anni</option>
+          <option value="9999">Tutto lo storico</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);">
+          Soglia cicli %
+          <input type="number" id="zigzagThreshold" value="10" min="2" max="40" style="width:55px;">
+        </label>
+        <button class="btn primary" onclick="analyzeTicker()">🔍 ANALIZZA</button>
+      </div>
+      <div id="analyzeStatus" style="margin-top:8px;font-size:11px;min-height:16px;color:var(--gold);"></div>
+    </div>
+
+    <div id="resultsWrap" style="display:none;">
+      <div class="cards" id="heroCards"></div>
+
+      <nav style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+        <button class="btn tabnav active" onclick="switchTab('Grafico')" id="tnGrafico">📉 Grafico</button>
+        <button class="btn tabnav" onclick="switchTab('Benchmark')" id="tnBenchmark">⚖️ Benchmark</button>
+        <button class="btn tabnav" onclick="switchTab('Stagionalita')" id="tnStagionalita">📅 Stagionalità</button>
+        <button class="btn tabnav" onclick="switchTab('Rischio')" id="tnRischio">🎯 Rischio</button>
+        <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio">📑 Bilancio</button>
+      </nav>
+
+      <!-- TAB GRAFICO -->
+      <div id="tabGrafico" class="tab-content active">
+        <div class="panel">
+          <div class="panel-title" id="chartTitle">📉 GRAFICO A CANDELE</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+            <label class="chk"><input type="checkbox" id="chkSMA21" checked onchange="toggleIndicator('sma21',this.checked)"> <span style="color:#00d4b8;">■</span> SMA 21</label>
+            <label class="chk"><input type="checkbox" id="chkSMA100" checked onchange="toggleIndicator('sma100',this.checked)"> <span style="color:#ff9f1c;">■</span> SMA 100</label>
+            <label class="chk"><input type="checkbox" id="chkSMA200" checked onchange="toggleIndicator('sma200',this.checked)"> <span style="color:#c77dff;">■</span> SMA 200</label>
+            <label class="chk"><input type="checkbox" id="chkRSI" checked onchange="toggleRSI(this.checked)"> <span style="color:#4fa3ff;">■</span> RSI (14)</label>
+          </div>
+          <div id="candleChart"></div>
+          <div id="rsiChart"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📊 RENDIMENTI PER PERIODO</div>
+          <div id="periodStatsWrap"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">🔄 CICLI RIALZO / RIBASSO (zigzag)</div>
+          <div id="cycleStatsWrap"></div>
+        </div>
+      </div>
+
+      <!-- TAB BENCHMARK -->
+      <div id="tabBenchmark" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">⚖️ CONFRONTO BENCHMARK</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <input type="text" id="benchTicker" value="^GSPC" style="width:140px;text-transform:uppercase;" placeholder="Es. ^GSPC, SPY, ^FTMIB.MI">
+            <span style="font-size:10px;color:var(--dim);">Comuni: ^GSPC (S&P500), ^GDAXI (DAX), ^FTMIB.MI (FTSE MIB), SPY, QQQ</span>
+            <button class="btn primary" onclick="compareBenchmark()">📊 CONFRONTA</button>
+          </div>
+          <div id="benchStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
+          <div id="benchCardsWrap"></div>
+          <div id="benchChart"></div>
+        </div>
+      </div>
+
+      <!-- TAB STAGIONALITA -->
+      <div id="tabStagionalita" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">📅 STAGIONALITÀ MENSILE
+            <select id="seasonYears" onchange="renderSeasonality()" style="margin-left:8px;">
+              <option value="1">Ultimo 1 anno</option>
+              <option value="3">Ultimi 3 anni</option>
+              <option value="5" selected>Ultimi 5 anni</option>
+              <option value="7">Ultimi 7 anni</option>
+              <option value="10">Ultimi 10 anni</option>
+            </select>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Calcolata sullo storico già caricato con ANALIZZA. Se ti serve un periodo più lungo, aumenta "Ultimi N anni" nel pannello di ricerca e rianalizza.</div>
+          <div style="height:260px;"><canvas id="seasonChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📋 TABELLA RENDIMENTI MENSILI PER ANNO</div>
+          <div id="seasonTableWrap" style="overflow-x:auto;"></div>
+        </div>
+      </div>
+
+      <!-- TAB RISCHIO -->
+      <div id="tabRischio" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
+          <div class="cards" id="riskCardsWrap"></div>
+          <div style="font-size:10px;color:var(--dim);">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
+        </div>
+      </div>
+
+      <!-- TAB BILANCIO -->
+      <div id="tabBilancio" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">📑 BILANCIO / CONTO ECONOMICO</div>
+          <div class="empty-state">
+            <div class="ic">🚧</div>
+            <p>In lavorazione</p>
+            <div style="font-size:11px;color:var(--dim);margin-top:10px;max-width:480px;margin-left:auto;margin-right:auto;text-transform:none;letter-spacing:0;">
+              I dati di bilancio (ricavi, utili, margini) su Yahoo Finance richiedono un endpoint diverso da quello dei prezzi, con un sistema di autenticazione che Yahoo cambia spesso e blocca facilmente dai server. Lo svilupperemo come modulo separato per non rischiare di rompere il resto del sito se Yahoo cambia qualcosa.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
+  </main>
+
+  <nav class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('Grafico')" id="tabBtnGrafico"><span class="tab-icon">📉</span><span class="tab-label">Grafico</span></button>
+    <button class="tab-btn" onclick="switchTab('Benchmark')" id="tabBtnBenchmark"><span class="tab-icon">⚖️</span><span class="tab-label">Benchmark</span></button>
+    <button class="tab-btn" onclick="switchTab('Stagionalita')" id="tabBtnStagionalita"><span class="tab-icon">📅</span><span class="tab-label">Stagion.</span></button>
+    <button class="tab-btn" onclick="switchTab('Rischio')" id="tabBtnRischio"><span class="tab-icon">🎯</span><span class="tab-label">Rischio</span></button>
+    <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
+  </nav>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────
+const APP_PASSWORD = "MarinAnalyzer2026."; // ⚠️ CAMBIA_PASSWORD prima di deployare
+const AUTH_KEY = "analyzer_auth_v1";
+
+let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
+let rsiChart=null, rsiLineSeries=null;
+let benchChartObj=null;
+let STOCK=null;      // dati titolo analizzato
+let BENCH=null;      // dati benchmark confrontato
+
+function el(id){ return document.getElementById(id); }
+
+// ── AUTH ──────────────────────────────────────────────────────────────
+window.doLogin=function(){
+  const pwd=el("loginPassword").value;
+  if(pwd===APP_PASSWORD){ try{localStorage.setItem(AUTH_KEY,"1");}catch(e){} showApp(); }
+  else{ el("loginErr").textContent="Password errata."; el("loginPassword").value=""; }
+};
+function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; }
+document.getElementById("btnLogout").addEventListener("click",()=>{
+  try{localStorage.removeItem(AUTH_KEY);}catch(e){}
+  el("appContent").style.display="none"; el("loginScreen").style.display="flex"; el("loginPassword").value="";
+});
+(function(){ try{ if(localStorage.getItem(AUTH_KEY)==="1") showApp(); }catch(e){} })();
+
+// ── TAB SWITCH ────────────────────────────────────────────────────────
+window.switchTab=function(name){
+  document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+  document.querySelectorAll(".tabnav").forEach(b=>b.classList.remove("active"));
+  el("tab"+name).classList.add("active");
+  el("tabBtn"+name).classList.add("active");
+  const tn = el("tn"+name); if(tn) tn.classList.add("active");
+  if(name==="Stagionalita" && STOCK) renderSeasonality();
+  if(name==="Rischio" && STOCK) renderRisk();
+};
+
+// ── YAHOO FETCH ───────────────────────────────────────────────────────
+async function fetchYahoo(ticker, range="max", interval="1d", period1=null, period2=null){
+  let url=`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(interval)}`;
+  if(period1!=null && period2!=null) url+=`&period1=${period1}&period2=${period2}`;
+  else url+=`&range=${range}`;
+  const res=await fetch(url);
+  return await res.json();
+}
+
+function parseYahooResult(data){
+  const result=data?.chart?.result?.[0];
+  if(!result) throw new Error("Nessun dato trovato");
+  const ts=result.timestamp||[];
+  const q=result.indicators?.quote?.[0]||{};
+  let dates=[],opens=[],highs=[],lows=[],closes=[],volumes=[];
+  for(let i=0;i<ts.length;i++){
+    if(q.close[i]==null||q.open[i]==null||q.high[i]==null||q.low[i]==null) continue;
+    dates.push(new Date(ts[i]*1000)); opens.push(q.open[i]); highs.push(q.high[i]);
+    lows.push(q.low[i]); closes.push(q.close[i]); volumes.push(q.volume?.[i]||0);
   }
+  return {dates,opens,highs,lows,closes,volumes,name:result.meta?.longName||result.meta?.shortName||"",currency:result.meta?.currency||""};
+}
 
-  // Con period1/period2 espliciti Yahoo restituisce dati giornalieri reali
-  // anche su archi lunghi, evitando l'aggregazione automatica che avviene
-  // a volte con range=max (che può ridurre i punti a poche decine).
-  const url = (period1 && period2)
-    ? `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${encodeURIComponent(period1)}&period2=${encodeURIComponent(period2)}&interval=${encodeURIComponent(interval)}`
-    : `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
+// ── INDICATORI ────────────────────────────────────────────────────────
+function smaSeriesCalc(closes,period){
+  const out=new Array(closes.length).fill(null);
+  let sum=0;
+  for(let i=0;i<closes.length;i++){
+    sum+=closes[i];
+    if(i>=period) sum-=closes[i-period];
+    if(i>=period-1) out[i]=sum/period;
+  }
+  return out;
+}
+function rsiSeriesCalc(closes,period=14){
+  const out=new Array(closes.length).fill(null);
+  if(closes.length<period+1) return out;
+  let gains=0,losses=0;
+  for(let i=1;i<=period;i++){ const d=closes[i]-closes[i-1]; if(d>0) gains+=d; else losses-=d; }
+  let avgGain=gains/period, avgLoss=losses/period;
+  out[period]=avgLoss===0?100:100-(100/(1+avgGain/avgLoss));
+  for(let i=period+1;i<closes.length;i++){
+    const d=closes[i]-closes[i-1];
+    const gain=d>0?d:0, loss=d<0?-d:0;
+    avgGain=(avgGain*(period-1)+gain)/period;
+    avgLoss=(avgLoss*(period-1)+loss)/period;
+    out[i]=avgLoss===0?100:100-(100/(1+avgGain/avgLoss));
+  }
+  return out;
+}
+function toSeriesData(dates,vals){
+  const out=[];
+  for(let i=0;i<vals.length;i++){ if(vals[i]!=null) out.push({time:dates[i].toISOString().slice(0,10),value:vals[i]}); }
+  return out;
+}
 
-  try {
-    const res = await fetch(url, {
-      headers: {
-        // Yahoo a volte blocca richieste senza uno User-Agent "da browser"
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-      }
-    });
+// ── ANALYZE ───────────────────────────────────────────────────────────
+window.analyzeTicker=async function(){
+  const ticker=el("tickerInput").value.trim().toUpperCase();
+  if(!ticker){ alert("Inserisci un ticker"); return; }
+  const years=parseInt(el("yearsSelect").value);
+  const threshold=parseFloat(el("zigzagThreshold").value)||10;
 
-    if (!res.ok) {
-      return {
-        statusCode: res.status,
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ error: `Yahoo ha risposto con status ${res.status}` })
-      };
-    }
+  el("analyzeStatus").textContent=`⏳ Scarico dati storici per ${ticker}...`;
+  el("resultsWrap").style.display="none";
+  el("emptyWrap").style.display="none";
+  BENCH=null;
 
-    const data = await res.json();
+  try{
+    const period2=Math.floor(Date.now()/1000);
+    const period1 = years<9999 ? period2-Math.ceil(years*365.25*86400)-30*86400 : 0;
+    const data=await fetchYahoo(ticker,"max","1d",period1,period2);
+    const parsed=parseYahooResult(data);
+    if(parsed.closes.length<20) throw new Error("Dati insufficienti per questo ticker");
 
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, max-age=60"
-      },
-      body: JSON.stringify(data)
-    };
-  } catch (err) {
-    return {
-      statusCode: 500,
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify({ error: err.message })
-    };
+    STOCK={ ticker, ...parsed };
+
+    const totalReturn=((STOCK.closes[STOCK.closes.length-1]-STOCK.closes[0])/STOCK.closes[0]*100);
+
+    el("resultsWrap").style.display="block";
+    el("chartTitle").textContent=`📉 ${ticker} — ${STOCK.name} (${STOCK.currency})`;
+    renderCandles();
+    renderHero(totalReturn);
+
+    const weekly=computePeriodReturns(STOCK.dates,STOCK.closes,"week");
+    const monthly=computePeriodReturns(STOCK.dates,STOCK.closes,"month");
+    const annual=computePeriodReturns(STOCK.dates,STOCK.closes,"year");
+    renderPeriodStats(weekly,monthly,annual);
+
+    const cycles=computeCycles(STOCK.dates,STOCK.closes,threshold);
+    renderCycleStats(cycles);
+
+    switchTab("Grafico");
+    el("analyzeStatus").textContent=`✅ ${ticker}: ${STOCK.dates.length} sessioni analizzate (${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")})`;
+  }catch(err){
+    el("analyzeStatus").textContent="❌ Errore: "+err.message;
+    el("emptyWrap").style.display="block";
   }
 };
+
+// ── CANDELE + INDICATORI ─────────────────────────────────────────────
+function renderCandles(){
+  const container=el("candleChart");
+  container.innerHTML="";
+  chart=LightweightCharts.createChart(container,{
+    width:container.clientWidth, height:380,
+    layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
+    grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
+    timeScale:{borderColor:"#1e2d45"}, rightPriceScale:{borderColor:"#1e2d45"}
+  });
+  candleSeries=chart.addCandlestickSeries({
+    upColor:"#00d4b8",downColor:"#ff6b6b",borderUpColor:"#00d4b8",borderDownColor:"#ff6b6b",
+    wickUpColor:"#00d4b8",wickDownColor:"#ff6b6b"
+  });
+  const candleData=STOCK.dates.map((d,i)=>({time:d.toISOString().slice(0,10),open:STOCK.opens[i],high:STOCK.highs[i],low:STOCK.lows[i],close:STOCK.closes[i]}));
+  candleSeries.setData(candleData);
+
+  const sma21=smaSeriesCalc(STOCK.closes,21), sma100=smaSeriesCalc(STOCK.closes,100), sma200=smaSeriesCalc(STOCK.closes,200);
+  sma21Series=chart.addLineSeries({color:"#00d4b8",lineWidth:1.5,priceLineVisible:false,visible:el("chkSMA21").checked});
+  sma21Series.setData(toSeriesData(STOCK.dates,sma21));
+  sma100Series=chart.addLineSeries({color:"#ff9f1c",lineWidth:1.5,priceLineVisible:false,visible:el("chkSMA100").checked});
+  sma100Series.setData(toSeriesData(STOCK.dates,sma100));
+  sma200Series=chart.addLineSeries({color:"#c77dff",lineWidth:1.5,priceLineVisible:false,visible:el("chkSMA200").checked});
+  sma200Series.setData(toSeriesData(STOCK.dates,sma200));
+
+  chart.timeScale().fitContent();
+  window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); });
+
+  renderRSIChart();
+}
+
+function renderRSIChart(){
+  const container=el("rsiChart");
+  container.innerHTML="";
+  if(!el("chkRSI").checked){ return; }
+  rsiChart=LightweightCharts.createChart(container,{
+    width:container.clientWidth, height:120,
+    layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
+    grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
+    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"}
+  });
+  rsiLineSeries=rsiChart.addLineSeries({color:"#4fa3ff",lineWidth:1.5,priceLineVisible:false});
+  const rsi=rsiSeriesCalc(STOCK.closes,14);
+  rsiLineSeries.setData(toSeriesData(STOCK.dates,rsi));
+  rsiLineSeries.createPriceLine({price:70,color:"#ff6b6b",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"70"});
+  rsiLineSeries.createPriceLine({price:30,color:"#00d4b8",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"30"});
+  rsiChart.timeScale().fitContent();
+  chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{ if(rsiChart && range) rsiChart.timeScale().setVisibleLogicalRange(range); });
+}
+
+window.toggleIndicator=function(name,checked){
+  const map={sma21:sma21Series,sma100:sma100Series,sma200:sma200Series};
+  if(map[name]) map[name].applyOptions({visible:checked});
+};
+window.toggleRSI=function(checked){
+  if(checked) renderRSIChart(); else { el("rsiChart").innerHTML=""; rsiChart=null; }
+};
+
+// ── HERO / RENDIMENTI / CICLI (come prima) ──────────────────────────
+function fmtPct(v){ return v==null?"--":(v>=0?"+":"")+v.toFixed(2)+"%"; }
+
+function renderHero(totalReturn){
+  const years=((STOCK.dates[STOCK.dates.length-1]-STOCK.dates[0])/86400000/365.25).toFixed(1);
+  el("heroCards").innerHTML=`
+    <div class="card"><div class="v" style="color:var(--gold);">${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}</div><div class="l">Prezzo Attuale</div></div>
+    <div class="card"><div class="v" style="color:${totalReturn>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(totalReturn)}</div><div class="l">Rendimento Periodo (${years}y)</div></div>
+    <div class="card"><div class="v">${STOCK.dates.length}</div><div class="l">Sessioni Analizzate</div></div>`;
+  el("hLastUpdate").textContent=new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+}
+
+function computePeriodReturns(dates,closes,granularity){
+  const map=new Map();
+  for(let i=0;i<dates.length;i++){
+    const d=dates[i]; let key;
+    if(granularity==="week"){ const tmp=new Date(d); tmp.setHours(0,0,0,0); tmp.setDate(tmp.getDate()+3-((tmp.getDay()+6)%7));
+      const ys=new Date(tmp.getFullYear(),0,1); const wn=Math.ceil((((tmp-ys)/86400000)+1)/7); key=tmp.getFullYear()+"-W"+wn; }
+    else if(granularity==="month"){ key=d.getFullYear()+"-"+d.getMonth(); }
+    else key=d.getFullYear();
+    map.set(key,closes[i]);
+  }
+  const vals=[...map.values()]; const returns=[];
+  for(let i=1;i<vals.length;i++) returns.push((vals[i]-vals[i-1])/vals[i-1]*100);
+  if(returns.length===0) return {avg:null,worst:null,best:null,count:0};
+  return {avg:returns.reduce((a,b)=>a+b,0)/returns.length, worst:Math.min(...returns), best:Math.max(...returns), count:returns.length};
+}
+
+function renderPeriodStats(weekly,monthly,annual){
+  const row=(label,s)=>`<div class="card"><div class="l" style="margin-bottom:8px;">${label} (${s.count} periodi)</div>
+    <div class="v" style="color:${s.avg>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(s.avg)}</div><div class="l" style="margin-top:2px;">Rendimento Medio</div>
+    <div class="v2">${fmtPct(s.worst)}</div><div class="l" style="margin-top:2px;">Perdita Massima (peggior periodo)</div></div>`;
+  el("periodStatsWrap").innerHTML=`<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    ${row("📅 Settimanale",weekly)}${row("🗓️ Mensile",monthly)}${row("📆 Annuale",annual)}</div>`;
+}
+
+function computeZigzagPivots(closes,thresholdPct){
+  if(closes.length<2) return [];
+  const pivots=[{idx:0,price:closes[0]}]; let trend=null,extremeIdx=0,extremePrice=closes[0];
+  for(let i=1;i<closes.length;i++){
+    const price=closes[i];
+    if(trend===null){ const chg=(price-closes[0])/closes[0]*100; if(Math.abs(chg)>=thresholdPct){ trend=chg>0?"up":"down"; extremeIdx=i; extremePrice=price; } continue; }
+    if(trend==="up"){ if(price>=extremePrice){extremePrice=price;extremeIdx=i;continue;}
+      const rp=(extremePrice-price)/extremePrice*100; if(rp>=thresholdPct){ pivots.push({idx:extremeIdx,price:extremePrice}); trend="down"; extremeIdx=i; extremePrice=price; } }
+    else{ if(price<=extremePrice){extremePrice=price;extremeIdx=i;continue;}
+      const rp=(price-extremePrice)/extremePrice*100; if(rp>=thresholdPct){ pivots.push({idx:extremeIdx,price:extremePrice}); trend="up"; extremeIdx=i; extremePrice=price; } }
+  }
+  pivots.push({idx:extremeIdx,price:extremePrice});
+  return pivots;
+}
+function computeCycles(dates,closes,thresholdPct){
+  const pivots=computeZigzagPivots(closes,thresholdPct); const swings=[];
+  for(let i=1;i<pivots.length;i++){
+    const a=pivots[i-1],b=pivots[i]; const days=Math.round((dates[b.idx]-dates[a.idx])/86400000);
+    if(days<=0) continue;
+    swings.push({type:(b.price-a.price)>=0?"up":"down", days, retPct:(b.price-a.price)/a.price*100});
+  }
+  const ups=swings.filter(s=>s.type==="up"), downs=swings.filter(s=>s.type==="down");
+  const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+  return { threshold:thresholdPct, totalSwings:swings.length,
+    up:{count:ups.length,avgDays:avg(ups.map(s=>s.days)),avgReturn:avg(ups.map(s=>s.retPct))},
+    down:{count:downs.length,avgDays:avg(downs.map(s=>s.days)),avgReturn:avg(downs.map(s=>s.retPct))} };
+}
+function renderCycleStats(cycles){
+  const wrap=el("cycleStatsWrap");
+  if(cycles.totalSwings===0){ wrap.innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun ciclo rilevato con soglia ${cycles.threshold}%. Prova ad abbassare la soglia.</div>`; return; }
+  wrap.innerHTML=`<div style="font-size:11px;color:var(--dim);margin-bottom:12px;">Soglia inversione: <strong style="color:var(--gold);">${cycles.threshold}%</strong> — ${cycles.totalSwings} cicli rilevati</div>
+  <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    <div class="card"><div class="l" style="margin-bottom:8px;color:#00d4b8;">🟢 Ciclo Medio Rialzista</div>
+      <div class="v" style="color:#00d4b8;">${cycles.up.avgDays!=null?Math.round(cycles.up.avgDays)+" gg":"--"}</div><div class="l" style="margin-top:2px;">Durata Media</div>
+      <div class="v2" style="color:#00d4b8;">${fmtPct(cycles.up.avgReturn)}</div><div class="l" style="margin-top:2px;">Rendimento Medio (${cycles.up.count} cicli)</div></div>
+    <div class="card"><div class="l" style="margin-bottom:8px;color:#ff6b6b;">🔴 Ciclo Medio Ribassista</div>
+      <div class="v" style="color:#ff6b6b;">${cycles.down.avgDays!=null?Math.round(cycles.down.avgDays)+" gg":"--"}</div><div class="l" style="margin-top:2px;">Durata Media</div>
+      <div class="v2" style="color:#ff6b6b;">${fmtPct(cycles.down.avgReturn)}</div><div class="l" style="margin-top:2px;">Rendimento Medio (${cycles.down.count} cicli)</div></div>
+  </div>`;
+}
+
+// ── BENCHMARK ─────────────────────────────────────────────────────────
+window.compareBenchmark=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  const benchTicker=el("benchTicker").value.trim().toUpperCase();
+  if(!benchTicker){ alert("Inserisci un ticker benchmark"); return; }
+  el("benchStatus").textContent=`⏳ Scarico dati per ${benchTicker}...`;
+  try{
+    const p1=Math.floor(STOCK.dates[0].getTime()/1000), p2=Math.floor(STOCK.dates[STOCK.dates.length-1].getTime()/1000);
+    const data=await fetchYahoo(benchTicker,"max","1d",p1,p2);
+    const parsed=parseYahooResult(data);
+    if(parsed.closes.length<10) throw new Error("Dati benchmark insufficienti");
+    BENCH={ticker:benchTicker,...parsed};
+    renderBenchmarkChart();
+    el("benchStatus").textContent=`✅ Confronto ${STOCK.ticker} vs ${benchTicker} completato`;
+  }catch(err){ el("benchStatus").textContent="❌ Errore: "+err.message; }
+};
+
+function normalizeToPct(closes){ const base=closes[0]; return closes.map(c=>(c-base)/base*100); }
+
+function renderBenchmarkChart(){
+  const container=el("benchChart"); container.innerHTML="";
+  benchChartObj=LightweightCharts.createChart(container,{
+    width:container.clientWidth, height:340,
+    layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
+    grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
+    timeScale:{borderColor:"#1e2d45"}, rightPriceScale:{borderColor:"#1e2d45"}
+  });
+  const stockPct=normalizeToPct(STOCK.closes);
+  const benchPct=normalizeToPct(BENCH.closes);
+  const s1=benchChartObj.addLineSeries({color:"#d4a017",lineWidth:2,priceLineVisible:false,title:STOCK.ticker});
+  s1.setData(STOCK.dates.map((d,i)=>({time:d.toISOString().slice(0,10),value:parseFloat(stockPct[i].toFixed(2))})));
+  const s2=benchChartObj.addLineSeries({color:"#4fa3ff",lineWidth:2,priceLineVisible:false,title:BENCH.ticker});
+  s2.setData(BENCH.dates.map((d,i)=>({time:d.toISOString().slice(0,10),value:parseFloat(benchPct[i].toFixed(2))})));
+  benchChartObj.timeScale().fitContent();
+
+  const stockRet=stockPct[stockPct.length-1], benchRet=benchPct[benchPct.length-1];
+  const diff=stockRet-benchRet;
+  el("benchCardsWrap").innerHTML=`<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px;">
+    <div class="card"><div class="v" style="color:#d4a017;">${fmtPct(stockRet)}</div><div class="l">${STOCK.ticker}</div></div>
+    <div class="card"><div class="v" style="color:#4fa3ff;">${fmtPct(benchRet)}</div><div class="l">${BENCH.ticker}</div></div>
+    <div class="card"><div class="v" style="color:${diff>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(diff)}</div><div class="l">Sovraperformance</div></div>
+  </div>`;
+}
+
+// ── STAGIONALITÀ ──────────────────────────────────────────────────────
+function computeMonthlyGrid(dates,closes){
+  const map=new Map();
+  dates.forEach((d,i)=>{ map.set(d.getFullYear()+"-"+d.getMonth(), closes[i]); });
+  const keys=[...map.keys()];
+  const grid={}; let prevClose=null;
+  keys.forEach(k=>{
+    const val=map.get(k);
+    if(prevClose!=null){ const [y,m]=k.split("-").map(Number); const pct=(val-prevClose)/prevClose*100;
+      if(!grid[y]) grid[y]=new Array(12).fill(null); grid[y][m]=pct; }
+    prevClose=val;
+  });
+  return grid;
+}
+
+let seasonChartObj=null;
+window.renderSeasonality=function(){
+  if(!STOCK) return;
+  const nYears=parseInt(el("seasonYears").value);
+  const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+  const years=Object.keys(grid).map(Number).sort((a,b)=>b-a).slice(0,nYears).sort((a,b)=>a-b);
+
+  const monthNames=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  const monthAvg=[],monthProb=[];
+  for(let m=0;m<12;m++){
+    const vals=years.map(y=>grid[y]?.[m]).filter(v=>v!=null);
+    monthAvg.push(vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null);
+    monthProb.push(vals.length?(vals.filter(v=>v>0).length/vals.length*100):null);
+  }
+
+  const ctx=el("seasonChart");
+  if(seasonChartObj) seasonChartObj.destroy();
+  seasonChartObj=new Chart(ctx.getContext("2d"),{
+    type:"bar",
+    data:{labels:monthNames,datasets:[{label:"Rendimento medio %",data:monthAvg,
+      backgroundColor:monthAvg.map(v=>v>=0?"#00d4b8":"#ff6b6b")}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        label:c=>{ const p=monthProb[c.dataIndex]; return `Media: ${c.parsed.y!=null?c.parsed.y.toFixed(2):'--'}% | Probabilità positiva: ${p!=null?p.toFixed(0):'--'}%`; }
+      }}},
+      scales:{x:{ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}},y:{ticks:{color:"#7d8aa3",callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+  });
+
+  let h=`<table><tr><th>Anno</th>${monthNames.map(m=>`<th>${m}</th>`).join("")}</tr>`;
+  h+=`<tr style="background:#1a2030;"><td style="font-weight:700;">Media</td>${monthAvg.map(v=>`<td style="color:${v>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${v!=null?v.toFixed(1)+"%":"--"}</td>`).join("")}</tr>`;
+  years.slice().reverse().forEach(y=>{
+    h+=`<tr><td style="font-weight:700;">${y}</td>${(grid[y]||new Array(12).fill(null)).map(v=>`<td style="color:${v==null?'var(--dim)':v>=0?'#00d4b8':'#ff6b6b'};">${v!=null?v.toFixed(1)+"%":"--"}</td>`).join("")}</tr>`;
+  });
+  h+="</table>";
+  el("seasonTableWrap").innerHTML=h;
+};
+
+// ── RISCHIO ───────────────────────────────────────────────────────────
+function calcDailyReturns(closes){ const r=[]; for(let i=1;i<closes.length;i++) r.push((closes[i]-closes[i-1])/closes[i-1]); return r; }
+function calcSharpe(returns,rf=0.035){ if(returns.length<20) return null; const avg=returns.reduce((a,b)=>a+b,0)/returns.length;
+  const sd=Math.sqrt(returns.reduce((a,r)=>a+Math.pow(r-avg,2),0)/returns.length)*Math.sqrt(252);
+  return sd>0?((avg*252-rf)/sd):null; }
+function calcSortino(returns,rf=0.035){ if(returns.length<20) return null; const rfD=rf/252; const avg=returns.reduce((a,b)=>a+b,0)/returns.length;
+  const down=returns.filter(r=>r<rfD); if(down.length<3) return 3.0;
+  const dd=Math.sqrt(down.reduce((a,r)=>a+Math.pow(r-rfD,2),0)/down.length)*Math.sqrt(252);
+  return dd>0?((avg*252-rf)/dd):null; }
+function calcVolatility(returns){ if(returns.length<10) return null; const avg=returns.reduce((a,b)=>a+b,0)/returns.length;
+  return Math.sqrt(returns.reduce((a,r)=>a+Math.pow(r-avg,2),0)/returns.length)*Math.sqrt(252)*100; }
+function calcMaxDrawdown(closes){ let peak=closes[0],maxDD=0; for(const p of closes){ if(p>peak)peak=p; const dd=(p-peak)/peak*100; if(dd<maxDD)maxDD=dd; } return maxDD; }
+function calcBeta(stockCloses,stockDates,benchCloses,benchDates){
+  const benchMap=new Map(); benchDates.forEach((d,i)=>benchMap.set(d.toISOString().slice(0,10),benchCloses[i]));
+  const pairs=[];
+  for(let i=1;i<stockDates.length;i++){
+    const k0=stockDates[i-1].toISOString().slice(0,10), k1=stockDates[i].toISOString().slice(0,10);
+    if(benchMap.has(k0)&&benchMap.has(k1)){
+      const sr=(stockCloses[i]-stockCloses[i-1])/stockCloses[i-1];
+      const br=(benchMap.get(k1)-benchMap.get(k0))/benchMap.get(k0);
+      pairs.push([sr,br]);
+    }
+  }
+  if(pairs.length<20) return null;
+  const sMean=pairs.reduce((a,p)=>a+p[0],0)/pairs.length, bMean=pairs.reduce((a,p)=>a+p[1],0)/pairs.length;
+  let cov=0,varB=0;
+  pairs.forEach(p=>{ cov+=(p[0]-sMean)*(p[1]-bMean); varB+=Math.pow(p[1]-bMean,2); });
+  return varB>0?(cov/varB):null;
+}
+
+window.renderRisk=function(){
+  if(!STOCK) return;
+  const returns=calcDailyReturns(STOCK.closes);
+  const sharpe=calcSharpe(returns), sortino=calcSortino(returns), vol=calcVolatility(returns), maxDD=calcMaxDrawdown(STOCK.closes);
+  const beta = BENCH ? calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates) : null;
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
+  el("riskCardsWrap").innerHTML=
+    card("Sharpe Ratio", sharpe!=null?sharpe.toFixed(2):"--", sharpe>1.5?"#00d4b8":sharpe>0.5?"#80ed99":sharpe>0?"#ffd23f":sharpe!=null?"#ff6b6b":"var(--dim)")+
+    card("Sortino Ratio", sortino!=null?sortino.toFixed(2):"--", sortino>2?"#00d4b8":sortino>1?"#80ed99":sortino>0.5?"#ffd23f":sortino!=null?"#ff6b6b":"var(--dim)")+
+    card("Volatilità Annua", vol!=null?vol.toFixed(1)+"%":"--", vol<15?"#00d4b8":vol<25?"#ffd23f":vol<35?"#ff9f1c":"#ff6b6b")+
+    card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b")+
+    card("Beta"+(BENCH?" vs "+BENCH.ticker:""), beta!=null?beta.toFixed(2):"--", beta==null?"var(--dim)":Math.abs(beta-1)<0.2?"#ffd23f":beta>1?"#ff9f1c":"#00d4b8");
+};
+</script>
+</body>
+</html>
