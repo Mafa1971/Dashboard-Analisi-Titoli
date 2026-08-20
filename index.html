@@ -151,20 +151,20 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB STAGIONALITA -->
       <div id="tabStagionalita" class="tab-content">
         <div class="panel">
-          <div class="panel-title">🔮 FORECAST STAGIONALE (overlay multi-periodo)</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-            <label class="chk"><input type="checkbox" class="fcYear" value="current" checked onchange="renderSeasonalForecast()"> <span style="color:#ff3d71;">■</span> Anno corrente</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="1" onchange="renderSeasonalForecast()"> <span style="color:#c0392b;">■</span> 1 anno</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="3" checked onchange="renderSeasonalForecast()"> <span style="color:#ff9f1c;">■</span> 3 anni</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="5" onchange="renderSeasonalForecast()"> <span style="color:#f0c040;">■</span> 5 anni</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="7" onchange="renderSeasonalForecast()"> <span style="color:#4fa3ff;">■</span> 7 anni</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="10" checked onchange="renderSeasonalForecast()"> <span style="color:#00d4b8;">■</span> 10 anni</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="15" onchange="renderSeasonalForecast()"> <span style="color:#c77dff;">■</span> 15 anni</label>
-            <label class="chk"><input type="checkbox" class="fcYear" value="all" checked onchange="renderSeasonalForecast()"> <span style="color:#2ecc71;">■</span> Tutto lo storico</label>
+          <div class="panel-title">🔮 FORECAST STAGIONALE (un anno = una linea, come TradingView)</div>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Mostra:</label>
+            <select id="seasonForecastYears" onchange="renderSeasonalForecast()">
+              <option value="5">Ultimi 5 anni</option>
+              <option value="10" selected>Ultimi 10 anni</option>
+              <option value="15">Ultimi 15 anni</option>
+              <option value="20">Ultimi 20 anni</option>
+              <option value="9999">Tutti gli anni disponibili</option>
+            </select>
           </div>
-          <div style="height:280px;"><canvas id="seasonForecastChart"></canvas></div>
-          <div style="font-size:10px;color:var(--dim);margin:10px 0 6px;">Ogni linea (tranne "Anno corrente") è la MEDIA del percorso stagionale (rendimento cumulato Gen→Dic) di quegli anni.</div>
-          <div class="cards" id="correlationCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));"></div>
+          <div style="height:340px;"><canvas id="seasonForecastChart"></canvas></div>
+          <div style="font-size:10px;color:var(--dim);margin:10px 0 6px;">Ogni linea è il rendimento cumulato reale Gen→Dic di quell'anno. L'anno corrente è evidenziato in blu spesso.</div>
+          <div id="correlationCardsWrap" style="overflow-x:auto;"></div>
         </div>
         <div class="panel">
           <div class="panel-title">📅 STAGIONALITÀ MENSILE
@@ -554,6 +554,7 @@ function computeMonthlyGrid(dates,closes){
 }
 
 // ── FORECAST STAGIONALE MULTI-PERIODO ────────────────────────────────
+// ── FORECAST STAGIONALE (una linea per anno, stile TradingView) ────────
 function buildYearCurves(dates,closes){
   // Per ogni anno: array di {doy, cumRet} = rendimento cumulato dal 1° gennaio di quell'anno
   const byYear={};
@@ -566,16 +567,6 @@ function buildYearCurves(dates,closes){
   });
   return byYear;
 }
-function averageCurve(byYear,years){
-  const sumMap=new Map(), cntMap=new Map();
-  years.forEach(y=>{ (byYear[y]||[]).forEach(pt=>{
-    sumMap.set(pt.doy,(sumMap.get(pt.doy)||0)+pt.cumRet);
-    cntMap.set(pt.doy,(cntMap.get(pt.doy)||0)+1);
-  }); });
-  const map=new Map();
-  [...sumMap.keys()].forEach(doy=> map.set(doy, sumMap.get(doy)/cntMap.get(doy)) );
-  return map; // doy -> valore medio
-}
 function pearsonCorr(xs,ys){
   const n=xs.length; if(n<10) return null;
   const mx=xs.reduce((a,b)=>a+b,0)/n, my=ys.reduce((a,b)=>a+b,0)/n;
@@ -586,21 +577,7 @@ function pearsonCorr(xs,ys){
 }
 const MONTH_STARTS=[1,32,60,91,121,152,182,213,244,274,305,335];
 const MONTH_NAMES_SHORT=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
-
-function smoothCurveArray(arr,windowSize=9){
-  // Media mobile centrata: riduce il rumore giorno-per-giorno delle curve
-  // medie storiche (l'anno corrente resta invece il dato reale, non smussato).
-  const out=new Array(arr.length).fill(null);
-  const half=Math.floor(windowSize/2);
-  for(let i=0;i<arr.length;i++){
-    let sum=0,cnt=0;
-    for(let j=Math.max(0,i-half);j<=Math.min(arr.length-1,i+half);j++){
-      if(arr[j]!=null){ sum+=arr[j]; cnt++; }
-    }
-    if(cnt>0) out[i]=sum/cnt;
-  }
-  return out;
-}
+function yearColor(i){ const hue=Math.round((i*137.508)%360); return `hsl(${hue},65%,58%)`; }
 
 let seasonForecastChartObj=null;
 window.renderSeasonalForecast=function(){
@@ -608,39 +585,20 @@ window.renderSeasonalForecast=function(){
   const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
   const allYears=Object.keys(byYear).map(Number).sort((a,b)=>a-b);
   const currentYear=allYears[allYears.length-1];
-  const pastYears=allYears.filter(y=>y<currentYear);
+  const nShow=parseInt(el("seasonForecastYears").value);
+  const years = nShow>=9999 ? allYears : allYears.slice(Math.max(0,allYears.length-nShow));
 
-  const selected=[...document.querySelectorAll(".fcYear:checked")].map(c=>c.value);
-  const colors={current:"#ff3d71",1:"#c0392b",3:"#ff9f1c",5:"#f0c040",7:"#4fa3ff",10:"#00d4b8",15:"#c77dff",all:"#2ecc71"};
-  const labelsMap={current:"Anno corrente",1:"1 anno",3:"3 anni",5:"5 anni",7:"7 anni",10:"10 anni",15:"15 anni",all:"Tutto lo storico"};
-
-  const datasets=[];
-  const currentCurve=byYear[currentYear]||[];
-  const currentDoyVal=new Map(currentCurve.map(p=>[p.doy,p.cumRet]));
-  const corrResults=[];
-
-  selected.forEach(sel=>{
-    let curveMap;
-    if(sel==="current"){
-      curveMap=currentDoyVal;
-    } else {
-      const n=sel==="all"?pastYears.length:parseInt(sel);
-      const years=pastYears.slice(Math.max(0,pastYears.length-n));
-      if(years.length===0) return;
-      curveMap=averageCurve(byYear,years);
-      // correlazione con l'anno corrente sui giorni in comune
-      const xs=[],ys=[];
-      currentDoyVal.forEach((v,doy)=>{ if(curveMap.has(doy)){ xs.push(v); ys.push(curveMap.get(doy)); } });
-      const corr=pearsonCorr(xs,ys);
-      corrResults.push({label:labelsMap[sel], corr, years:years.length});
-    }
-    const doys=[...curveMap.keys()].sort((a,b)=>a-b);
-    let data=new Array(366).fill(null);
-    doys.forEach(doy=>{ data[doy-1]=curveMap.get(doy); });
-    if(sel!=="current") data=smoothCurveArray(data,9); // lisciamo solo le medie storiche
-    data=data.map(v=>v!=null?parseFloat(v.toFixed(2)):null);
-    datasets.push({ label:labelsMap[sel], data, borderColor:colors[sel], backgroundColor:colors[sel],
-      borderWidth:sel==="current"?2.5:1.5, pointRadius:0, tension:0.15, spanGaps:true });
+  const datasets=[]; const legendRows=[];
+  years.forEach((y,idx)=>{
+    const curve=byYear[y]; if(!curve||curve.length===0) return;
+    const isCurrent = y===currentYear;
+    const data=new Array(366).fill(null);
+    curve.forEach(pt=>{ data[pt.doy-1]=parseFloat(pt.cumRet.toFixed(2)); });
+    const color = isCurrent ? "#2563eb" : yearColor(idx);
+    datasets.push({ label:String(y), data, borderColor:color, backgroundColor:color,
+      borderWidth:isCurrent?3:1.2, pointRadius:0, tension:0.05, spanGaps:true,
+      order:isCurrent?0:1 });
+    legendRows.push({ year:y, val:curve[curve.length-1].cumRet, color, isCurrent });
   });
 
   const ctx=el("seasonForecastChart");
@@ -649,19 +607,27 @@ window.renderSeasonalForecast=function(){
     type:"line",
     data:{labels:Array.from({length:366},(_,i)=>i+1), datasets},
     options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}},
-        tooltip:{callbacks:{title:items=>{ const doy=items[0].parsed.x+1; return dayOfYearToLabel(doy); }}}},
+      plugins:{legend:{display:false},
+        tooltip:{mode:"index",intersect:false,callbacks:{title:items=>{ const doy=items[0].parsed.x+1; return dayOfYearToLabel(doy); }}}},
       scales:{
         x:{ticks:{color:"#7d8aa3",font:{size:9},callback:(v,i)=>{ const doy=i+1; const mi=MONTH_STARTS.indexOf(doy); return mi>=0?MONTH_NAMES_SHORT[mi]:""; },
               autoSkip:false,maxRotation:0}, grid:{color:"#1e2d45"}},
-        y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+        y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}},
+      interaction:{mode:"index",intersect:false}}
   });
 
-  el("correlationCardsWrap").innerHTML = corrResults.map(r=>{
-    const pct = r.corr!=null ? (r.corr*100) : null;
-    const col = pct==null?"var(--dim)":pct>=80?"#00d4b8":pct>=50?"#80ed99":pct>=20?"#ffd23f":"#ff6b6b";
-    return `<div class="card"><div class="v" style="color:${col};">${pct!=null?pct.toFixed(1)+"%":"--"}</div><div class="l">${r.label} (${r.years}y) — Correlazione</div></div>`;
-  }).join("");
+  // Legenda ordinata per rendimento decrescente, come TradingView
+  legendRows.sort((a,b)=>b.val-a.val);
+  let h=`<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+  legendRows.forEach(r=>{
+    h+=`<div style="display:flex;align-items:center;gap:6px;background:${r.color}22;border:1px solid ${r.color};border-radius:6px;padding:4px 10px;${r.isCurrent?'font-weight:800;':''}">
+      <span style="width:8px;height:8px;border-radius:50%;background:${r.color};display:inline-block;"></span>
+      <span style="font-size:11px;color:var(--txt);">${r.year}${r.isCurrent?' (YTD)':''}</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:${r.val>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(r.val)}</span>
+    </div>`;
+  });
+  h+="</div>";
+  el("correlationCardsWrap").innerHTML=h;
 };
 function dayOfYearToLabel(doy){
   let mi=0; for(let i=0;i<MONTH_STARTS.length;i++){ if(doy>=MONTH_STARTS[i]) mi=i; }
