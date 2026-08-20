@@ -587,6 +587,21 @@ function pearsonCorr(xs,ys){
 const MONTH_STARTS=[1,32,60,91,121,152,182,213,244,274,305,335];
 const MONTH_NAMES_SHORT=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
 
+function smoothCurveArray(arr,windowSize=9){
+  // Media mobile centrata: riduce il rumore giorno-per-giorno delle curve
+  // medie storiche (l'anno corrente resta invece il dato reale, non smussato).
+  const out=new Array(arr.length).fill(null);
+  const half=Math.floor(windowSize/2);
+  for(let i=0;i<arr.length;i++){
+    let sum=0,cnt=0;
+    for(let j=Math.max(0,i-half);j<=Math.min(arr.length-1,i+half);j++){
+      if(arr[j]!=null){ sum+=arr[j]; cnt++; }
+    }
+    if(cnt>0) out[i]=sum/cnt;
+  }
+  return out;
+}
+
 let seasonForecastChartObj=null;
 window.renderSeasonalForecast=function(){
   if(!STOCK) return;
@@ -620,8 +635,10 @@ window.renderSeasonalForecast=function(){
       corrResults.push({label:labelsMap[sel], corr, years:years.length});
     }
     const doys=[...curveMap.keys()].sort((a,b)=>a-b);
-    const data=new Array(366).fill(null);
-    doys.forEach(doy=>{ data[doy-1]=parseFloat(curveMap.get(doy).toFixed(2)); });
+    let data=new Array(366).fill(null);
+    doys.forEach(doy=>{ data[doy-1]=curveMap.get(doy); });
+    if(sel!=="current") data=smoothCurveArray(data,9); // lisciamo solo le medie storiche
+    data=data.map(v=>v!=null?parseFloat(v.toFixed(2)):null);
     datasets.push({ label:labelsMap[sel], data, borderColor:colors[sel], backgroundColor:colors[sel],
       borderWidth:sel==="current"?2.5:1.5, pointRadius:0, tension:0.15, spanGaps:true });
   });
