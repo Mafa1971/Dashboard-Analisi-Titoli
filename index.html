@@ -182,6 +182,37 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">📋 TABELLA RENDIMENTI MENSILI PER ANNO</div>
           <div id="seasonTableWrap" style="overflow-x:auto;"></div>
         </div>
+        <div class="panel">
+          <div class="panel-title">📈 STATISTICHE MENSILI AVANZATE</div>
+          <div id="monthlyStatsWrap" style="overflow-x:auto;"></div>
+          <div style="font-size:10px;color:var(--dim);margin-top:10px;">"Rend/Rischio" = rendimento medio del mese ÷ deviazione standard del mese. "Score" = probabilità positiva × rendimento medio ÷ deviazione standard (più alto = pattern stagionale più affidabile).</div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">🐂🐻 STAGIONALITÀ: ANNI RIALZISTI VS RIBASSISTI</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Confronta il rendimento medio di ogni mese negli anni in cui il titolo ha chiuso l'anno positivo (rialzista) contro quelli in cui ha chiuso negativo (ribassista).</div>
+          <div id="bullBearWrap" style="overflow-x:auto;"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📆 STAGIONALITÀ SETTIMANALE (per settimana dell'anno, 1-52)</div>
+          <div style="height:220px;"><canvas id="weeklySeasonChart"></canvas></div>
+          <div id="weeklyStatsWrap" style="margin-top:12px;"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📈 STAGIONALITÀ GIORNALIERA</div>
+          <div id="dailyStatsWrap" style="overflow-x:auto;margin-bottom:14px;"></div>
+          <div class="panel-title" style="margin-top:6px;">🌙 OVERNIGHT vs INTRADAY</div>
+          <div id="overnightIntradayWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));"></div>
+          <div class="panel-title" style="margin-top:14px;">⚡ GAP UP/DOWN (soglia ±0.5%)</div>
+          <div id="gapWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));"></div>
+          <div class="panel-title" style="margin-top:14px;">🔁 COMPORTAMENTO DOPO UN MOVIMENTO FORTE
+            <label style="font-size:10px;color:var(--dim);margin-left:8px;">Soglia %
+              <input type="number" id="strongMoveThreshold" value="2" min="0.5" max="10" step="0.5" style="width:55px;" onchange="renderDailySeasonality()">
+            </label>
+          </div>
+          <div id="afterMoveWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"></div>
+          <div class="panel-title" style="margin-top:14px;">🔗 AUTOCORRELAZIONE DEI RENDIMENTI (lag 1-5 giorni)</div>
+          <div id="autocorrWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));"></div>
+        </div>
       </div>
 
       <!-- TAB RISCHIO -->
@@ -705,6 +736,212 @@ window.renderSeasonality=function(){
   });
   h+="</table>";
   el("seasonTableWrap").innerHTML=h;
+
+  const currentYear2 = STOCK.dates[STOCK.dates.length-1].getFullYear();
+  renderMonthlyAdvanced(grid, years, currentYear2);
+  renderBullBear(STOCK.dates, STOCK.closes, years);
+  renderWeeklySeasonality(STOCK.dates, STOCK.closes, years);
+  renderDailySeasonality();
+};
+
+// ── STATISTICHE STATISTICHE DI BASE ─────────────────────────────────
+function median(arr){ if(arr.length===0) return null; const s=[...arr].sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+function stdDevSimple(arr){ if(arr.length<2) return null; const avg=arr.reduce((a,b)=>a+b,0)/arr.length; return Math.sqrt(arr.reduce((a,v)=>a+Math.pow(v-avg,2),0)/arr.length); }
+
+// ── MENSILE AVANZATO ─────────────────────────────────────────────────
+function renderMonthlyAdvanced(grid, years, currentYear2){
+  const monthNames=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  let h=`<table><tr><th>Mese</th><th>Media</th><th>Mediana</th><th>Dev.Std</th><th>% Positivi</th><th>Migliore</th><th>Peggiore</th><th>Rend/Rischio</th><th>Score</th><th>Ultimo vs Media</th></tr>`;
+  for(let m=0;m<12;m++){
+    const vals=years.map(y=>grid[y]?.[m]).filter(v=>v!=null);
+    if(vals.length===0){ h+=`<tr><td style="font-weight:700;">${monthNames[m]}</td><td colspan="9" style="color:var(--dim);">Dati insufficienti</td></tr>`; continue; }
+    const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+    const med=median(vals);
+    const sd=stdDevSimple(vals);
+    const probPos=vals.filter(v=>v>0).length/vals.length*100;
+    const best=Math.max(...vals), worst=Math.min(...vals);
+    const riskAdj = sd>0 ? avg/sd : null;
+    const score = sd>0 ? (probPos/100)*avg/sd : null;
+    const lastVal = grid[currentYear2]?.[m];
+    const vsAvg = lastVal!=null ? lastVal-avg : null;
+    h+=`<tr>
+      <td style="font-weight:700;">${monthNames[m]}</td>
+      <td style="color:${avg>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${avg.toFixed(2)}%</td>
+      <td>${med!=null?med.toFixed(2)+'%':'--'}</td>
+      <td>${sd!=null?sd.toFixed(2)+'%':'--'}</td>
+      <td style="color:${probPos>=60?'#00d4b8':probPos>=40?'#ffd23f':'#ff6b6b'};">${probPos.toFixed(0)}%</td>
+      <td style="color:#00d4b8;">+${best.toFixed(1)}%</td>
+      <td style="color:#ff6b6b;">${worst.toFixed(1)}%</td>
+      <td>${riskAdj!=null?riskAdj.toFixed(2):'--'}</td>
+      <td style="font-weight:700;color:${score>0.05?'#00d4b8':score>0?'#ffd23f':'var(--dim)'};">${score!=null?score.toFixed(2):'--'}</td>
+      <td style="color:${vsAvg==null?'var(--dim)':vsAvg>=0?'#00d4b8':'#ff6b6b'};">${vsAvg!=null?fmtPct(vsAvg):'--'}</td>
+    </tr>`;
+  }
+  h+="</table>";
+  el("monthlyStatsWrap").innerHTML=h;
+}
+
+// ── ANNI RIALZISTI VS RIBASSISTI ─────────────────────────────────────
+function computeAnnualReturnsByYear(dates,closes){
+  const map=new Map(); dates.forEach((d,i)=>map.set(d.getFullYear(),closes[i])); // ultimo close = fine anno
+  const ys=[...map.keys()].sort((a,b)=>a-b);
+  const out={};
+  for(let i=1;i<ys.length;i++){ out[ys[i]]=(map.get(ys[i])-map.get(ys[i-1]))/map.get(ys[i-1])*100; }
+  return out;
+}
+function renderBullBear(dates,closes,years){
+  const annualRet=computeAnnualReturnsByYear(dates,closes);
+  const grid=computeMonthlyGrid(dates,closes);
+  const bullYears=years.filter(y=>annualRet[y]>0);
+  const bearYears=years.filter(y=>annualRet[y]<0);
+  const monthNames=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  const avgFor=(yrs,m)=>{ const v=yrs.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?v.reduce((a,b)=>a+b,0)/v.length:null; };
+  let h=`<div style="font-size:11px;color:var(--dim);margin-bottom:8px;">🐂 Anni rialzisti: ${bullYears.join(", ")||"nessuno"} &nbsp;|&nbsp; 🐻 Anni ribassisti: ${bearYears.join(", ")||"nessuno"}</div>`;
+  h+=`<table><tr><th>Mese</th>${monthNames.map(m=>`<th>${m}</th>`).join("")}</tr>`;
+  h+=`<tr><td style="font-weight:700;color:#00d4b8;">🐂 Rialzisti (${bullYears.length}y)</td>${monthNames.map((_,m)=>{ const v=avgFor(bullYears,m); return `<td style="color:${v==null?'var(--dim)':v>=0?'#00d4b8':'#ff6b6b'};">${v!=null?v.toFixed(1)+'%':'--'}</td>`; }).join("")}</tr>`;
+  h+=`<tr><td style="font-weight:700;color:#ff6b6b;">🐻 Ribassisti (${bearYears.length}y)</td>${monthNames.map((_,m)=>{ const v=avgFor(bearYears,m); return `<td style="color:${v==null?'var(--dim)':v>=0?'#00d4b8':'#ff6b6b'};">${v!=null?v.toFixed(1)+'%':'--'}</td>`; }).join("")}</tr>`;
+  h+="</table>";
+  el("bullBearWrap").innerHTML=h;
+}
+
+// ── STAGIONALITÀ SETTIMANALE ─────────────────────────────────────────
+let weeklySeasonChartObj=null;
+function computeWeeklyGrid(dates,closes){
+  const map=new Map();
+  dates.forEach((d,i)=>{
+    const tmp=new Date(d); tmp.setHours(0,0,0,0); tmp.setDate(tmp.getDate()+3-((tmp.getDay()+6)%7));
+    const ys=new Date(tmp.getFullYear(),0,1); const wn=Math.ceil((((tmp-ys)/86400000)+1)/7);
+    map.set(tmp.getFullYear()+"-"+wn, closes[i]);
+  });
+  const keys=[...map.keys()];
+  const byWeek={}; let prevClose=null;
+  keys.forEach(k=>{
+    const val=map.get(k);
+    if(prevClose!=null){
+      const wn=parseInt(k.split("-")[1]);
+      const pct=(val-prevClose)/prevClose*100;
+      if(!byWeek[wn]) byWeek[wn]=[];
+      byWeek[wn].push(pct);
+    }
+    prevClose=val;
+  });
+  return byWeek;
+}
+function renderWeeklySeasonality(dates,closes,years){
+  const yearSet=new Set(years);
+  const filteredDates=[],filteredCloses=[];
+  dates.forEach((d,i)=>{ if(yearSet.has(d.getFullYear())){ filteredDates.push(d); filteredCloses.push(closes[i]); } });
+  const byWeek=computeWeeklyGrid(filteredDates,filteredCloses);
+  const weekNums=Array.from({length:52},(_,i)=>i+1);
+  const avgByWeek=weekNums.map(wn=>{ const v=byWeek[wn]||[]; return v.length?v.reduce((a,b)=>a+b,0)/v.length:null; });
+
+  const ctx=el("weeklySeasonChart");
+  if(weeklySeasonChartObj) weeklySeasonChartObj.destroy();
+  weeklySeasonChartObj=new Chart(ctx.getContext("2d"),{
+    type:"bar",
+    data:{labels:weekNums.map(w=>"W"+w),datasets:[{label:"Rendimento medio %",data:avgByWeek,
+      backgroundColor:avgByWeek.map(v=>v==null?"#1e2d45":v>=0?"#00d4b8":"#ff6b6b")}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:13},grid:{display:false}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+  });
+
+  let allWeekly=[]; Object.values(byWeek).forEach(arr=>allWeekly.push(...arr));
+  const probPos = allWeekly.length ? (allWeekly.filter(v=>v>0).length/allWeekly.length*100) : null;
+  let bestWn=null,worstWn=null,bestVal=-Infinity,worstVal=Infinity;
+  weekNums.forEach(wn=>{ const v=avgByWeek[wn-1]; if(v==null) return; if(v>bestVal){bestVal=v;bestWn=wn;} if(v<worstVal){worstVal=v;worstWn=wn;} });
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("weeklyStatsWrap").innerHTML=`<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+    ${card("% Settimane Positive", probPos!=null?probPos.toFixed(0)+"%":"--", probPos>=55?"#00d4b8":probPos>=45?"#ffd23f":"#ff6b6b")}
+    ${card("Miglior Settimana", bestWn?"W"+bestWn+" ("+fmtPct(bestVal)+")":"--","#00d4b8")}
+    ${card("Peggior Settimana", worstWn?"W"+worstWn+" ("+fmtPct(worstVal)+")":"--","#ff6b6b")}
+  </div>`;
+}
+
+// ── STAGIONALITÀ GIORNALIERA ──────────────────────────────────────────
+const WEEKDAY_NAMES=["Dom","Lun","Mar","Mer","Gio","Ven","Sab"];
+function pearsonAutocorr(returns,lag){
+  const n=returns.length-lag; if(n<20) return null;
+  const xs=returns.slice(0,n), ys=returns.slice(lag,lag+n);
+  const mx=xs.reduce((a,b)=>a+b,0)/n, my=ys.reduce((a,b)=>a+b,0)/n;
+  let num=0,dx2=0,dy2=0;
+  for(let i=0;i<n;i++){ const dx=xs[i]-mx, dy=ys[i]-my; num+=dx*dy; dx2+=dx*dx; dy2+=dy*dy; }
+  const den=Math.sqrt(dx2*dy2);
+  return den>0?(num/den):null;
+}
+window.renderDailySeasonality=function(){
+  if(!STOCK) return;
+  const {dates,opens,closes}=STOCK;
+
+  // rendimenti close-to-close per giorno della settimana
+  const byWeekday={}; // 1..5 -> array pct
+  for(let i=1;i<closes.length;i++){
+    const wd=dates[i].getDay(); if(wd===0||wd===6) continue;
+    const pct=(closes[i]-closes[i-1])/closes[i-1]*100;
+    if(!byWeekday[wd]) byWeekday[wd]=[];
+    byWeekday[wd].push(pct);
+  }
+  let h=`<table><tr><th>Giorno</th><th>Rend.Medio</th><th>% Positivi</th><th>Dev.Std</th><th>Score</th></tr>`;
+  [1,2,3,4,5].forEach(wd=>{
+    const vals=byWeekday[wd]||[];
+    if(vals.length===0){ h+=`<tr><td>${WEEKDAY_NAMES[wd]}</td><td colspan="4" style="color:var(--dim);">--</td></tr>`; return; }
+    const avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+    const probPos=vals.filter(v=>v>0).length/vals.length*100;
+    const sd=stdDevSimple(vals);
+    const score= sd>0 ? (probPos/100)*avg/sd : null;
+    h+=`<tr><td style="font-weight:700;">${WEEKDAY_NAMES[wd]}</td>
+      <td style="color:${avg>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${avg.toFixed(3)}%</td>
+      <td style="color:${probPos>=55?'#00d4b8':probPos>=45?'#ffd23f':'#ff6b6b'};">${probPos.toFixed(0)}%</td>
+      <td>${sd!=null?sd.toFixed(2)+'%':'--'}</td>
+      <td style="font-weight:700;color:${score>0.02?'#00d4b8':score>0?'#ffd23f':'var(--dim)'};">${score!=null?score.toFixed(3):'--'}</td></tr>`;
+  });
+  h+="</table>";
+  el("dailyStatsWrap").innerHTML=h;
+
+  // overnight vs intraday
+  const overnight=[], intraday=[];
+  for(let i=1;i<closes.length;i++) overnight.push((opens[i]-closes[i-1])/closes[i-1]*100);
+  for(let i=0;i<closes.length;i++) intraday.push((closes[i]-opens[i])/opens[i]*100);
+  const avgOn=overnight.reduce((a,b)=>a+b,0)/overnight.length;
+  const avgIn=intraday.reduce((a,b)=>a+b,0)/intraday.length;
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("overnightIntradayWrap").innerHTML=
+    card("Rend. Medio Overnight (chiusura→apertura)", fmtPct(avgOn), avgOn>=0?"#00d4b8":"#ff6b6b")+
+    card("Rend. Medio Intraday (apertura→chiusura)", fmtPct(avgIn), avgIn>=0?"#00d4b8":"#ff6b6b")+
+    card("Contributo Overnight sul totale", avgOn+avgIn!==0?((avgOn/(avgOn+avgIn))*100).toFixed(0)+"%":"--","var(--dim)");
+
+  // gap up/down (soglia 0.5%)
+  const gapThr=0.5;
+  const gapUp=overnight.filter(v=>v>gapThr), gapDown=overnight.filter(v=>v<-gapThr);
+  el("gapWrap").innerHTML=
+    card("Frequenza Gap-Up", (gapUp.length/overnight.length*100).toFixed(1)+"%","#00d4b8")+
+    card("Magnitudo Media Gap-Up", gapUp.length?fmtPct(gapUp.reduce((a,b)=>a+b,0)/gapUp.length):"--","#00d4b8")+
+    card("Frequenza Gap-Down", (gapDown.length/overnight.length*100).toFixed(1)+"%","#ff6b6b")+
+    card("Magnitudo Media Gap-Down", gapDown.length?fmtPct(gapDown.reduce((a,b)=>a+b,0)/gapDown.length):"--","#ff6b6b");
+
+  // comportamento dopo movimento forte
+  const thr=parseFloat(el("strongMoveThreshold").value)||2;
+  const dailyRet=[]; for(let i=1;i<closes.length;i++) dailyRet.push((closes[i]-closes[i-1])/closes[i-1]*100);
+  const afterUp=[],afterDown=[];
+  for(let i=0;i<dailyRet.length-1;i++){
+    if(dailyRet[i]>thr) afterUp.push(dailyRet[i+1]);
+    if(dailyRet[i]<-thr) afterDown.push(dailyRet[i+1]);
+  }
+  el("afterMoveWrap").innerHTML=
+    card(`Giorno dopo +${thr}% (n=${afterUp.length})`, afterUp.length?fmtPct(afterUp.reduce((a,b)=>a+b,0)/afterUp.length):"--", afterUp.length&&afterUp.reduce((a,b)=>a+b,0)>=0?"#00d4b8":"#ff6b6b")+
+    card(`% Positivi dopo +${thr}%`, afterUp.length?(afterUp.filter(v=>v>0).length/afterUp.length*100).toFixed(0)+"%":"--","var(--dim)")+
+    card(`Giorno dopo -${thr}% (n=${afterDown.length})`, afterDown.length?fmtPct(afterDown.reduce((a,b)=>a+b,0)/afterDown.length):"--", afterDown.length&&afterDown.reduce((a,b)=>a+b,0)>=0?"#00d4b8":"#ff6b6b")+
+    card(`% Positivi dopo -${thr}%`, afterDown.length?(afterDown.filter(v=>v>0).length/afterDown.length*100).toFixed(0)+"%":"--","var(--dim)");
+
+  // autocorrelazione lag 1-5
+  const dailyRetDecimal=dailyRet.map(v=>v/100);
+  let ah="";
+  for(let lag=1;lag<=5;lag++){
+    const ac=pearsonAutocorr(dailyRetDecimal,lag);
+    ah+=card("Lag "+lag, ac!=null?(ac*100).toFixed(1)+"%":"--", ac==null?"var(--dim)":Math.abs(ac)>0.1?(ac>0?"#00d4b8":"#ff6b6b"):"var(--dim)");
+  }
+  el("autocorrWrap").innerHTML=ah;
 };
 
 // ── RISCHIO ───────────────────────────────────────────────────────────
