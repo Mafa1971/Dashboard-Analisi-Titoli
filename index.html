@@ -1406,6 +1406,14 @@ function calcSupportResistancePivot(closes,highs,lows,lookback=60){
   return { pivot, r1:2*pivot-low, r2:pivot+(high-low), s1:2*pivot-high, s2:pivot-(high-low), high, low, close };
 }
 
+function mdToHtml(text){
+  return text
+    .replace(/^### (.*)$/gm,"<strong style='font-size:13px;'>$1</strong>")
+    .replace(/^## (.*)$/gm,"<div style='margin-top:10px;font-weight:800;color:var(--gold);'>$1</div>")
+    .replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>")
+    .replace(/\n/g,"<br>");
+}
+
 let aiChatMessages=[];
 window.setAIQ=function(q){ el("aiQuestion").value=q; el("aiQuestion").focus(); };
 
@@ -1441,7 +1449,7 @@ window.askClaudeAI=async function(){
     }catch(e){}
   }
 
-  const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, conciso (max 300 parole), con emoji per chiarezza. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
+  const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, conciso (max 200 parole), con emoji per chiarezza. Usa **grassetto** con parsimonia, evita titoli con ## e liste eccessive — scrivi a paragrafi brevi. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
 
 Titolo: ${STOCK.ticker} — ${STOCK.name} (${STOCK.currency})
 Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
@@ -1473,10 +1481,14 @@ Domanda: ${question}`;
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ prompt, imageBase64 })
     });
-    const data=await res.json();
+    let data;
+    try{ data=await res.json(); }
+    catch(parseErr){
+      throw new Error(res.status>=500?"Il server ha impiegato troppo tempo a rispondere (timeout). Prova senza lo screenshot del grafico, o con una domanda più breve.":"Risposta del server non valida (status "+res.status+")");
+    }
     const answer=data.text || data.error || "Errore nella risposta.";
     el("aiLoadingMsg")?.remove();
-    chatEl.innerHTML+=`<div style="align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 10px 0;padding:10px 13px;font-size:12px;max-width:90%;line-height:1.6;">${answer.replace(/\n/g,"<br>")}</div>`;
+    chatEl.innerHTML+=`<div style="align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 10px 0;padding:10px 13px;font-size:12px;max-width:90%;line-height:1.6;">${mdToHtml(answer)}</div>`;
     chatEl.scrollTop=chatEl.scrollHeight;
   }catch(err){
     el("aiLoadingMsg")?.remove();
