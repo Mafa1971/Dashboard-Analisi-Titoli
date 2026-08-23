@@ -108,6 +108,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Stagionalita')" id="tnStagionalita">📅 Stagionalità</button>
         <button class="btn tabnav" onclick="switchTab('Rischio')" id="tnRischio">🎯 Rischio</button>
         <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio">📑 Bilancio</button>
+        <button class="btn tabnav" onclick="switchTab('Markov')" id="tnMarkov">🔗 Markov</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -239,6 +240,61 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="fundTableWrap" style="overflow-x:auto;"></div>
         </div>
       </div>
+
+      <!-- TAB MARKOV -->
+      <div id="tabMarkov" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🔗 CATENE DI MARKOV — CLASSIFICAZIONE A 5 STATI</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Periodicità:
+              <select id="markovGranularity" onchange="renderMarkov()" style="margin-left:4px;">
+                <option value="daily" selected>Giornaliera</option>
+                <option value="weekly">Settimanale</option>
+                <option value="monthly">Mensile</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Regime volatilità:
+              <select id="markovVolRegime" onchange="renderMarkov()" style="margin-left:4px;">
+                <option value="all" selected>Tutti i periodi</option>
+                <option value="low">Solo bassa volatilità</option>
+                <option value="high">Solo alta volatilità</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Soglie (σ):
+              <input type="number" id="markovSigma1" value="0.5" step="0.1" min="0.1" style="width:50px;" onchange="renderMarkov()">
+              /
+              <input type="number" id="markovSigma2" value="1.5" step="0.1" min="0.2" style="width:50px;" onchange="renderMarkov()">
+            </label>
+          </div>
+          <div id="markovStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="markovCurrentWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:16px;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">🎲 MATRICE DI TRANSIZIONE (5 stati) — riga = stato oggi, colonna = stato domani</div>
+          <div id="markovMatrix5Wrap" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">📊 MATRICE AGGREGATA (3 stati: Ribasso / Laterale / Rialzo)</div>
+          <div id="markovMatrix3Wrap" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">🔮 PROBABILITÀ A N STEP (partendo dallo stato attuale)</div>
+          <div id="markovNStepWrap" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">📈 STATO STAZIONARIO (distribuzione di lungo periodo)</div>
+          <div id="markovStationaryWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">⚠️ TRANSIZIONI ANOMALE (più lontane dalla probabilità "casuale" del 20%)</div>
+          <div id="markovAnomalyWrap"></div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
@@ -250,6 +306,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Stagionalita')" id="tabBtnStagionalita"><span class="tab-icon">📅</span><span class="tab-label">Stagion.</span></button>
     <button class="tab-btn" onclick="switchTab('Rischio')" id="tabBtnRischio"><span class="tab-icon">🎯</span><span class="tab-label">Rischio</span></button>
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
+    <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
   </nav>
 </div>
 
@@ -289,6 +346,7 @@ window.switchTab=function(name){
   const tn = el("tn"+name); if(tn) tn.classList.add("active");
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
   if(name==="Rischio" && STOCK) renderRisk();
+  if(name==="Markov" && STOCK) renderMarkov();
 };
 
 // ── YAHOO FETCH ───────────────────────────────────────────────────────
@@ -509,14 +567,43 @@ function computeCycles(dates,closes,thresholdPct){
   }
   const ups=swings.filter(s=>s.type==="up"), downs=swings.filter(s=>s.type==="down");
   const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+
+  // Dove siamo ORA: dall'ultimo pivot confermato fino all'ultimo giorno reale disponibile
+  let current=null;
+  if(pivots.length>=2){
+    const lastConfirmed=pivots[pivots.length-2];
+    const lastIdx=closes.length-1;
+    const days=Math.round((dates[lastIdx]-dates[lastConfirmed.idx])/86400000);
+    const retPct=(closes[lastIdx]-lastConfirmed.price)/lastConfirmed.price*100;
+    current={ type: retPct>=0?"up":"down", days, retPct, sinceDate: dates[lastConfirmed.idx] };
+  }
   return { threshold:thresholdPct, totalSwings:swings.length,
     up:{count:ups.length,avgDays:avg(ups.map(s=>s.days)),avgReturn:avg(ups.map(s=>s.retPct))},
-    down:{count:downs.length,avgDays:avg(downs.map(s=>s.days)),avgReturn:avg(downs.map(s=>s.retPct))} };
+    down:{count:downs.length,avgDays:avg(downs.map(s=>s.days)),avgReturn:avg(downs.map(s=>s.retPct))},
+    current };
 }
 function renderCycleStats(cycles){
   const wrap=el("cycleStatsWrap");
   if(cycles.totalSwings===0){ wrap.innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun ciclo rilevato con soglia ${cycles.threshold}%. Prova ad abbassare la soglia.</div>`; return; }
-  wrap.innerHTML=`<div style="font-size:11px;color:var(--dim);margin-bottom:12px;">Soglia inversione: <strong style="color:var(--gold);">${cycles.threshold}%</strong> — ${cycles.totalSwings} cicli rilevati</div>
+
+  let currentHtml="";
+  if(cycles.current){
+    const c=cycles.current;
+    const isUp=c.type==="up";
+    const refStats = isUp?cycles.up:cycles.down;
+    const daysDiff = refStats.avgDays!=null ? c.days-refStats.avgDays : null;
+    const retDiff = refStats.avgReturn!=null ? c.retPct-refStats.avgReturn : null;
+    currentHtml=`<div class="card" style="border:1.5px solid ${isUp?'#00d4b8':'#ff6b6b'};margin-bottom:14px;">
+      <div class="l" style="margin-bottom:8px;color:${isUp?'#00d4b8':'#ff6b6b'};">📍 CICLO IN CORSO — ${isUp?'🟢 Rialzista':'🔴 Ribassista'} dal ${c.sinceDate.toLocaleDateString('it-IT')}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+        <div><div class="v" style="color:${isUp?'#00d4b8':'#ff6b6b'};">${c.days} gg</div><div class="l">Durata Finora ${daysDiff!=null?'('+(daysDiff>=0?'+':'')+Math.round(daysDiff)+' gg vs media)':''}</div></div>
+        <div><div class="v" style="color:${isUp?'#00d4b8':'#ff6b6b'};">${fmtPct(c.retPct)}</div><div class="l">Rendimento Finora ${retDiff!=null?'('+(retDiff>=0?'+':'')+retDiff.toFixed(1)+'% vs media)':''}</div></div>
+        <div><div class="v" style="color:${daysDiff>0?'#ffd23f':'var(--dim)'};">${refStats.avgDays!=null&&c.days>refStats.avgDays?'Più lungo della media':refStats.avgDays!=null?'Sotto la media':'--'}</div><div class="l">Rispetto al ciclo medio</div></div>
+      </div>
+    </div>`;
+  }
+
+  wrap.innerHTML=currentHtml+`<div style="font-size:11px;color:var(--dim);margin-bottom:12px;">Soglia inversione: <strong style="color:var(--gold);">${cycles.threshold}%</strong> — ${cycles.totalSwings} cicli rilevati</div>
   <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
     <div class="card"><div class="l" style="margin-bottom:8px;color:#00d4b8;">🟢 Ciclo Medio Rialzista</div>
       <div class="v" style="color:#00d4b8;">${cycles.up.avgDays!=null?Math.round(cycles.up.avgDays)+" gg":"--"}</div><div class="l" style="margin-top:2px;">Durata Media</div>
@@ -1089,6 +1176,199 @@ function renderFundamentals(rows){
   h+="</table>";
   el("fundTableWrap").innerHTML=h;
 }
+
+// ── CATENE DI MARKOV ──────────────────────────────────────────────────
+const STATE_NAMES=["Forte Ribasso","Ribasso","Laterale","Rialzo","Forte Rialzo"];
+const STATE_COLORS=["#c0392b","#ff6b6b","#ffd23f","#80ed99","#00d4b8"];
+
+function periodReturnSeries(dates,closes,granularity){
+  // Ritorna [{date, pct}] in ordine cronologico
+  if(granularity==="daily"){
+    const out=[]; for(let i=1;i<closes.length;i++) out.push({date:dates[i], pct:(closes[i]-closes[i-1])/closes[i-1]*100});
+    return out;
+  }
+  const map=new Map();
+  dates.forEach((d,i)=>{
+    let key;
+    if(granularity==="weekly"){ const tmp=new Date(d); tmp.setHours(0,0,0,0); tmp.setDate(tmp.getDate()+3-((tmp.getDay()+6)%7));
+      const ys=new Date(tmp.getFullYear(),0,1); const wn=Math.ceil((((tmp-ys)/86400000)+1)/7); key=tmp.getFullYear()+"-W"+wn; }
+    else { key=d.getFullYear()+"-"+d.getMonth(); }
+    map.set(key,{date:d,close:closes[i]});
+  });
+  const entries=[...map.values()];
+  const out=[];
+  for(let i=1;i<entries.length;i++) out.push({date:entries[i].date, pct:(entries[i].close-entries[i-1].close)/entries[i-1].close*100});
+  return out;
+}
+
+function classifyStates(returns,sigma1,sigma2){
+  const sigma=stdDevSimple(returns.map(r=>r.pct));
+  if(!sigma||sigma===0) return returns.map(()=>2);
+  return returns.map(r=>{
+    const z=r.pct/sigma;
+    if(z<-sigma2) return 0; if(z<-sigma1) return 1; if(z<=sigma1) return 2; if(z<=sigma2) return 3; return 4;
+  });
+}
+
+function rollingVol(returns,window=10){
+  const vols=new Array(returns.length).fill(null);
+  for(let i=window;i<returns.length;i++){
+    const slice=returns.slice(i-window,i).map(r=>r.pct);
+    vols[i]=stdDevSimple(slice);
+  }
+  return vols;
+}
+
+function buildTransitionMatrix(states,nStates=5){
+  const counts=Array.from({length:nStates},()=>new Array(nStates).fill(0));
+  for(let i=0;i<states.length-1;i++) counts[states[i]][states[i+1]]++;
+  const matrix=counts.map(row=>{
+    const tot=row.reduce((a,b)=>a+b,0);
+    return tot>0 ? row.map(c=>c/tot) : row.map(()=>null);
+  });
+  return {matrix, counts};
+}
+
+function matVecMul(matrix,vec){
+  return matrix[0].map((_,j)=> vec.reduce((sum,v,i)=> sum + v*(matrix[i][j]==null?0:matrix[i][j]), 0));
+}
+function matMul(a,b){
+  const n=a.length;
+  const out=Array.from({length:n},()=>new Array(n).fill(0));
+  for(let i=0;i<n;i++) for(let j=0;j<n;j++) for(let k=0;k<n;k++) out[i][j]+=(a[i][k]||0)*(b[k][j]||0);
+  return out;
+}
+function matPow(matrix,n){
+  let result=matrix.map(row=>row.map(v=>v==null?0:v));
+  let base=result;
+  let p=n-1;
+  while(p>0){ result=matMul(result,base); p--; }
+  return result;
+}
+function stationaryDist(matrix,iterations=500){
+  const n=matrix.length;
+  let v=new Array(n).fill(1/n);
+  const m=matrix.map(row=>row.map(x=>x==null?1/n:x)); // righe senza dati: assume uniforme
+  for(let it=0;it<iterations;it++) v=matVecMul(m,v);
+  return v;
+}
+
+window.renderMarkov=function(){
+  if(!STOCK) return;
+  const granularity=el("markovGranularity").value;
+  const volRegime=el("markovVolRegime").value;
+  const sigma1=parseFloat(el("markovSigma1").value)||0.5;
+  const sigma2=parseFloat(el("markovSigma2").value)||1.5;
+
+  let series=periodReturnSeries(STOCK.dates,STOCK.closes,granularity);
+  if(series.length<30){ el("markovStatus").textContent="⚠️ Dati insufficienti per questa periodicità con lo storico caricato."; return; }
+
+  // Condizionamento volatilità: filtra le TRANSIZIONI in base al regime di volatilità del periodo di partenza
+  let vols=rollingVol(series,10);
+  const validVols=vols.filter(v=>v!=null);
+  const medianVol=median(validVols);
+
+  const allStates=classifyStates(series,sigma1,sigma2);
+  let statesForMatrix=allStates;
+  if(volRegime!=="all" && medianVol!=null){
+    // costruiamo una sequenza filtrata mantenendo solo transizioni i->i+1 dove vol[i] è nel regime scelto
+    const filteredPairs=[];
+    for(let i=0;i<allStates.length-1;i++){
+      if(vols[i]==null) continue;
+      const inRegime = volRegime==="low" ? vols[i]<=medianVol : vols[i]>medianVol;
+      if(inRegime) filteredPairs.push([allStates[i],allStates[i+1]]);
+    }
+    if(filteredPairs.length<20){ el("markovStatus").textContent="⚠️ Troppi pochi dati nel regime di volatilità selezionato."; return; }
+    // ricostruiamo una "sequenza" fittizia per riusare buildTransitionMatrix: usiamo direttamente le coppie
+    const counts=Array.from({length:5},()=>new Array(5).fill(0));
+    filteredPairs.forEach(([a,b])=>counts[a][b]++);
+    var matrixData={matrix:counts.map(row=>{const tot=row.reduce((a,b)=>a+b,0); return tot>0?row.map(c=>c/tot):row.map(()=>null);}), counts};
+  } else {
+    var matrixData=buildTransitionMatrix(allStates);
+  }
+  const matrix=matrixData.matrix, counts=matrixData.counts;
+  const currentState=allStates[allStates.length-1];
+
+  el("markovStatus").textContent=`✅ ${series.length} periodi (${granularity==="daily"?"giornalieri":granularity==="weekly"?"settimanali":"mensili"}) classificati — σ=${stdDevSimple(series.map(r=>r.pct)).toFixed(2)}%`;
+
+  // Stato attuale + prossimo stato
+  const nextRow=matrix[currentState];
+  const nextProbs = nextRow.map(p=>p==null?0:p);
+  const mostLikelyNext = nextProbs.indexOf(Math.max(...nextProbs));
+  const persistDiag = matrix.map((row,i)=>row[i]==null?0:row[i]);
+  const mostPersistentState = persistDiag.indexOf(Math.max(...persistDiag));
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("markovCurrentWrap").innerHTML=
+    card("Stato Attuale", STATE_NAMES[currentState], STATE_COLORS[currentState])+
+    card("Stato Più Probabile Domani", STATE_NAMES[mostLikelyNext]+" ("+(nextProbs[mostLikelyNext]*100).toFixed(0)+"%)", STATE_COLORS[mostLikelyNext])+
+    card("Stato Più Persistente", STATE_NAMES[mostPersistentState]+" ("+(persistDiag[mostPersistentState]*100).toFixed(0)+"% resta)", STATE_COLORS[mostPersistentState]);
+
+  // Matrice 5x5
+  let h5=`<table><tr><th>Oggi \\ Domani</th>${STATE_NAMES.map((n,i)=>`<th style="color:${STATE_COLORS[i]};">${n}</th>`).join("")}<th>N. Oss.</th></tr>`;
+  matrix.forEach((row,i)=>{
+    const n=counts[i].reduce((a,b)=>a+b,0);
+    h5+=`<tr><td style="font-weight:700;color:${STATE_COLORS[i]};">${STATE_NAMES[i]}${i===currentState?' 📍':''}</td>`;
+    row.forEach((p,j)=>{
+      const pct=p==null?null:p*100;
+      const bg = pct==null ? "transparent" : `${STATE_COLORS[j]}${Math.round(Math.min(pct/60,1)*60).toString(16).padStart(2,'0')}`;
+      h5+=`<td style="background:${bg};font-weight:${i===j?800:400};">${pct!=null?pct.toFixed(0)+"%":"--"}</td>`;
+    });
+    h5+=`<td style="color:var(--dim);font-size:10px;">${n}</td></tr>`;
+  });
+  h5+="</table>";
+  el("markovMatrix5Wrap").innerHTML=h5;
+
+  // Matrice aggregata 3x3 (Ribasso={0,1}, Laterale={2}, Rialzo={3,4})
+  const groups=[[0,1],[2],[3,4]]; const groupNames=["Ribasso","Laterale","Rialzo"]; const groupColors=["#ff6b6b","#ffd23f","#00d4b8"];
+  const counts3=Array.from({length:3},()=>new Array(3).fill(0));
+  for(let i=0;i<allStates.length-1;i++){
+    const a=allStates[i],b=allStates[i+1];
+    const gi=groups.findIndex(g=>g.includes(a)), gj=groups.findIndex(g=>g.includes(b));
+    counts3[gi][gj]++;
+  }
+  const matrix3=counts3.map(row=>{ const tot=row.reduce((a,b)=>a+b,0); return tot>0?row.map(c=>c/tot):row.map(()=>null); });
+  let h3=`<table><tr><th>Oggi \\ Domani</th>${groupNames.map((n,i)=>`<th style="color:${groupColors[i]};">${n}</th>`).join("")}</tr>`;
+  matrix3.forEach((row,i)=>{
+    h3+=`<tr><td style="font-weight:700;color:${groupColors[i]};">${groupNames[i]}</td>${row.map(p=>`<td style="font-weight:700;">${p!=null?(p*100).toFixed(0)+"%":"--"}</td>`).join("")}</tr>`;
+  });
+  h3+="</table>";
+  const revUpDown = matrix3[2]?.[0], revDownUp = matrix3[0]?.[2];
+  h3+=`<div style="font-size:11px;color:var(--dim);margin-top:10px;">🔁 Probabilità di inversione: Rialzo→Ribasso = <strong style="color:#ff6b6b;">${revUpDown!=null?(revUpDown*100).toFixed(0)+'%':'--'}</strong> | Ribasso→Rialzo = <strong style="color:#00d4b8;">${revDownUp!=null?(revDownUp*100).toFixed(0)+'%':'--'}</strong></div>`;
+  el("markovMatrix3Wrap").innerHTML=h3;
+
+  // Probabilità a N step
+  const oneHot=new Array(5).fill(0); oneHot[currentState]=1;
+  const matrixFilled=matrix.map(row=>row.map(v=>v==null?0.2:v));
+  let hN=`<table><tr><th>Orizzonte</th>${STATE_NAMES.map((n,i)=>`<th style="color:${STATE_COLORS[i]};">${n}</th>`).join("")}</tr>`;
+  [1,2,5,10].forEach(n=>{
+    const Pn=n===1?matrixFilled:matPow(matrixFilled,n);
+    const dist=matVecMul(Pn,oneHot); // nota: matVecMul fa v*M righe->colonne, coerente con oneHot come vettore riga
+    hN+=`<tr><td style="font-weight:700;">${n} periodo/i</td>${dist.map((p,i)=>`<td style="color:${i===currentState?'var(--gold)':'var(--txt)'};">${(p*100).toFixed(1)}%</td>`).join("")}</tr>`;
+  });
+  hN+="</table>";
+  el("markovNStepWrap").innerHTML=hN;
+
+  // Stato stazionario
+  const stat=stationaryDist(matrixFilled);
+  el("markovStationaryWrap").innerHTML=STATE_NAMES.map((n,i)=>
+    `<div class="card"><div class="v" style="color:${STATE_COLORS[i]};">${(stat[i]*100).toFixed(1)}%</div><div class="l">${n}</div></div>`
+  ).join("");
+
+  // Transizioni anomale (vs 20% casuale)
+  const anomalies=[];
+  matrix.forEach((row,i)=>{ row.forEach((p,j)=>{ if(p!=null){ anomalies.push({i,j,p,dev:Math.abs(p-0.2)}); } }); });
+  anomalies.sort((a,b)=>b.dev-a.dev);
+  const top=anomalies.slice(0,5);
+  el("markovAnomalyWrap").innerHTML = top.map(a=>{
+    const higher=a.p>0.2;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #1a2030;font-size:12px;">
+      <span style="color:${STATE_COLORS[a.i]};font-weight:700;">${STATE_NAMES[a.i]}</span> → <span style="color:${STATE_COLORS[a.j]};font-weight:700;">${STATE_NAMES[a.j]}</span>:
+      <strong style="color:${higher?'#00d4b8':'#ff6b6b'};">${(a.p*100).toFixed(0)}%</strong>
+      <span style="color:var(--dim);">(${higher?'molto più frequente':'molto più raro'} del 20% "casuale")</span>
+    </div>`;
+  }).join("");
+};
 </script>
 </body>
 </html>
