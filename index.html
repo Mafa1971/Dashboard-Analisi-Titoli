@@ -135,7 +135,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH = Swing High (massimo locale) · SL = Swing Low (minimo locale) · FVG = Fair Value Gap · POC = Point of Control (livello a più volume)</div>
           <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
-          <div id="candleChart"></div>
+          <div style="position:relative;">
+            <div id="candleChart"></div>
+            <canvas id="ictOverlay" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
+          </div>
           <div id="rsiChart"></div>
           <div style="margin-top:6px;font-size:9px;color:var(--dim);">VOLUME — <span style="color:#00d4b8;">■</span> Rialzo <span style="color:#ff6b6b;">■</span> Ribasso <span style="color:#ffd23f;">─</span> Media 20gg</div>
           <div id="volumeChart"></div>
@@ -557,7 +560,7 @@ function renderCandles(){
   sma200Series.setData(toSeriesData(STOCK.dates,sma200));
 
   chart.timeScale().fitContent();
-  window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); if(volumeChartObj) volumeChartObj.applyOptions({width:el("volumeChart").clientWidth}); });
+  window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); if(volumeChartObj) volumeChartObj.applyOptions({width:el("volumeChart").clientWidth}); drawICTCanvasOverlay(); });
 
   // Indice data → dati completi, per la legenda al passaggio del mouse
   CHART_DATA_BY_TIME={};
@@ -572,6 +575,7 @@ function renderCandles(){
     if(param && param.time) renderChartLegend(param.time);
     else renderChartLegend(STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10));
   });
+  chart.timeScale().subscribeVisibleTimeRangeChange(()=>drawICTCanvasOverlay());
 
   renderRSIChart();
   renderVolumeChart();
@@ -805,40 +809,71 @@ function calcPOCSimple(closes,volumes,buckets=24){
 }
 
 window.renderICTOverlays=function(){
-  if(!STOCK||!candleSeries) return;
-  const showSwing=el("chkSwing").checked, showFVG=el("chkFVG").checked, showPOC=el("chkPOC").checked;
-
-  // Rimuovi price line POC precedente se esiste
+  if(!STOCK||!candleSeries||!chart) return;
+  // POC resta come price line nativa (è già chiara e full-width)
   if(window._pocLine){ try{ candleSeries.removePriceLine(window._pocLine); }catch(e){} window._pocLine=null; }
-
-  // Swing High/Low come marker
-  const markers=[];
-  if(showSwing){
-    const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
-    sw.highs.forEach(p=>markers.push({time:STOCK.dates[p.idx].toISOString().slice(0,10),position:"aboveBar",color:"#ffd23f",shape:"arrowDown",text:"SH"}));
-    sw.lows.forEach(p=>markers.push({time:STOCK.dates[p.idx].toISOString().slice(0,10),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:"SL"}));
-    markers.sort((a,b)=>a.time.localeCompare(b.time));
-  }
-  candleSeries.setMarkers(markers);
-
-  // FVG come coppie di price line (bordo alto/basso della zona)
-  if(window._fvgLines){ window._fvgLines.forEach(l=>{ try{candleSeries.removePriceLine(l);}catch(e){} }); }
-  window._fvgLines=[];
-  if(showFVG){
-    const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
-    fvgs.forEach(f=>{
-      const col=f.type==="bullish"?"#00d4b855":"#ff6b6b55";
-      window._fvgLines.push(candleSeries.createPriceLine({price:f.top,color:col,lineWidth:1,lineStyle:3,axisLabelVisible:false,title:""}));
-      window._fvgLines.push(candleSeries.createPriceLine({price:f.bottom,color:col,lineWidth:1,lineStyle:3,axisLabelVisible:false,title:f.type==="bullish"?"FVG↑":"FVG↓"}));
-    });
-  }
-
-  // POC come price line dorata
-  if(showPOC){
+  if(el("chkPOC").checked){
     const poc=calcPOCSimple(STOCK.closes,STOCK.volumes);
     if(poc) window._pocLine=candleSeries.createPriceLine({price:poc,color:"#ff3d71",lineWidth:2,lineStyle:0,axisLabelVisible:true,title:"POC"});
   }
+  drawICTCanvasOverlay();
 };
+
+function drawICTCanvasOverlay(){
+  const canvas=el("ictOverlay"), container=el("candleChart");
+  if(!canvas||!container||!chart||!candleSeries||!STOCK) return;
+  const w=container.clientWidth, h=container.clientHeight;
+  canvas.width=w; canvas.height=h; canvas.style.width=w+"px"; canvas.style.height=h+"px";
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,w,h);
+  const ts=chart.timeScale();
+
+  if(el("chkFVG").checked){
+    const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
+    fvgs.forEach(f=>{
+      const startIdx=Math.max(0,f.idx-2), endIdx=Math.min(STOCK.dates.length-1,f.idx+15);
+      const x0=ts.timeToCoordinate(STOCK.dates[startIdx].toISOString().slice(0,10));
+      const x1=ts.timeToCoordinate(STOCK.dates[endIdx].toISOString().slice(0,10));
+      const yTop=candleSeries.priceToCoordinate(f.top);
+      const yBottom=candleSeries.priceToCoordinate(f.bottom);
+      if(x0==null||x1==null||yTop==null||yBottom==null) return;
+      const bull=f.type==="bullish";
+      const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
+      ctx.fillStyle=bull?"rgba(0,212,184,0.18)":"rgba(255,107,107,0.18)";
+      ctx.strokeStyle=bull?"rgba(0,212,184,0.9)":"rgba(255,107,107,0.9)";
+      ctx.lineWidth=1.2;
+      ctx.fillRect(x0,y,x1-x0,rectH);
+      ctx.strokeRect(x0,y,x1-x0,rectH);
+      ctx.fillStyle=bull?"#00d4b8":"#ff6b6b";
+      ctx.font="bold 10px JetBrains Mono, monospace";
+      ctx.fillText(bull?"FVG ↑":"FVG ↓", x0+4, y+13);
+    });
+  }
+
+  if(el("chkSwing").checked){
+    const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    sw.highs.forEach(p=>{
+      const x=ts.timeToCoordinate(STOCK.dates[p.idx].toISOString().slice(0,10));
+      const y=candleSeries.priceToCoordinate(p.price);
+      if(x==null||y==null) return;
+      ctx.fillStyle="#ffd23f";
+      ctx.beginPath(); ctx.moveTo(x,y-16); ctx.lineTo(x-6,y-6); ctx.lineTo(x+6,y-6); ctx.closePath(); ctx.fill();
+      ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
+      ctx.fillText("SH",x,y-19);
+      ctx.textAlign="left";
+    });
+    sw.lows.forEach(p=>{
+      const x=ts.timeToCoordinate(STOCK.dates[p.idx].toISOString().slice(0,10));
+      const y=candleSeries.priceToCoordinate(p.price);
+      if(x==null||y==null) return;
+      ctx.fillStyle="#ffd23f";
+      ctx.beginPath(); ctx.moveTo(x,y+16); ctx.lineTo(x-6,y+6); ctx.lineTo(x+6,y+6); ctx.closePath(); ctx.fill();
+      ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
+      ctx.fillText("SL",x,y+28);
+      ctx.textAlign="left";
+    });
+  }
+}
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
 function computeVolumeProfile(closes,volumes,buckets=24){
