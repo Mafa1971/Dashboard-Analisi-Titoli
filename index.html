@@ -109,6 +109,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Rischio')" id="tnRischio">🎯 Rischio</button>
         <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio">📑 Bilancio</button>
         <button class="btn tabnav" onclick="switchTab('Markov')" id="tnMarkov">🔗 Markov</button>
+        <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -295,6 +296,30 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="markovAnomalyWrap"></div>
         </div>
       </div>
+
+      <!-- TAB AI CLAUDE -->
+      <div id="tabAI" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🤖 ANALISTA AI (Claude)</div>
+          <label class="chk" style="margin-bottom:12px;">
+            <input type="checkbox" id="aiIncludeChart" checked> Includi screenshot del grafico (analisi visiva di supporti/resistenze)
+          </label>
+          <div id="aiStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;min-height:14px;"></div>
+          <div id="aiChatHistory" style="max-height:400px;overflow-y:auto;margin-bottom:12px;display:flex;flex-direction:column;gap:10px;"></div>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="aiQuestion" placeholder="Es: Analisi tecnica completa, dove sono supporti e resistenze?" style="flex:1;" onkeydown="if(event.key==='Enter')askClaudeAI()">
+            <button class="btn primary" onclick="askClaudeAI()">Chiedi →</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('Analisi tecnica completa: trend, medie mobili, RSI e momentum attuale')">📊 Analisi Tecnica</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('Guardando il grafico, dove sono i livelli chiave di supporto e resistenza? Ci sono pattern grafici riconoscibili (triangoli, doppi massimi/minimi, canali)?')">🎯 Supporti/Resistenze</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('È un buon momento per entrare o meglio aspettare? Considera prezzo attuale, ciclo in corso e RSI')">⏱ Entry Point</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('Analisi del rischio: Sharpe, Sortino, Max Drawdown, volatilità. Che stop loss avrebbe senso?')">⚠️ Rischio</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('Basandoti sulla catena di Markov, che probabilità ci sono per i prossimi giorni?')">🔗 Markov</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="setAIQ('Dammi un giudizio complessivo su questo titolo: tecnica, rischio, ciclo. Comprare, aspettare o evitare?')">🏆 Giudizio</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
@@ -307,6 +332,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Rischio')" id="tabBtnRischio"><span class="tab-icon">🎯</span><span class="tab-label">Rischio</span></button>
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
     <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
+    <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
   </nav>
 </div>
 
@@ -1368,6 +1394,94 @@ window.renderMarkov=function(){
       <span style="color:var(--dim);">(${higher?'molto più frequente':'molto più raro'} del 20% "casuale")</span>
     </div>`;
   }).join("");
+};
+
+// ── ANALISTA AI (Claude) ─────────────────────────────────────────────
+function calcSupportResistancePivot(closes,highs,lows,lookback=60){
+  if(!closes||closes.length<lookback) return null;
+  const rH=highs.slice(-lookback).filter(v=>v!=null), rL=lows.slice(-lookback).filter(v=>v!=null);
+  if(!rH.length||!rL.length) return null;
+  const high=Math.max(...rH), low=Math.min(...rL), close=closes[closes.length-1];
+  const pivot=(high+low+close)/3;
+  return { pivot, r1:2*pivot-low, r2:pivot+(high-low), s1:2*pivot-high, s2:pivot-(high-low), high, low, close };
+}
+
+let aiChatMessages=[];
+window.setAIQ=function(q){ el("aiQuestion").value=q; el("aiQuestion").focus(); };
+
+window.askClaudeAI=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  const question=el("aiQuestion").value.trim();
+  if(!question) return;
+  const chatEl=el("aiChatHistory");
+  chatEl.innerHTML+=`<div style="align-self:flex-end;background:var(--panel2);border:1px solid var(--line);border-radius:10px 10px 0 10px;padding:9px 13px;font-size:12px;max-width:80%;">${question}</div>`;
+  chatEl.innerHTML+=`<div id="aiLoadingMsg" style="align-self:flex-start;color:var(--dim);font-size:11px;padding:8px;">🤖 Claude sta analizzando...</div>`;
+  chatEl.scrollTop=chatEl.scrollHeight;
+  el("aiQuestion").value="";
+
+  // Dati tecnici
+  const rsi=rsiSeriesCalc(STOCK.closes,14).slice(-1)[0];
+  const sma21=smaSeriesCalc(STOCK.closes,21).slice(-1)[0];
+  const sma100=smaSeriesCalc(STOCK.closes,100).slice(-1)[0];
+  const sma200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0];
+  const sr=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
+  const price=STOCK.closes[STOCK.closes.length-1];
+  const threshold=parseFloat(el("zigzagThreshold").value)||10;
+  const cycles=computeCycles(STOCK.dates,STOCK.closes,threshold);
+  const cur=cycles.current;
+
+  // Stato Markov corrente, se già calcolato
+  let markovTxt="Non ancora calcolato — vai al tab Markov per generarlo.";
+  if(SEASON_ALL_YEARS.length>0 || true){
+    try{
+      const series=periodReturnSeries(STOCK.dates,STOCK.closes,"daily");
+      const states=classifyStates(series,0.5,1.5);
+      const cs=states[states.length-1];
+      markovTxt=`Stato attuale: ${STATE_NAMES[cs]}`;
+    }catch(e){}
+  }
+
+  const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, conciso (max 300 parole), con emoji per chiarezza. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
+
+Titolo: ${STOCK.ticker} — ${STOCK.name} (${STOCK.currency})
+Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
+
+Dati tecnici:
+- SMA21: ${sma21?.toFixed(2)||"N/D"} | SMA100: ${sma100?.toFixed(2)||"N/D"} | SMA200: ${sma200?.toFixed(2)||"N/D"}
+- RSI(14): ${rsi?.toFixed(1)||"N/D"}
+- Ciclo in corso: ${cur?(cur.type==="up"?"Rialzista":"Ribassista")+" da "+cur.days+" giorni, "+(cur.retPct>=0?"+":"")+cur.retPct.toFixed(1)+"%":"N/D"}
+- Stato Markov (giornaliero): ${markovTxt}
+
+Livelli pivot (ultimi 60 giorni):
+${sr?`- Pivot: ${sr.pivot.toFixed(2)} | R1: ${sr.r1.toFixed(2)} | R2: ${sr.r2.toFixed(2)} | S1: ${sr.s1.toFixed(2)} | S2: ${sr.s2.toFixed(2)}
+- Massimo periodo: ${sr.high.toFixed(2)} | Minimo periodo: ${sr.low.toFixed(2)}`:"N/D"}
+
+${el("aiIncludeChart").checked?"Ti allego anche uno screenshot del grafico a candele con le medie mobili: usalo per identificare visivamente pattern grafici, supporti/resistenze non catturati dai pivot numerici, e la forma del trend.":""}
+
+Domanda: ${question}`;
+
+  let imageBase64=null;
+  if(el("aiIncludeChart").checked && chart){
+    try{
+      const canvas=chart.takeScreenshot();
+      imageBase64=canvas.toDataURL("image/png").split(",")[1];
+    }catch(e){ console.error("Screenshot grafico non disponibile:",e); }
+  }
+
+  try{
+    const res=await fetch("/.netlify/functions/claude",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ prompt, imageBase64 })
+    });
+    const data=await res.json();
+    const answer=data.text || data.error || "Errore nella risposta.";
+    el("aiLoadingMsg")?.remove();
+    chatEl.innerHTML+=`<div style="align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 10px 0;padding:10px 13px;font-size:12px;max-width:90%;line-height:1.6;">${answer.replace(/\n/g,"<br>")}</div>`;
+    chatEl.scrollTop=chatEl.scrollHeight;
+  }catch(err){
+    el("aiLoadingMsg")?.remove();
+    chatEl.innerHTML+=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
+  }
 };
 </script>
 </body>
