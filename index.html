@@ -124,7 +124,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <span>📉 GRAFICO A CANDELE</span>
             <a id="tvLink" href="#" target="_blank" style="font-size:10px;color:#4fa3ff;text-decoration:none;white-space:nowrap;">📈 Apri su TradingView →</a>
           </div>
-          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;">
             <label class="chk"><input type="checkbox" id="chkSMA21" checked onchange="toggleIndicator('sma21',this.checked)"> <span style="color:#00d4b8;">■</span> SMA 21</label>
             <label class="chk"><input type="checkbox" id="chkSMA100" checked onchange="toggleIndicator('sma100',this.checked)"> <span style="color:#ff9f1c;">■</span> SMA 100</label>
             <label class="chk"><input type="checkbox" id="chkSMA200" checked onchange="toggleIndicator('sma200',this.checked)"> <span style="color:#c77dff;">■</span> SMA 200</label>
@@ -133,11 +133,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkFVG" checked onchange="renderICTOverlays()"> <span style="color:#c77dff;">■</span> FVG</label>
             <label class="chk"><input type="checkbox" id="chkPOC" checked onchange="renderICTOverlays()"> <span style="color:#ff3d71;">■</span> POC</label>
           </div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH = Swing High (massimo locale) · SL = Swing Low (minimo locale) · FVG = Fair Value Gap · POC = Point of Control (livello a più volume)</div>
+          <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
           <div id="candleChart"></div>
           <div id="rsiChart"></div>
           <div style="margin-top:6px;font-size:9px;color:var(--dim);">VOLUME — <span style="color:#00d4b8;">■</span> Rialzo <span style="color:#ff6b6b;">■</span> Ribasso <span style="color:#ffd23f;">─</span> Media 20gg</div>
           <div id="volumeChart"></div>
-          <div id="volumeSignal" style="margin-top:6px;font-size:11px;"></div>
+          <div id="volumeSignal" style="margin-top:8px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;"></div>
         </div>
         <div class="panel">
           <div class="panel-title">📊 RENDIMENTI PER PERIODO</div>
@@ -390,6 +392,7 @@ const AUTH_KEY = "analyzer_auth_v1";
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
 let volumeChartObj=null;
 let LAST_CYCLES=null;
+let CHART_DATA_BY_TIME={};
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
 let STOCK=null;      // dati titolo analizzato
@@ -556,6 +559,20 @@ function renderCandles(){
   chart.timeScale().fitContent();
   window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); if(volumeChartObj) volumeChartObj.applyOptions({width:el("volumeChart").clientWidth}); });
 
+  // Indice data → dati completi, per la legenda al passaggio del mouse
+  CHART_DATA_BY_TIME={};
+  STOCK.dates.forEach((d,i)=>{
+    CHART_DATA_BY_TIME[d.toISOString().slice(0,10)]={
+      open:STOCK.opens[i], high:STOCK.highs[i], low:STOCK.lows[i], close:STOCK.closes[i],
+      volume:STOCK.volumes[i], sma21:sma21[i], sma100:sma100[i], sma200:sma200[i]
+    };
+  });
+  renderChartLegend(STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)); // default: ultimo giorno
+  chart.subscribeCrosshairMove(param=>{
+    if(param && param.time) renderChartLegend(param.time);
+    else renderChartLegend(STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10));
+  });
+
   renderRSIChart();
   renderVolumeChart();
   renderICTOverlays();
@@ -586,11 +603,26 @@ function renderVolumeChart(){
   const sigEl=el("volumeSignal");
   if(lastVol && lastMA){
     const ratio=lastVol/lastMA;
-    if(ratio>1.5) sigEl.innerHTML=`<span style="color:#00d4b8;font-weight:700;">📢 Volume ${ratio.toFixed(1)}x sopra la media — forte interesse sull'ultima seduta</span>`;
-    else if(ratio>1.2) sigEl.innerHTML=`<span style="color:#80ed99;font-weight:700;">↑ Volume ${ratio.toFixed(1)}x sopra la media</span>`;
-    else if(ratio<0.6) sigEl.innerHTML=`<span style="color:var(--dim);">↓ Volume basso (${ratio.toFixed(1)}x media) — scarso interesse</span>`;
-    else sigEl.innerHTML=`<span style="color:var(--dim);">Volume nella norma (${ratio.toFixed(1)}x media)</span>`;
-  } else sigEl.textContent="";
+    if(ratio>1.5){ sigEl.style.background="#00d4b822"; sigEl.style.border="1px solid #00d4b8"; sigEl.innerHTML=`<span style="color:#00d4b8;">📢 Volume ${ratio.toFixed(1)}× sopra la media — forte interesse sull'ultima seduta</span>`; }
+    else if(ratio>1.2){ sigEl.style.background="#80ed9922"; sigEl.style.border="1px solid #80ed99"; sigEl.innerHTML=`<span style="color:#80ed99;">↑ Volume ${ratio.toFixed(1)}× sopra la media — interesse in aumento</span>`; }
+    else if(ratio<0.6){ sigEl.style.background="#7d8aa322"; sigEl.style.border="1px solid #7d8aa344"; sigEl.innerHTML=`<span style="color:var(--dim);">↓ Volume basso (${ratio.toFixed(1)}× media) — scarso interesse</span>`; }
+    else { sigEl.style.background="#7d8aa311"; sigEl.style.border="1px solid #7d8aa333"; sigEl.innerHTML=`<span style="color:var(--dim);">➡ Volume nella norma (${ratio.toFixed(1)}× media)</span>`; }
+  } else { sigEl.style.background="transparent"; sigEl.style.border="none"; sigEl.textContent=""; }
+}
+
+function renderChartLegend(time){
+  const d=CHART_DATA_BY_TIME[time];
+  const legendEl=el("chartLegend");
+  if(!legendEl) return;
+  if(!d){ legendEl.innerHTML=`<span style="color:var(--dim);">Passa il mouse sul grafico per vedere i valori</span>`; return; }
+  const chg=d.close!=null&&d.open!=null?((d.close-d.open)/d.open*100):null;
+  const col=chg!=null?(chg>=0?"#00d4b8":"#ff6b6b"):"var(--txt)";
+  legendEl.innerHTML=`
+    <span style="color:${col};">O ${d.open?.toFixed(2)??"--"} A ${d.high?.toFixed(2)??"--"} B ${d.low?.toFixed(2)??"--"} C ${d.close?.toFixed(2)??"--"} ${chg!=null?"("+(chg>=0?"+":"")+chg.toFixed(2)+"%)":""}</span>
+    <span style="color:#00d4b8;">SMA21: ${d.sma21!=null?d.sma21.toFixed(2):"--"}</span>
+    <span style="color:#ff9f1c;">SMA100: ${d.sma100!=null?d.sma100.toFixed(2):"--"}</span>
+    <span style="color:#c77dff;">SMA200: ${d.sma200!=null?d.sma200.toFixed(2):"--"}</span>
+    <span style="color:var(--dim);">Vol: ${d.volume?(d.volume/1e6).toFixed(1)+"M":"--"}</span>`;
 }
 
 function renderRSIChart(){
