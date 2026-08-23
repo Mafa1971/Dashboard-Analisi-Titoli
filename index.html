@@ -132,8 +132,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkSwing" checked onchange="renderICTOverlays()"> <span style="color:#ffd23f;">■</span> Swing H/L</label>
             <label class="chk"><input type="checkbox" id="chkFVG" checked onchange="renderICTOverlays()"> <span style="color:#c77dff;">■</span> FVG</label>
             <label class="chk"><input type="checkbox" id="chkPOC" checked onchange="renderICTOverlays()"> <span style="color:#ff3d71;">■</span> POC</label>
+            <label class="chk"><input type="checkbox" id="chkSwingStruct" checked onchange="renderICTOverlays()"> <span style="color:#089981;">■</span> Struttura Swing (BOS/CHoCH)</label>
+            <label class="chk"><input type="checkbox" id="chkInternalStruct" onchange="renderICTOverlays()"> <span style="color:#3179f5;">■</span> Struttura Internal (BOS/CHoCH)</label>
           </div>
-          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH = Swing High (massimo locale) · SL = Swing Low (minimo locale) · FVG = Fair Value Gap · POC = Point of Control (livello a più volume)</div>
+          <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+            <label style="font-size:10px;color:var(--dim);">Lunghezza Swing <input type="number" id="swingLen" value="50" min="10" max="200" style="width:55px;" onchange="renderICTOverlays()"></label>
+            <label style="font-size:10px;color:var(--dim);">Lunghezza Internal <input type="number" id="internalLen" value="5" min="2" max="30" style="width:55px;" onchange="renderICTOverlays()"></label>
+          </div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH/SL = Swing High/Low · FVG = Fair Value Gap · POC = livello a più volume · BOS = Break of Structure (continuazione trend) · CHoCH = Change of Character (possibile inversione) · Le zone colorate sui punti di svolta sono gli Order Block</div>
           <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
           <div style="position:relative;">
             <div id="candleChart"></div>
@@ -795,6 +801,76 @@ function calcFVGICT(opens,highs,lows,closes){
   }
   return fvgs.slice(-6); // ultimi 6 FVG
 }
+
+// ── STRUTTURA DI MERCATO SMC (porting fedele da Pine Script) ────────────
+// Basato sulla logica leg()/getCurrentStructure()/displayStructure() del tuo
+// indicatore: pivot rilevati con "trailing highest/lowest" (lag = sz barre),
+// conferma BOS/CHoCH quando il CLOSE attraversa davvero il livello del pivot
+// (non solo confronto tra estremi), con flag "crossed" per non ritriggerare.
+function rollingExtreme(arr,sz,isMax){
+  const n=arr.length, out=new Array(n).fill(null);
+  for(let i=0;i<n;i++){
+    let best=isMax?-Infinity:Infinity;
+    for(let k=Math.max(0,i-sz+1);k<=i;k++){
+      const v=arr[k];
+      if(v==null) continue;
+      if(isMax?v>best:v<best) best=v;
+    }
+    out[i] = (best===Infinity||best===-Infinity) ? null : best;
+  }
+  return out;
+}
+function computeSMCStructure(highs,lows,closes,sz){
+  const n=closes.length;
+  if(n<sz*2) return {events:[], trend:null};
+  const hiRoll=rollingExtreme(highs,sz,true), loRoll=rollingExtreme(lows,sz,false);
+  const leg=new Array(n).fill(0);
+  for(let i=0;i<n;i++){
+    if(i>=sz && highs[i-sz]!=null && hiRoll[i]!=null && highs[i-sz]>hiRoll[i]) leg[i]=0; // bearish leg
+    else if(i>=sz && lows[i-sz]!=null && loRoll[i]!=null && lows[i-sz]<loRoll[i]) leg[i]=1; // bullish leg
+    else leg[i]=i>0?leg[i-1]:0;
+  }
+  let highP={currentLevel:null,barIndex:null,crossed:false};
+  let lowP={currentLevel:null,barIndex:null,crossed:false};
+  let trend=null;
+  const events=[];
+  for(let i=1;i<n;i++){
+    if(leg[i]!==leg[i-1]){
+      const pivotIdx=i-sz;
+      if(pivotIdx>=0){
+        if(leg[i]===1) lowP={currentLevel:lows[pivotIdx], barIndex:pivotIdx, crossed:false};
+        else highP={currentLevel:highs[pivotIdx], barIndex:pivotIdx, crossed:false};
+      }
+    }
+    if(highP.currentLevel!=null && !highP.crossed && closes[i-1]!=null && closes[i]!=null){
+      if(closes[i-1]<=highP.currentLevel && closes[i]>highP.currentLevel){
+        events.push({idx:i, fromIdx:highP.barIndex, price:highP.currentLevel, label:trend==="down"?"CHoCH":"BOS", dir:"up"});
+        highP.crossed=true; trend="up";
+      }
+    }
+    if(lowP.currentLevel!=null && !lowP.crossed && closes[i-1]!=null && closes[i]!=null){
+      if(closes[i-1]>=lowP.currentLevel && closes[i]<lowP.currentLevel){
+        events.push({idx:i, fromIdx:lowP.barIndex, price:lowP.currentLevel, label:trend==="up"?"CHoCH":"BOS", dir:"down"});
+        lowP.crossed=true; trend="down";
+      }
+    }
+  }
+  return { events: events.slice(-8), trend }; // ultimi 8 eventi per non affollare
+}
+
+// ── ORDER BLOCK: estremo (massimo/minimo) su TUTTO il range pivot→conferma ─
+function findOrderBlockRange(highs,lows,fromIdx,toIdx,dir){
+  if(fromIdx==null||toIdx==null||fromIdx>toIdx) return null;
+  if(dir==="up"){ // bullish: cerca il minimo (ultima spinta ribassista prima del rialzo)
+    let minIdx=fromIdx, minVal=lows[fromIdx]??Infinity;
+    for(let k=fromIdx;k<=toIdx;k++){ if(lows[k]!=null && lows[k]<minVal){ minVal=lows[k]; minIdx=k; } }
+    return {idx:minIdx, top:highs[minIdx], bottom:lows[minIdx]};
+  } else { // bearish: cerca il massimo
+    let maxIdx=fromIdx, maxVal=highs[fromIdx]??-Infinity;
+    for(let k=fromIdx;k<=toIdx;k++){ if(highs[k]!=null && highs[k]>maxVal){ maxVal=highs[k]; maxIdx=k; } }
+    return {idx:maxIdx, top:highs[maxIdx], bottom:lows[maxIdx]};
+  }
+}
 function calcPOCSimple(closes,volumes,buckets=24){
   if(!closes||!volumes||closes.length<10) return null;
   const valid=closes.map((c,i)=>[c,volumes[i]]).filter(([c,v])=>c!=null&&v!=null&&v>0);
@@ -873,6 +949,57 @@ function drawICTCanvasOverlay(){
       ctx.textAlign="left";
     });
   }
+  const swingLen=parseInt(el("swingLen").value)||50;
+  const internalLen=parseInt(el("internalLen").value)||5;
+  const structs=[];
+  if(el("chkSwingStruct").checked) structs.push({...computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,swingLen), tier:"swing"});
+  if(el("chkInternalStruct").checked) structs.push({...computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,internalLen), tier:"internal"});
+
+  // Order Block: disegnato PRIMA delle linee struttura, così resta "sotto"
+  structs.forEach(st=>{
+    st.events.forEach(ev=>{
+      const ob=findOrderBlockRange(STOCK.highs,STOCK.lows,ev.fromIdx,ev.idx,ev.dir);
+      if(!ob) return;
+      const endIdx=Math.min(STOCK.dates.length-1, ev.idx+(st.tier==="swing"?20:8));
+      const x0=ts.timeToCoordinate(STOCK.dates[ob.idx].toISOString().slice(0,10));
+      const x1=ts.timeToCoordinate(STOCK.dates[endIdx].toISOString().slice(0,10));
+      const yTop=candleSeries.priceToCoordinate(ob.top);
+      const yBottom=candleSeries.priceToCoordinate(ob.bottom);
+      if(x0==null||x1==null||yTop==null||yBottom==null) return;
+      const bull=ev.dir==="up";
+      const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
+      // Swing OB: blu/rosso scuro più visibile. Internal OB: più tenue.
+      const alpha=st.tier==="swing"?0.20:0.12;
+      ctx.fillStyle=bull?`rgba(24,72,204,${alpha})`:`rgba(178,40,51,${alpha})`;
+      ctx.strokeStyle=bull?`rgba(24,72,204,0.8)`:`rgba(178,40,51,0.8)`;
+      ctx.lineWidth=st.tier==="swing"?1.3:1;
+      ctx.fillRect(x0,y,x1-x0,rectH);
+      ctx.strokeRect(x0,y,x1-x0,rectH);
+      ctx.fillStyle=bull?"#3179f5":"#f77c80";
+      ctx.font=(st.tier==="swing"?"bold 9px ":"9px ")+"JetBrains Mono, monospace";
+      ctx.fillText(st.tier==="swing"?"OB":"iOB", x0+3, y+11);
+    });
+  });
+
+  // BOS / CHoCH: linea orizzontale dal punto rotto al punto di conferma
+  structs.forEach(st=>{
+    st.events.forEach(ev=>{
+      const x0=ts.timeToCoordinate(STOCK.dates[ev.fromIdx].toISOString().slice(0,10));
+      const x1=ts.timeToCoordinate(STOCK.dates[ev.idx].toISOString().slice(0,10));
+      const y=candleSeries.priceToCoordinate(ev.price);
+      if(x0==null||x1==null||y==null) return;
+      const bullish=ev.dir==="up";
+      const col=bullish?"#089981":"#f23645"; // verde/rosso come il tuo Pine Script
+      ctx.strokeStyle=col;
+      ctx.lineWidth=st.tier==="swing"?1.4:1;
+      ctx.setLineDash(st.tier==="swing"?(ev.label==="CHoCH"?[6,3]:[]):[3,3]);
+      ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=col;
+      ctx.font=(st.tier==="swing"?"bold 10px ":"9px ")+"Manrope, sans-serif";
+      const prefix=st.tier==="internal"?"i":"";
+      ctx.fillText(prefix+ev.label, x1+4, y+3);
+    });
+  });
 }
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
@@ -1841,6 +1968,8 @@ window.askClaudeAI=async function(){
   const lastSwingLow=swICT.lows.length?swICT.lows[swICT.lows.length-1].price:null;
   const fvgICT=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
   const pocICT=calcPOCSimple(STOCK.closes,STOCK.volumes);
+  const structICT=computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,parseInt(el("swingLen")?.value)||50);
+  const lastEventICT=structICT.events[structICT.events.length-1];
 
   // Stato Markov corrente, se già calcolato
   let markovTxt="Non ancora calcolato — vai al tab Markov per generarlo.";
@@ -1872,6 +2001,7 @@ Dati ICT (Smart Money Concepts):
 - Ultimo Swing High: ${lastSwingHigh?lastSwingHigh.toFixed(2):"N/D"} | Ultimo Swing Low: ${lastSwingLow?lastSwingLow.toFixed(2):"N/D"}
 - POC (livello a più volume): ${pocICT?pocICT.toFixed(2):"N/D"}
 - FVG aperti recenti: ${fvgICT.length?fvgICT.map(f=>`${f.type==="bullish"?"🟢":"🔴"} ${f.bottom.toFixed(2)}-${f.top.toFixed(2)}`).join(", "):"nessuno rilevato"}
+- Struttura di mercato: trend ${structICT.trend==="up"?"rialzista":structICT.trend==="down"?"ribassista":"N/D"}, ultimo evento: ${lastEventICT?lastEventICT.label+" a "+lastEventICT.price.toFixed(2):"N/D"}
 
 ${el("aiIncludeChart").checked?"Ti allego anche uno screenshot del grafico a candele con le medie mobili: usalo per identificare visivamente pattern grafici, supporti/resistenze non catturati dai pivot numerici, e la forma del trend.":""}
 
