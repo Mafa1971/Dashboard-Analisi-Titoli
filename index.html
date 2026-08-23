@@ -52,6 +52,10 @@ select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);pa
 table{width:100%;border-collapse:collapse;font-size:11px;}
 th{font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;padding:6px 6px;text-align:center;border-bottom:1px solid var(--line);}
 td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.show{display:flex;}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;max-width:640px;width:100%;max-height:88vh;overflow-y:auto;}
+.modal h3{font-size:17px;margin-bottom:16px;}
 </style>
 </head>
 <body>
@@ -74,6 +78,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     </div>
     <div class="hdr-right">
       <span style="font-size:9px;color:var(--dim);" id="hLastUpdate"></span>
+      <button class="btn" onclick="document.getElementById('modalHelpOverlay').classList.add('show')" style="background:#ffd23f22;border-color:#ffd23f44;color:#ffd23f;font-size:10px;">❓ GUIDA</button>
       <button class="btn ghost" id="btnLogout" style="font-size:10px;">ESCI</button>
     </div>
   </header>
@@ -115,15 +120,24 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB GRAFICO -->
       <div id="tabGrafico" class="tab-content active">
         <div class="panel">
-          <div class="panel-title" id="chartTitle">📉 GRAFICO A CANDELE</div>
+          <div class="panel-title" id="chartTitle" style="justify-content:space-between;">
+            <span>📉 GRAFICO A CANDELE</span>
+            <a id="tvLink" href="#" target="_blank" style="font-size:10px;color:#4fa3ff;text-decoration:none;white-space:nowrap;">📈 Apri su TradingView →</a>
+          </div>
           <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
             <label class="chk"><input type="checkbox" id="chkSMA21" checked onchange="toggleIndicator('sma21',this.checked)"> <span style="color:#00d4b8;">■</span> SMA 21</label>
             <label class="chk"><input type="checkbox" id="chkSMA100" checked onchange="toggleIndicator('sma100',this.checked)"> <span style="color:#ff9f1c;">■</span> SMA 100</label>
             <label class="chk"><input type="checkbox" id="chkSMA200" checked onchange="toggleIndicator('sma200',this.checked)"> <span style="color:#c77dff;">■</span> SMA 200</label>
             <label class="chk"><input type="checkbox" id="chkRSI" checked onchange="toggleRSI(this.checked)"> <span style="color:#4fa3ff;">■</span> RSI (14)</label>
+            <label class="chk"><input type="checkbox" id="chkSwing" checked onchange="renderICTOverlays()"> <span style="color:#ffd23f;">■</span> Swing H/L</label>
+            <label class="chk"><input type="checkbox" id="chkFVG" checked onchange="renderICTOverlays()"> <span style="color:#c77dff;">■</span> FVG</label>
+            <label class="chk"><input type="checkbox" id="chkPOC" checked onchange="renderICTOverlays()"> <span style="color:#ff3d71;">■</span> POC</label>
           </div>
           <div id="candleChart"></div>
           <div id="rsiChart"></div>
+          <div style="margin-top:6px;font-size:9px;color:var(--dim);">VOLUME — <span style="color:#00d4b8;">■</span> Rialzo <span style="color:#ff6b6b;">■</span> Ribasso <span style="color:#ffd23f;">─</span> Media 20gg</div>
+          <div id="volumeChart"></div>
+          <div id="volumeSignal" style="margin-top:6px;font-size:11px;"></div>
         </div>
         <div class="panel">
           <div class="panel-title">📊 RENDIMENTI PER PERIODO</div>
@@ -132,6 +146,32 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">🔄 CICLI RIALZO / RIBASSO (zigzag)</div>
           <div id="cycleStatsWrap"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">📊 VOLUME PROFILE & POC</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Storico completo</div>
+              <canvas id="vpFullCanvas" style="width:100%;height:300px;"></canvas>
+              <div id="vpFullInfo" style="font-size:11px;color:var(--dim);margin-top:8px;"></div>
+            </div>
+            <div>
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+                <select id="vpMode" onchange="onVpModeChange()">
+                  <option value="days">Ultimi N giorni</option>
+                  <option value="cycle">Ciclo rilevato (zigzag)</option>
+                </select>
+                <select id="vpDays" onchange="renderVolumeProfileCustom()">
+                  <option value="60">60 giorni</option>
+                  <option value="120" selected>120 giorni</option>
+                  <option value="250">250 giorni</option>
+                </select>
+                <select id="vpCycle" onchange="renderVolumeProfileCustom()" style="display:none;max-width:220px;"></select>
+              </div>
+              <canvas id="vpCustomCanvas" style="width:100%;height:300px;"></canvas>
+              <div id="vpCustomInfo" style="font-size:11px;color:var(--dim);margin-top:8px;"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -183,6 +223,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">📋 TABELLA RENDIMENTI MENSILI PER ANNO</div>
           <div id="seasonTableWrap" style="overflow-x:auto;"></div>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('stagionalita')">🤖 Chiedi a Claude — pattern stagionali affidabili?</button>
+          <div id="aiTabStagionalita" style="margin-top:12px;"></div>
         </div>
         <div class="panel">
           <div class="panel-title">📈 STATISTICHE MENSILI AVANZATE</div>
@@ -222,7 +264,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
           <div class="cards" id="riskCardsWrap"></div>
-          <div style="font-size:10px;color:var(--dim);">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
+          <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Claude — interpreta questi numeri</button>
+          <div id="aiTabRischio" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -294,6 +338,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">⚠️ TRANSIZIONI ANOMALE (più lontane dalla probabilità "casuale" del 20%)</div>
           <div id="markovAnomalyWrap"></div>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('markov')">🤖 Chiedi a Claude — interpreta la catena di Markov</button>
+          <div id="aiTabMarkov" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -342,6 +388,8 @@ const APP_PASSWORD = "MarinAnalyzer2026."; // ⚠️ CAMBIA_PASSWORD prima di de
 const AUTH_KEY = "analyzer_auth_v1";
 
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
+let volumeChartObj=null;
+let LAST_CYCLES=null;
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
 let STOCK=null;      // dati titolo analizzato
@@ -456,9 +504,11 @@ window.analyzeTicker=async function(){
     const totalReturn=((STOCK.closes[STOCK.closes.length-1]-STOCK.closes[0])/STOCK.closes[0]*100);
 
     el("resultsWrap").style.display="block";
-    el("chartTitle").textContent=`📉 ${ticker} — ${STOCK.name} (${STOCK.currency})`;
+    el("chartTitle").querySelector("span").textContent=`📉 ${ticker} — ${STOCK.name} (${STOCK.currency})`;
+    el("tvLink").href=getTVUrl(ticker);
     renderCandles();
     renderHero(totalReturn);
+    renderVolumeProfiles();
 
     const weekly=computePeriodReturns(STOCK.dates,STOCK.closes,"week");
     const monthly=computePeriodReturns(STOCK.dates,STOCK.closes,"month");
@@ -466,7 +516,9 @@ window.analyzeTicker=async function(){
     renderPeriodStats(weekly,monthly,annual);
 
     const cycles=computeCycles(STOCK.dates,STOCK.closes,threshold);
+    LAST_CYCLES=cycles;
     renderCycleStats(cycles);
+    populateVpCycleOptions();
 
     switchTab("Grafico");
     el("analyzeStatus").textContent=`✅ ${ticker}: ${STOCK.dates.length} sessioni analizzate (${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")})`;
@@ -502,9 +554,43 @@ function renderCandles(){
   sma200Series.setData(toSeriesData(STOCK.dates,sma200));
 
   chart.timeScale().fitContent();
-  window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); });
+  window.addEventListener("resize",()=>{ if(chart) chart.applyOptions({width:container.clientWidth}); if(rsiChart) rsiChart.applyOptions({width:el("rsiChart").clientWidth}); if(volumeChartObj) volumeChartObj.applyOptions({width:el("volumeChart").clientWidth}); });
 
   renderRSIChart();
+  renderVolumeChart();
+  renderICTOverlays();
+}
+
+function renderVolumeChart(){
+  const container=el("volumeChart");
+  container.innerHTML="";
+  volumeChartObj=LightweightCharts.createChart(container,{
+    width:container.clientWidth, height:100,
+    layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
+    grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
+    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"}
+  });
+  const volSeries=volumeChartObj.addHistogramSeries({priceLineVisible:false});
+  const volData=STOCK.dates.map((d,i)=>({time:d.toISOString().slice(0,10),value:STOCK.volumes[i]||0,
+    color: (i>0 && STOCK.closes[i]>=STOCK.closes[i-1]) ? "rgba(0,212,184,0.7)" : "rgba(255,107,107,0.7)"}));
+  volSeries.setData(volData);
+  const volMA20=smaSeriesCalc(STOCK.volumes,20);
+  const maSeries=volumeChartObj.addLineSeries({color:"#ffd23f",lineWidth:1.3,priceLineVisible:false});
+  maSeries.setData(toSeriesData(STOCK.dates,volMA20));
+  volumeChartObj.timeScale().fitContent();
+  chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{ if(volumeChartObj && range) volumeChartObj.timeScale().setVisibleLogicalRange(range); });
+
+  // Segnale volume: ultimo giorno vs media 20gg
+  const lastVol=STOCK.volumes[STOCK.volumes.length-1];
+  const lastMA=volMA20[volMA20.length-1];
+  const sigEl=el("volumeSignal");
+  if(lastVol && lastMA){
+    const ratio=lastVol/lastMA;
+    if(ratio>1.5) sigEl.innerHTML=`<span style="color:#00d4b8;font-weight:700;">📢 Volume ${ratio.toFixed(1)}x sopra la media — forte interesse sull'ultima seduta</span>`;
+    else if(ratio>1.2) sigEl.innerHTML=`<span style="color:#80ed99;font-weight:700;">↑ Volume ${ratio.toFixed(1)}x sopra la media</span>`;
+    else if(ratio<0.6) sigEl.innerHTML=`<span style="color:var(--dim);">↓ Volume basso (${ratio.toFixed(1)}x media) — scarso interesse</span>`;
+    else sigEl.innerHTML=`<span style="color:var(--dim);">Volume nella norma (${ratio.toFixed(1)}x media)</span>`;
+  } else sigEl.textContent="";
 }
 
 function renderRSIChart(){
@@ -589,7 +675,7 @@ function computeCycles(dates,closes,thresholdPct){
   for(let i=1;i<pivots.length;i++){
     const a=pivots[i-1],b=pivots[i]; const days=Math.round((dates[b.idx]-dates[a.idx])/86400000);
     if(days<=0) continue;
-    swings.push({type:(b.price-a.price)>=0?"up":"down", days, retPct:(b.price-a.price)/a.price*100});
+    swings.push({type:(b.price-a.price)>=0?"up":"down", days, retPct:(b.price-a.price)/a.price*100, startIdx:a.idx, endIdx:b.idx});
   }
   const ups=swings.filter(s=>s.type==="up"), downs=swings.filter(s=>s.type==="down");
   const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
@@ -603,7 +689,7 @@ function computeCycles(dates,closes,thresholdPct){
     const retPct=(closes[lastIdx]-lastConfirmed.price)/lastConfirmed.price*100;
     current={ type: retPct>=0?"up":"down", days, retPct, sinceDate: dates[lastConfirmed.idx] };
   }
-  return { threshold:thresholdPct, totalSwings:swings.length,
+  return { threshold:thresholdPct, totalSwings:swings.length, swings,
     up:{count:ups.length,avgDays:avg(ups.map(s=>s.days)),avgReturn:avg(ups.map(s=>s.retPct))},
     down:{count:downs.length,avgDays:avg(downs.map(s=>s.days)),avgReturn:avg(downs.map(s=>s.retPct))},
     current };
@@ -639,6 +725,180 @@ function renderCycleStats(cycles){
       <div class="v2" style="color:#ff6b6b;">${fmtPct(cycles.down.avgReturn)}</div><div class="l" style="margin-top:2px;">Rendimento Medio (${cycles.down.count} cicli)</div></div>
   </div>`;
 }
+
+// ── TRADINGVIEW LINK ──────────────────────────────────────────────────
+function getTVUrl(ticker){
+  let sym=ticker;
+  if(ticker.endsWith(".MI")) sym="MIL:"+ticker.replace(".MI","").replace("STMMI","STM");
+  else if(ticker.endsWith(".PA")) sym="EURONEXT:"+ticker.replace(".PA","");
+  else if(ticker.endsWith(".DE")) sym="XETR:"+ticker.replace(".DE","");
+  else if(ticker.endsWith(".L")) sym="LSE:"+ticker.replace(".L","");
+  else if(ticker.endsWith(".ST")) sym="OMX:"+ticker.replace(".ST","");
+  return "https://www.tradingview.com/chart/?symbol="+encodeURIComponent(sym);
+}
+
+// ── ICT: SWING HIGH/LOW, FVG, POC ──────────────────────────────────────
+function calcSwingsICT(highs,lows,dates,lookback=5){
+  if(!highs||!lows||highs.length<lookback*2) return {highs:[],lows:[]};
+  const sh=[],sl=[];
+  for(let i=lookback;i<highs.length-lookback;i++){
+    const wH=highs.slice(i-lookback,i+lookback+1).filter(v=>v!=null);
+    const wL=lows.slice(i-lookback,i+lookback+1).filter(v=>v!=null);
+    if(highs[i]!=null && highs[i]===Math.max(...wH)) sh.push({idx:i,price:highs[i]});
+    if(lows[i]!=null && lows[i]===Math.min(...wL)) sl.push({idx:i,price:lows[i]});
+  }
+  return {highs:sh.slice(-8), lows:sl.slice(-8)}; // ultimi 8 per non affollare il grafico
+}
+function calcFVGICT(opens,highs,lows,closes){
+  if(!opens||opens.length<3) return [];
+  const fvgs=[];
+  for(let i=2;i<closes.length;i++){
+    if(highs[i-2]==null||lows[i]==null) continue;
+    if(lows[i]>highs[i-2]) fvgs.push({idx:i,type:"bullish",top:lows[i],bottom:highs[i-2]});
+    if(highs[i]!=null && lows[i-2]!=null && highs[i]<lows[i-2]) fvgs.push({idx:i,type:"bearish",top:lows[i-2],bottom:highs[i]});
+  }
+  return fvgs.slice(-6); // ultimi 6 FVG
+}
+function calcPOCSimple(closes,volumes,buckets=24){
+  if(!closes||!volumes||closes.length<10) return null;
+  const valid=closes.map((c,i)=>[c,volumes[i]]).filter(([c,v])=>c!=null&&v!=null&&v>0);
+  if(valid.length<10) return null;
+  const prices=valid.map(([c])=>c);
+  const min=Math.min(...prices), max=Math.max(...prices);
+  const bucketSize=(max-min)/buckets||1;
+  const bucketVol=new Array(buckets).fill(0);
+  valid.forEach(([c,v])=>{ let b=Math.floor((c-min)/bucketSize); if(b>=buckets)b=buckets-1; if(b<0)b=0; bucketVol[b]+=v; });
+  const pocIdx=bucketVol.indexOf(Math.max(...bucketVol));
+  return min+pocIdx*bucketSize+bucketSize/2;
+}
+
+window.renderICTOverlays=function(){
+  if(!STOCK||!candleSeries) return;
+  const showSwing=el("chkSwing").checked, showFVG=el("chkFVG").checked, showPOC=el("chkPOC").checked;
+
+  // Rimuovi price line POC precedente se esiste
+  if(window._pocLine){ try{ candleSeries.removePriceLine(window._pocLine); }catch(e){} window._pocLine=null; }
+
+  // Swing High/Low come marker
+  const markers=[];
+  if(showSwing){
+    const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    sw.highs.forEach(p=>markers.push({time:STOCK.dates[p.idx].toISOString().slice(0,10),position:"aboveBar",color:"#ffd23f",shape:"arrowDown",text:"SH"}));
+    sw.lows.forEach(p=>markers.push({time:STOCK.dates[p.idx].toISOString().slice(0,10),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:"SL"}));
+    markers.sort((a,b)=>a.time.localeCompare(b.time));
+  }
+  candleSeries.setMarkers(markers);
+
+  // FVG come coppie di price line (bordo alto/basso della zona)
+  if(window._fvgLines){ window._fvgLines.forEach(l=>{ try{candleSeries.removePriceLine(l);}catch(e){} }); }
+  window._fvgLines=[];
+  if(showFVG){
+    const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
+    fvgs.forEach(f=>{
+      const col=f.type==="bullish"?"#00d4b855":"#ff6b6b55";
+      window._fvgLines.push(candleSeries.createPriceLine({price:f.top,color:col,lineWidth:1,lineStyle:3,axisLabelVisible:false,title:""}));
+      window._fvgLines.push(candleSeries.createPriceLine({price:f.bottom,color:col,lineWidth:1,lineStyle:3,axisLabelVisible:false,title:f.type==="bullish"?"FVG↑":"FVG↓"}));
+    });
+  }
+
+  // POC come price line dorata
+  if(showPOC){
+    const poc=calcPOCSimple(STOCK.closes,STOCK.volumes);
+    if(poc) window._pocLine=candleSeries.createPriceLine({price:poc,color:"#ff3d71",lineWidth:2,lineStyle:0,axisLabelVisible:true,title:"POC"});
+  }
+};
+
+// ── VOLUME PROFILE ─────────────────────────────────────────────────────
+function computeVolumeProfile(closes,volumes,buckets=24){
+  if(!closes||!volumes||closes.length<5) return null;
+  const valid=closes.map((c,i)=>[c,volumes[i]]).filter(([c,v])=>c!=null&&v!=null&&v>0);
+  if(valid.length<5) return null;
+  const prices=valid.map(([c])=>c);
+  const min=Math.min(...prices), max=Math.max(...prices);
+  const bucketSize=(max-min)/buckets||1;
+  const bucketVol=new Array(buckets).fill(0);
+  valid.forEach(([c,v])=>{ let b=Math.floor((c-min)/bucketSize); if(b>=buckets)b=buckets-1; if(b<0)b=0; bucketVol[b]+=v; });
+  const totalVol=bucketVol.reduce((a,b)=>a+b,0);
+  const pocIdx=bucketVol.indexOf(Math.max(...bucketVol));
+  let covered=bucketVol[pocIdx], lo=pocIdx, hi=pocIdx;
+  while(covered/totalVol<0.68 && (lo>0||hi<buckets-1)){
+    const nextLo=lo>0?bucketVol[lo-1]:-1, nextHi=hi<buckets-1?bucketVol[hi+1]:-1;
+    if(nextHi>=nextLo){ hi++; covered+=bucketVol[hi]; } else { lo--; covered+=bucketVol[lo]; }
+  }
+  const bins=bucketVol.map((v,i)=>({priceLow:min+i*bucketSize,priceHigh:min+(i+1)*bucketSize,vol:v,isPOC:i===pocIdx,inValueArea:i>=lo&&i<=hi}));
+  return { bins, poc:min+pocIdx*bucketSize+bucketSize/2, min, max, totalVol,
+    vaHigh:min+(hi+1)*bucketSize, vaLow:min+lo*bucketSize };
+}
+
+function drawVolumeProfile(canvasId,profile){
+  const canvas=el(canvasId);
+  if(!canvas) return;
+  const ctx=canvas.getContext("2d");
+  const w=canvas.clientWidth||canvas.parentElement.clientWidth, h=canvas.clientHeight||300;
+  canvas.width=w; canvas.height=h;
+  ctx.clearRect(0,0,w,h);
+  if(!profile){ ctx.fillStyle="#7d8aa3"; ctx.font="11px Manrope"; ctx.fillText("Dati insufficienti",10,20); return; }
+  const maxVol=Math.max(...profile.bins.map(b=>b.vol));
+  const barAreaW=w-70;
+  const n=profile.bins.length;
+  const binH=h/n;
+  profile.bins.slice().reverse().forEach((bin,i)=>{
+    const y=i*binH;
+    const barW=maxVol>0?(bin.vol/maxVol)*barAreaW:0;
+    ctx.fillStyle=bin.isPOC?"#ff3d71":bin.inValueArea?"#4fa3ff88":"#4fa3ff33";
+    ctx.fillRect(60,y+1,barW,binH-2);
+    ctx.fillStyle="#7d8aa3"; ctx.font="9px JetBrains Mono, monospace";
+    ctx.fillText(bin.priceHigh.toFixed(2),2,y+binH/2+3);
+  });
+  // Linea POC
+  const pocBinIdx=profile.bins.findIndex(b=>b.isPOC);
+  const pocY=(n-1-pocBinIdx)*binH+binH/2;
+  ctx.strokeStyle="#ff3d71"; ctx.lineWidth=1.5; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(60,pocY); ctx.lineTo(w,pocY); ctx.stroke(); ctx.setLineDash([]);
+}
+
+function renderVolumeProfiles(){
+  if(!STOCK) return;
+  const fullProfile=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+  drawVolumeProfile("vpFullCanvas",fullProfile);
+  el("vpFullInfo").innerHTML = fullProfile ? `POC: <strong style="color:#ff3d71;">${STOCK.currency} ${fullProfile.poc.toFixed(2)}</strong> | Value Area: ${fullProfile.vaLow.toFixed(2)} — ${fullProfile.vaHigh.toFixed(2)} (68% del volume)` : "";
+  renderVolumeProfileCustom();
+}
+window.onVpModeChange=function(){
+  const mode=el("vpMode").value;
+  el("vpDays").style.display = mode==="days"?"inline-block":"none";
+  el("vpCycle").style.display = mode==="cycle"?"inline-block":"none";
+  renderVolumeProfileCustom();
+};
+window.populateVpCycleOptions=function(){
+  const sel=el("vpCycle");
+  if(!sel||!LAST_CYCLES) return;
+  sel.innerHTML=LAST_CYCLES.swings.slice().reverse().map((s,i)=>{
+    const label=`${s.type==="up"?"🟢":"🔴"} ${STOCK.dates[s.startIdx].toLocaleDateString("it-IT")} → ${STOCK.dates[s.endIdx].toLocaleDateString("it-IT")} (${s.retPct>=0?"+":""}${s.retPct.toFixed(1)}%, ${s.days}gg)`;
+    return `<option value="${LAST_CYCLES.swings.length-1-i}">${label}</option>`;
+  }).join("");
+};
+window.renderVolumeProfileCustom=function(){
+  if(!STOCK) return;
+  const mode=el("vpMode").value;
+  let closesSlice, volumesSlice, label;
+  if(mode==="days"){
+    const n=parseInt(el("vpDays").value);
+    closesSlice=STOCK.closes.slice(-n); volumesSlice=STOCK.volumes.slice(-n);
+    label=`Ultimi ${n} giorni`;
+  } else {
+    if(!LAST_CYCLES || LAST_CYCLES.swings.length===0){ drawVolumeProfile("vpCustomCanvas",null); el("vpCustomInfo").textContent="Nessun ciclo rilevato — vai al tab Grafico e controlla la soglia cicli."; return; }
+    const idx=parseInt(el("vpCycle").value||"0");
+    const s=LAST_CYCLES.swings[idx];
+    if(!s){ return; }
+    closesSlice=STOCK.closes.slice(s.startIdx,s.endIdx+1);
+    volumesSlice=STOCK.volumes.slice(s.startIdx,s.endIdx+1);
+    label=`Ciclo ${s.type==="up"?"rialzista":"ribassista"} ${STOCK.dates[s.startIdx].toLocaleDateString("it-IT")}→${STOCK.dates[s.endIdx].toLocaleDateString("it-IT")}`;
+  }
+  const profile=computeVolumeProfile(closesSlice,volumesSlice,24);
+  drawVolumeProfile("vpCustomCanvas",profile);
+  el("vpCustomInfo").innerHTML = profile ? `${label}<br>POC: <strong style="color:#ff3d71;">${STOCK.currency} ${profile.poc.toFixed(2)}</strong> | Value Area: ${profile.vaLow.toFixed(2)} — ${profile.vaHigh.toFixed(2)}` : label+"<br>Dati insufficienti";
+};
 
 // ── BENCHMARK ─────────────────────────────────────────────────────────
 window.compareBenchmark=async function(){
@@ -1415,6 +1675,76 @@ function mdToHtml(text){
 }
 
 let aiChatMessages=[];
+
+window.askAIAboutTab=async function(tabName){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  const targetId="aiTab"+tabName.charAt(0).toUpperCase()+tabName.slice(1);
+  const box=el(targetId);
+  box.innerHTML=`<div style="color:var(--dim);font-size:11px;padding:8px;">🤖 Claude sta analizzando...</div>`;
+
+  let prompt="";
+  const base=`Sei un esperto analista finanziario. Rispondi in italiano, conciso (max 200 parole), con emoji, a paragrafi brevi senza titoli ##. Non sei un consulente ufficiale.\n\nTitolo: ${STOCK.ticker} — ${STOCK.name}\n\n`;
+
+  if(tabName==="rischio"){
+    const returns=calcDailyReturns(STOCK.closes);
+    const sharpe=calcSharpe(returns), sortino=calcSortino(returns), vol=calcVolatility(returns), maxDD=calcMaxDrawdown(STOCK.closes);
+    const beta=BENCH?calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates):null;
+    prompt=base+`Metriche di rischio calcolate sullo storico caricato:
+- Sharpe Ratio: ${sharpe!=null?sharpe.toFixed(2):"N/D"}
+- Sortino Ratio: ${sortino!=null?sortino.toFixed(2):"N/D"}
+- Volatilità annua: ${vol!=null?vol.toFixed(1)+"%":"N/D"}
+- Max Drawdown: ${maxDD!=null?maxDD.toFixed(1)+"%":"N/D"}
+- Beta${BENCH?" vs "+BENCH.ticker:""}: ${beta!=null?beta.toFixed(2):"N/D (nessun benchmark confrontato)"}
+
+Interpreta questi numeri per un investitore non esperto: il titolo è rischioso? Conviene aggiustare la size della posizione o mettere uno stop loss più stretto/largo del solito?`;
+  }
+
+  if(tabName==="markov"){
+    const series=periodReturnSeries(STOCK.dates,STOCK.closes,"daily");
+    const states=classifyStates(series,0.5,1.5);
+    const {matrix}=buildTransitionMatrix(states);
+    const cs=states[states.length-1];
+    const nextRow=matrix[cs].map(p=>p==null?null:(p*100).toFixed(0)+"%");
+    prompt=base+`Catena di Markov giornaliera a 5 stati (Forte Ribasso, Ribasso, Laterale, Rialzo, Forte Rialzo), basata su soglie di deviazione standard dei rendimenti.
+
+Stato di oggi: ${STATE_NAMES[cs]}
+Probabilità stato di domani, partendo da "${STATE_NAMES[cs]}":
+${STATE_NAMES.map((n,i)=>`- ${n}: ${nextRow[i]||"N/D"}`).join("\n")}
+
+Interpreta queste probabilità in modo pratico: cosa suggeriscono per i prossimi 1-2 giorni? È uno scenario di continuazione o di possibile inversione?`;
+  }
+
+  if(tabName==="stagionalita"){
+    const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+    const years=Object.keys(grid).map(Number).sort((a,b)=>a-b);
+    const monthNames=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+    const currentMonth=STOCK.dates[STOCK.dates.length-1].getMonth();
+    const nextMonth=(currentMonth+1)%12;
+    const avgFor=(m)=>{ const v=years.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?(v.reduce((a,b)=>a+b,0)/v.length):null; };
+    const probPosFor=(m)=>{ const v=years.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?(v.filter(x=>x>0).length/v.length*100):null; };
+    prompt=base+`Statistiche stagionali mensili storiche (${years.length} anni di dati):
+- Mese corrente (${monthNames[currentMonth]}): rendimento medio storico ${avgFor(currentMonth)!=null?avgFor(currentMonth).toFixed(1)+"%":"N/D"}, probabilità positiva ${probPosFor(currentMonth)!=null?probPosFor(currentMonth).toFixed(0)+"%":"N/D"}
+- Prossimo mese (${monthNames[nextMonth]}): rendimento medio storico ${avgFor(nextMonth)!=null?avgFor(nextMonth).toFixed(1)+"%":"N/D"}, probabilità positiva ${probPosFor(nextMonth)!=null?probPosFor(nextMonth).toFixed(0)+"%":"N/D"}
+- Rendimento medio per tutti i 12 mesi: ${monthNames.map((n,i)=>`${n} ${avgFor(i)!=null?avgFor(i).toFixed(1)+"%":"N/D"}`).join(", ")}
+
+Ci sono pattern stagionali abbastanza consistenti da essere utili, o sono solo rumore statistico dato il numero di anni disponibili? Quale mese è storicamente il più favorevole/sfavorevole per questo titolo?`;
+  }
+
+  try{
+    const res=await fetch("/.netlify/functions/claude",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ prompt, imageBase64:null })
+    });
+    let data;
+    try{ data=await res.json(); }
+    catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
+    const answer=data.text||data.error||"Errore nella risposta.";
+    box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
+  }catch(err){
+    box.innerHTML=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
+  }
+};
+
 window.setAIQ=function(q){ el("aiQuestion").value=q; el("aiQuestion").focus(); };
 
 window.askClaudeAI=async function(){
@@ -1437,6 +1767,13 @@ window.askClaudeAI=async function(){
   const threshold=parseFloat(el("zigzagThreshold").value)||10;
   const cycles=computeCycles(STOCK.dates,STOCK.closes,threshold);
   const cur=cycles.current;
+
+  // Dati ICT: swing high/low, FVG aperti, POC
+  const swICT=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+  const lastSwingHigh=swICT.highs.length?swICT.highs[swICT.highs.length-1].price:null;
+  const lastSwingLow=swICT.lows.length?swICT.lows[swICT.lows.length-1].price:null;
+  const fvgICT=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
+  const pocICT=calcPOCSimple(STOCK.closes,STOCK.volumes);
 
   // Stato Markov corrente, se già calcolato
   let markovTxt="Non ancora calcolato — vai al tab Markov per generarlo.";
@@ -1463,6 +1800,11 @@ Dati tecnici:
 Livelli pivot (ultimi 60 giorni):
 ${sr?`- Pivot: ${sr.pivot.toFixed(2)} | R1: ${sr.r1.toFixed(2)} | R2: ${sr.r2.toFixed(2)} | S1: ${sr.s1.toFixed(2)} | S2: ${sr.s2.toFixed(2)}
 - Massimo periodo: ${sr.high.toFixed(2)} | Minimo periodo: ${sr.low.toFixed(2)}`:"N/D"}
+
+Dati ICT (Smart Money Concepts):
+- Ultimo Swing High: ${lastSwingHigh?lastSwingHigh.toFixed(2):"N/D"} | Ultimo Swing Low: ${lastSwingLow?lastSwingLow.toFixed(2):"N/D"}
+- POC (livello a più volume): ${pocICT?pocICT.toFixed(2):"N/D"}
+- FVG aperti recenti: ${fvgICT.length?fvgICT.map(f=>`${f.type==="bullish"?"🟢":"🔴"} ${f.bottom.toFixed(2)}-${f.top.toFixed(2)}`).join(", "):"nessuno rilevato"}
 
 ${el("aiIncludeChart").checked?"Ti allego anche uno screenshot del grafico a candele con le medie mobili: usalo per identificare visivamente pattern grafici, supporti/resistenze non catturati dai pivot numerici, e la forma del trend.":""}
 
@@ -1496,5 +1838,92 @@ Domanda: ${question}`;
   }
 };
 </script>
+
+<!-- MODAL GUIDA -->
+<div class="modal-overlay" id="modalHelpOverlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="margin:0;">❓ Guida & Significato dei Dati</h3>
+      <button onclick="document.getElementById('modalHelpOverlay').classList.remove('show')" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:20px;">✕</button>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">📈 MEDIE MOBILI (SMA) & RSI</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        <strong style="color:var(--txt);">SMA 21/100/200</strong> — media aritmetica dei prezzi di chiusura degli ultimi N giorni. Prezzo sopra la SMA = trend di fondo positivo su quell'orizzonte.<br>
+        <strong style="color:var(--txt);">RSI (14)</strong> — velocità dei movimenti di prezzo, 0-100. &gt;70 ipercomprato (possibile correzione), &lt;30 ipervenduto (possibile rimbalzo), 30-70 zona neutra.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">🔄 CICLI RIALZO/RIBASSO (Zigzag)</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        Individua le inversioni di tendenza superiori alla soglia % impostata. "Ciclo in corso" mostra da quanti giorni dura la fase attuale e quanto ha reso finora, confrontato con la media storica di quel tipo di ciclo.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">🎯 METRICHE DI RISCHIO</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        <strong style="color:var(--txt);">Sharpe Ratio</strong> — rendimento extra rispetto al tasso privo di rischio (3.5%), diviso per la volatilità totale. &gt;1 ottimo, 0.5-1 buono, &lt;0.5 scarso.<br>
+        <strong style="color:var(--txt);">Sortino Ratio</strong> — come Sharpe ma considera solo la volatilità dei ribassi. Più indulgente verso i titoli che salgono molto e scendono poco.<br>
+        <strong style="color:var(--txt);">Max Drawdown</strong> — il calo % più profondo dal massimo storico al minimo successivo, nello storico caricato.<br>
+        <strong style="color:var(--txt);">Beta</strong> — sensibilità rispetto al benchmark scelto. &lt;1 meno volatile del mercato, &gt;1 più volatile, ~0 poco correlato.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">📅 STAGIONALITÀ</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        <strong style="color:var(--txt);">Forecast (una linea = un anno)</strong> — rendimento cumulato reale Gen→Dic di ogni anno, per confrontare visivamente come si è comportato il titolo in periodi diversi.<br>
+        <strong style="color:var(--txt);">Stagionalità mensile</strong> — per ogni mese di calendario: rendimento medio, mediana, deviazione standard, % di mesi storicamente positivi, migliore/peggiore.<br>
+        <strong style="color:var(--txt);">Score stagionale</strong> — probabilità positiva × rendimento medio ÷ deviazione standard. Più alto = pattern stagionale più affidabile (non casuale).<br>
+        <strong style="color:var(--txt);">Anni rialzisti vs ribassisti</strong> — confronta il comportamento mensile medio negli anni in cui il titolo ha chiuso l'anno positivo contro quelli negativi.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">🔗 CATENE DI MARKOV</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        Classifica ogni giorno/settimana/mese in 5 stati (Forte Ribasso → Forte Rialzo) in base a quante deviazioni standard (σ) dista dalla media dei rendimenti. Conta le transizioni stato→stato successivo per stimare probabilità future.<br>
+        <strong style="color:var(--txt);">Stato stazionario</strong> — la distribuzione di probabilità a cui il sistema tende nel lungo periodo, indipendentemente dallo stato di partenza.<br>
+        <strong style="color:var(--txt);">Transizioni anomale</strong> — le celle della matrice più lontane dal 20% "casuale" (5 stati equiprobabili), cioè i pattern più marcati nei dati.<br>
+        <strong style="color:var(--txt);">Regime di volatilità</strong> — puoi filtrare la matrice solo su periodi di alta o bassa volatilità storica, per vedere se il comportamento cambia.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">🧠 ICT / SMART MONEY CONCEPTS</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        <strong style="color:var(--txt);">Swing High/Low</strong> — massimi e minimi locali (un prezzo è uno swing se è il più alto/basso in una finestra di ±5 giorni). Segnano i punti di svolta più recenti.<br>
+        <strong style="color:var(--txt);">FVG (Fair Value Gap)</strong> — uno squilibrio tra 3 candele consecutive dove il prezzo ha "saltato" un livello senza scambi. Spesso il prezzo torna a "riempire" questa zona in seguito.<br>
+        <strong style="color:var(--txt);">POC (Point of Control)</strong> — il livello di prezzo dove si è scambiato più volume in assoluto nel periodo osservato. Agisce spesso da forte supporto/resistenza.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">📊 VOLUME & VOLUME PROFILE</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        <strong style="color:var(--txt);">Pannello volumi</strong> — barre colorate (verde=giorno positivo, rosso=negativo) + media mobile a 20 giorni. Un volume molto sopra la media segnala forte interesse/convinzione sul movimento.<br>
+        <strong style="color:var(--txt);">Volume Profile</strong> — istogramma orizzontale che mostra quanto volume è stato scambiato a ciascun livello di prezzo (non nel tempo, ma per fascia di prezzo). La <strong style="color:#ff3d71;">Value Area</strong> (barre più chiare) copre il 68% del volume totale attorno al POC.
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">📑 BILANCIO (Alpha Vantage)</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        Dati di conto economico e stato patrimoniale annuali: Ricavi, Utile Netto, Margine Netto (Utile÷Ricavi), EBITDA, Attivo/Patrimonio/Debiti totali, e Free Cash Flow (flusso di cassa operativo meno investimenti in capitale).
+      </div>
+    </div>
+
+    <div style="margin-bottom:8px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23f;letter-spacing:1px;margin-bottom:8px;">🤖 ANALISTA AI (CLAUDE)</div>
+      <div style="font-size:11px;color:var(--dim);line-height:1.7;">
+        Manda a Claude tutti i dati tecnici calcolati (SMA, RSI, cicli, pivot, ICT, stato Markov) e — se spuntata l'opzione — anche uno screenshot reale del grafico, per un'analisi visiva di pattern non catturati dai soli numeri. Non è un consulente finanziario ufficiale: usa le risposte come spunto, non come indicazione operativa.
+      </div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
