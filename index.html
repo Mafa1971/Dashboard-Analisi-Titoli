@@ -140,6 +140,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label style="font-size:10px;color:var(--dim);">Lunghezza Internal <input type="number" id="internalLen" value="5" min="2" max="30" style="width:55px;" onchange="renderICTOverlays()"></label>
           </div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH/SL = Swing High/Low · FVG = Fair Value Gap · POC = livello a più volume · BOS = Break of Structure (continuazione trend) · CHoCH = Change of Character (possibile inversione) · Le zone colorate sui punti di svolta sono gli Order Block</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div id="ictDebugInfo" style="font-size:9px;color:var(--dim);"></div>
+            <button class="btn ghost" style="font-size:9px;padding:3px 10px;" onclick="chart.timeScale().fitContent()">↔ Adatta al grafico</button>
+          </div>
           <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
           <div style="position:relative;">
             <div id="candleChart"></div>
@@ -799,7 +803,7 @@ function calcFVGICT(opens,highs,lows,closes){
     if(lows[i]>highs[i-2]) fvgs.push({idx:i,type:"bullish",top:lows[i],bottom:highs[i-2]});
     if(highs[i]!=null && lows[i-2]!=null && highs[i]<lows[i-2]) fvgs.push({idx:i,type:"bearish",top:lows[i-2],bottom:highs[i]});
   }
-  return fvgs.slice(-6); // ultimi 6 FVG
+  return fvgs.slice(-20); // ultime 20 FVG (più margine per restare nel range visibile)
 }
 
 // ── STRUTTURA DI MERCATO SMC (porting fedele da Pine Script) ────────────
@@ -855,7 +859,7 @@ function computeSMCStructure(highs,lows,closes,sz){
       }
     }
   }
-  return { events: events.slice(-8), trend }; // ultimi 8 eventi per non affollare
+  return { events: events.slice(-20), trend }; // ultimi 20 eventi (più margine per restare nel range visibile)
 }
 
 // ── ORDER BLOCK: estremo (massimo/minimo) su TUTTO il range pivot→conferma ─
@@ -903,16 +907,33 @@ function drawICTCanvasOverlay(){
   const ctx=canvas.getContext("2d");
   ctx.clearRect(0,0,w,h);
   const ts=chart.timeScale();
+  const debugCounts={fvgFound:0,fvgDrawn:0,swingFound:0,swingDrawn:0,eventsFound:0,eventsDrawn:0,obDrawn:0};
+
+  // Converte un indice barra in coordinata X: se fuori dal range visibile
+  // (timeToCoordinate torna null), aggancia al bordo sinistro/destro del
+  // canvas invece di saltare il disegno — così le zone parzialmente fuori
+  // vista restano visibili (tagliate) invece di sparire del tutto.
+  function xForIdx(idx){
+    if(idx<0) idx=0; if(idx>STOCK.dates.length-1) idx=STOCK.dates.length-1;
+    const x=ts.timeToCoordinate(STOCK.dates[idx].toISOString().slice(0,10));
+    if(x!=null) return x;
+    // fuori range: capiamo da che lato usando il range logico visibile
+    const vr=ts.getVisibleLogicalRange();
+    if(vr){ return idx<vr.from ? -20 : w+20; }
+    return null;
+  }
 
   if(el("chkFVG").checked){
     const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
+    debugCounts.fvgFound=fvgs.length;
     fvgs.forEach(f=>{
       const startIdx=Math.max(0,f.idx-2), endIdx=Math.min(STOCK.dates.length-1,f.idx+15);
-      const x0=ts.timeToCoordinate(STOCK.dates[startIdx].toISOString().slice(0,10));
-      const x1=ts.timeToCoordinate(STOCK.dates[endIdx].toISOString().slice(0,10));
+      const x0=xForIdx(startIdx), x1=xForIdx(endIdx);
       const yTop=candleSeries.priceToCoordinate(f.top);
       const yBottom=candleSeries.priceToCoordinate(f.bottom);
       if(x0==null||x1==null||yTop==null||yBottom==null) return;
+      if(x1<0||x0>w) return; // completamente fuori vista, non disegnare
+      debugCounts.fvgDrawn++;
       const bull=f.type==="bullish";
       const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
       ctx.fillStyle=bull?"rgba(0,212,184,0.18)":"rgba(255,107,107,0.18)";
@@ -922,16 +943,18 @@ function drawICTCanvasOverlay(){
       ctx.strokeRect(x0,y,x1-x0,rectH);
       ctx.fillStyle=bull?"#00d4b8":"#ff6b6b";
       ctx.font="bold 10px JetBrains Mono, monospace";
-      ctx.fillText(bull?"FVG ↑":"FVG ↓", x0+4, y+13);
+      ctx.fillText(bull?"FVG ↑":"FVG ↓", Math.max(x0+4,4), y+13);
     });
   }
 
   if(el("chkSwing").checked){
     const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    debugCounts.swingFound=sw.highs.length+sw.lows.length;
     sw.highs.forEach(p=>{
-      const x=ts.timeToCoordinate(STOCK.dates[p.idx].toISOString().slice(0,10));
+      const x=xForIdx(p.idx);
       const y=candleSeries.priceToCoordinate(p.price);
-      if(x==null||y==null) return;
+      if(x==null||y==null||x<0||x>w) return;
+      debugCounts.swingDrawn++;
       ctx.fillStyle="#ffd23f";
       ctx.beginPath(); ctx.moveTo(x,y-16); ctx.lineTo(x-6,y-6); ctx.lineTo(x+6,y-6); ctx.closePath(); ctx.fill();
       ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
@@ -939,9 +962,10 @@ function drawICTCanvasOverlay(){
       ctx.textAlign="left";
     });
     sw.lows.forEach(p=>{
-      const x=ts.timeToCoordinate(STOCK.dates[p.idx].toISOString().slice(0,10));
+      const x=xForIdx(p.idx);
       const y=candleSeries.priceToCoordinate(p.price);
-      if(x==null||y==null) return;
+      if(x==null||y==null||x<0||x>w) return;
+      debugCounts.swingDrawn++;
       ctx.fillStyle="#ffd23f";
       ctx.beginPath(); ctx.moveTo(x,y+16); ctx.lineTo(x-6,y+6); ctx.lineTo(x+6,y+6); ctx.closePath(); ctx.fill();
       ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
@@ -954,6 +978,7 @@ function drawICTCanvasOverlay(){
   const structs=[];
   if(el("chkSwingStruct").checked) structs.push({...computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,swingLen), tier:"swing"});
   if(el("chkInternalStruct").checked) structs.push({...computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,internalLen), tier:"internal"});
+  structs.forEach(st=>debugCounts.eventsFound+=st.events.length);
 
   // Order Block: disegnato PRIMA delle linee struttura, così resta "sotto"
   structs.forEach(st=>{
@@ -961,11 +986,12 @@ function drawICTCanvasOverlay(){
       const ob=findOrderBlockRange(STOCK.highs,STOCK.lows,ev.fromIdx,ev.idx,ev.dir);
       if(!ob) return;
       const endIdx=Math.min(STOCK.dates.length-1, ev.idx+(st.tier==="swing"?20:8));
-      const x0=ts.timeToCoordinate(STOCK.dates[ob.idx].toISOString().slice(0,10));
-      const x1=ts.timeToCoordinate(STOCK.dates[endIdx].toISOString().slice(0,10));
+      const x0=xForIdx(ob.idx), x1=xForIdx(endIdx);
       const yTop=candleSeries.priceToCoordinate(ob.top);
       const yBottom=candleSeries.priceToCoordinate(ob.bottom);
       if(x0==null||x1==null||yTop==null||yBottom==null) return;
+      if(x1<0||x0>w) return;
+      debugCounts.obDrawn++;
       const bull=ev.dir==="up";
       const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
       // Swing OB: blu/rosso scuro più visibile. Internal OB: più tenue.
@@ -977,17 +1003,18 @@ function drawICTCanvasOverlay(){
       ctx.strokeRect(x0,y,x1-x0,rectH);
       ctx.fillStyle=bull?"#3179f5":"#f77c80";
       ctx.font=(st.tier==="swing"?"bold 9px ":"9px ")+"JetBrains Mono, monospace";
-      ctx.fillText(st.tier==="swing"?"OB":"iOB", x0+3, y+11);
+      ctx.fillText(st.tier==="swing"?"OB":"iOB", Math.max(x0+3,3), y+11);
     });
   });
 
   // BOS / CHoCH: linea orizzontale dal punto rotto al punto di conferma
   structs.forEach(st=>{
     st.events.forEach(ev=>{
-      const x0=ts.timeToCoordinate(STOCK.dates[ev.fromIdx].toISOString().slice(0,10));
-      const x1=ts.timeToCoordinate(STOCK.dates[ev.idx].toISOString().slice(0,10));
+      const x0=xForIdx(ev.fromIdx), x1=xForIdx(ev.idx);
       const y=candleSeries.priceToCoordinate(ev.price);
       if(x0==null||x1==null||y==null) return;
+      if(x1<0||x0>w) return;
+      debugCounts.eventsDrawn++;
       const bullish=ev.dir==="up";
       const col=bullish?"#089981":"#f23645"; // verde/rosso come il tuo Pine Script
       ctx.strokeStyle=col;
@@ -997,9 +1024,12 @@ function drawICTCanvasOverlay(){
       ctx.fillStyle=col;
       ctx.font=(st.tier==="swing"?"bold 10px ":"9px ")+"Manrope, sans-serif";
       const prefix=st.tier==="internal"?"i":"";
-      ctx.fillText(prefix+ev.label, x1+4, y+3);
+      ctx.fillText(prefix+ev.label, Math.min(x1+4,w-40), y+3);
     });
   });
+
+  const dbg=el("ictDebugInfo");
+  if(dbg) dbg.textContent=`FVG: ${debugCounts.fvgDrawn}/${debugCounts.fvgFound} visibili · Swing: ${debugCounts.swingDrawn}/${debugCounts.swingFound} · Eventi BOS/CHoCH: ${debugCounts.eventsDrawn}/${debugCounts.eventsFound} · OB: ${debugCounts.obDrawn}`;
 }
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
