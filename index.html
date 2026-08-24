@@ -145,9 +145,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <button class="btn ghost" style="font-size:9px;padding:3px 10px;" onclick="chart.timeScale().fitContent()">↔ Adatta al grafico</button>
           </div>
           <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
-          <div style="position:relative;">
+          <div style="position:relative;isolation:isolate;">
             <div id="candleChart"></div>
-            <canvas id="ictOverlay" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
+            <canvas id="ictOverlay" style="position:absolute;top:0;left:0;pointer-events:none;z-index:5;"></canvas>
           </div>
           <div id="rsiChart"></div>
           <div style="margin-top:6px;font-size:9px;color:var(--dim);">VOLUME — <span style="color:#00d4b8;">■</span> Rialzo <span style="color:#ff6b6b;">■</span> Ribasso <span style="color:#ffd23f;">─</span> Media 20gg</div>
