@@ -115,6 +115,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio">📑 Bilancio</button>
         <button class="btn tabnav" onclick="switchTab('Markov')" id="tnMarkov">🔗 Markov</button>
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
+        <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern">🔮 Pattern</button>
+        <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -381,6 +383,57 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
         </div>
       </div>
+
+      <!-- TAB PATTERN CORRELATION -->
+      <div id="tabPattern" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🔮 PATTERN CORRELATION FINDER</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Cerca nello storico i periodi passati più simili (correlazione statistica) all'andamento recente, e mostra come si è evoluto il prezzo dopo quei match. Non è una previsione garantita — è un'analisi di analogia storica.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Pattern recente:
+              <select id="patQueryLen">
+                <option value="21">Ultimo mese</option>
+                <option value="63" selected>Ultimi 3 mesi</option>
+                <option value="126">Ultimi 6 mesi</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Proiezione avanti:
+              <select id="patForwardLen">
+                <option value="21">1 mese</option>
+                <option value="63" selected>3 mesi</option>
+                <option value="126">6 mesi</option>
+              </select>
+            </label>
+            <button class="btn primary" onclick="runPatternSearch()">🔍 CERCA PATTERN SIMILI</button>
+          </div>
+          <div id="patStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+        </div>
+
+        <div id="patResultsWrap" style="display:none;">
+          <div class="panel">
+            <div class="panel-title">📈 PROIEZIONE (basata sui match più correlati)</div>
+            <div style="height:340px;"><canvas id="patChart"></canvas></div>
+          </div>
+          <div class="cards" id="patCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"></div>
+          <div class="panel">
+            <div class="panel-title">📋 EVENTI STORICI CORRELATI</div>
+            <div id="patTableWrap" style="overflow-x:auto;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB STORICO ANALISI -->
+      <div id="tabStorico" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">📜 STORICO ANALISI
+            <button class="btn ghost" style="font-size:10px;" onclick="exportAnalysisHistoryCSV()">💾 Esporta Storico (CSV)</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="exportCurrentAnalysisJSON()">📥 Esporta Analisi Corrente (JSON)</button>
+            <button class="btn danger" style="font-size:10px;background:#ff6b6b22;border-color:#ff6b6b44;color:#ff6b6b;" onclick="clearAnalysisHistory()">🗑 Svuota Storico</button>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni titolo analizzato con ANALIZZA viene salvato automaticamente qui (nel browser). Non è sincronizzato tra dispositivi diversi.</div>
+          <div id="historyTableWrap" style="overflow-x:auto;"></div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
@@ -394,6 +447,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
     <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
+    <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
+    <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
 
@@ -437,6 +492,7 @@ window.switchTab=function(name){
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
   if(name==="Rischio" && STOCK) renderRisk();
   if(name==="Markov" && STOCK) renderMarkov();
+  if(name==="Storico") renderHistoryTab();
 };
 
 // ── YAHOO FETCH ───────────────────────────────────────────────────────
@@ -537,6 +593,7 @@ window.analyzeTicker=async function(){
     populateVpCycleOptions();
 
     switchTab("Grafico");
+    saveAnalysisToHistory(totalReturn);
     el("analyzeStatus").textContent=`✅ ${ticker}: ${STOCK.dates.length} sessioni analizzate (${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")})`;
   }catch(err){
     el("analyzeStatus").textContent="❌ Errore: "+err.message;
@@ -2063,6 +2120,229 @@ Domanda: ${question}`;
     el("aiLoadingMsg")?.remove();
     chatEl.innerHTML+=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
   }
+};
+
+// ── STORICO ANALISI (localStorage) + EXPORT ─────────────────────────────
+const HISTORY_KEY="analyzer_history_v1";
+function loadAnalysisHistory(){
+  try{ return JSON.parse(localStorage.getItem(HISTORY_KEY)||"[]"); }catch(e){ return []; }
+}
+function saveHistoryArr(arr){
+  try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(arr.slice(-200))); }catch(e){} // max 200 righe
+}
+function saveAnalysisToHistory(totalReturn){
+  if(!STOCK) return;
+  const hist=loadAnalysisHistory();
+  hist.push({
+    ticker:STOCK.ticker, name:STOCK.name, currency:STOCK.currency,
+    analyzedAt:new Date().toISOString(),
+    price:STOCK.closes[STOCK.closes.length-1],
+    totalReturnPct:parseFloat(totalReturn.toFixed(2)),
+    sessions:STOCK.dates.length,
+    periodStart:STOCK.dates[0].toISOString().slice(0,10),
+    periodEnd:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)
+  });
+  saveHistoryArr(hist);
+}
+window.renderHistoryTab=function(){
+  const hist=loadAnalysisHistory().slice().reverse();
+  const wrap=el("historyTableWrap");
+  if(!wrap) return;
+  if(hist.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Nessuna analisi salvata — usa ANALIZZA sul tab Grafico</p></div>`; return; }
+  let h=`<table><tr><th>Data Analisi</th><th>Ticker</th><th>Nome</th><th>Prezzo</th><th>Rendimento Periodo</th><th>Sessioni</th><th>Periodo Dati</th><th></th></tr>`;
+  hist.forEach((r,i)=>{
+    h+=`<tr>
+      <td style="font-size:10px;color:var(--dim);">${new Date(r.analyzedAt).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</td>
+      <td style="font-weight:700;color:#4fa3ff;">${r.ticker}</td>
+      <td style="font-size:11px;">${r.name||""}</td>
+      <td>${r.currency||""} ${r.price?.toFixed(2)||"--"}</td>
+      <td style="color:${r.totalReturnPct>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${fmtPct(r.totalReturnPct)}</td>
+      <td>${r.sessions}</td>
+      <td style="font-size:10px;color:var(--dim);">${r.periodStart} → ${r.periodEnd}</td>
+      <td><button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${r.ticker}';switchTab('Grafico');analyzeTicker();">↻ Rianalizza</button></td>
+    </tr>`;
+  });
+  h+="</table>";
+  wrap.innerHTML=h;
+};
+window.clearAnalysisHistory=function(){
+  if(!confirm("Svuotare tutto lo storico delle analisi salvate in questo browser?")) return;
+  saveHistoryArr([]);
+  renderHistoryTab();
+};
+window.exportAnalysisHistoryCSV=function(){
+  const hist=loadAnalysisHistory();
+  if(hist.length===0){ alert("Nessuna analisi da esportare"); return; }
+  const headers=["analyzedAt","ticker","name","currency","price","totalReturnPct","sessions","periodStart","periodEnd"];
+  let csv=headers.join(",")+"\n";
+  hist.forEach(r=>{ csv+=headers.map(h=>`"${(r[h]??"").toString().replace(/"/g,'""')}"`).join(",")+"\n"; });
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="storico_analisi_"+new Date().toISOString().slice(0,10)+".csv";
+  a.click();
+};
+window.exportCurrentAnalysisJSON=function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  const returns=calcDailyReturns(STOCK.closes);
+  const data={
+    ticker:STOCK.ticker, name:STOCK.name, currency:STOCK.currency,
+    exportedAt:new Date().toISOString(),
+    prezzoAttuale:STOCK.closes[STOCK.closes.length-1],
+    periodo:{da:STOCK.dates[0].toISOString().slice(0,10), a:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10), sessioni:STOCK.dates.length},
+    tecnico:{
+      sma21:smaSeriesCalc(STOCK.closes,21).slice(-1)[0],
+      sma100:smaSeriesCalc(STOCK.closes,100).slice(-1)[0],
+      sma200:smaSeriesCalc(STOCK.closes,200).slice(-1)[0],
+      rsi14:rsiSeriesCalc(STOCK.closes,14).slice(-1)[0]
+    },
+    rischio:{
+      sharpe:calcSharpe(returns), sortino:calcSortino(returns),
+      volatilitaAnnua:calcVolatility(returns), maxDrawdown:calcMaxDrawdown(STOCK.closes)
+    }
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=`analisi_${STOCK.ticker}_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+};
+
+// ── PATTERN CORRELATION FINDER ───────────────────────────────────────────
+function pearsonSimple(a,b){
+  const n=Math.min(a.length,b.length);
+  if(n<10) return null;
+  const ma=a.slice(0,n).reduce((x,y)=>x+y,0)/n, mb=b.slice(0,n).reduce((x,y)=>x+y,0)/n;
+  let num=0,da=0,db=0;
+  for(let i=0;i<n;i++){ const xa=a[i]-ma, xb=b[i]-mb; num+=xa*xb; da+=xa*xa; db+=xb*xb; }
+  const den=Math.sqrt(da*db);
+  return den>0?num/den:null;
+}
+function normalizeSeries(closes){ const base=closes[0]; return closes.map(c=>(c-base)/base*100); }
+
+function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDays=15){
+  const n=closes.length;
+  if(n<queryLen*3) return null;
+  const queryStart=n-queryLen;
+  const queryNorm=normalizeSeries(closes.slice(queryStart,n));
+
+  const candidates=[];
+  const maxStart=queryStart-queryLen; // deve finire prima dell'inizio della query, e avere spazio per la proiezione avanti già avvenuta nello storico
+  for(let start=0; start<=n-queryLen-forwardLen; start++){
+    if(start+queryLen>queryStart-5) continue; // evita sovrapposizione con la query stessa (margine 5gg)
+    const windowNorm=normalizeSeries(closes.slice(start,start+queryLen));
+    const corr=pearsonSimple(queryNorm,windowNorm);
+    if(corr==null) continue;
+    candidates.push({start, end:start+queryLen-1, corr});
+  }
+  if(candidates.length===0) return null;
+  candidates.sort((a,b)=>b.corr-a.corr);
+
+  const picked=[];
+  for(const c of candidates){
+    if(picked.length>=topK) break;
+    if(picked.every(p=>Math.abs(p.start-c.start)>minGapDays)) picked.push(c);
+  }
+
+  picked.forEach(m=>{
+    const fwdEndIdx=Math.min(n-1,m.end+forwardLen);
+    const fwdNorm=normalizeSeries(closes.slice(m.end,fwdEndIdx+1));
+    m.forward=fwdNorm;
+    m.finalReturn=fwdNorm[fwdNorm.length-1];
+    m.maxDrop=Math.min(...fwdNorm);
+    m.maxRise=Math.max(...fwdNorm);
+    m.startDate=dates[m.start]; m.endDate=dates[m.end];
+  });
+
+  const bullish=picked.filter(m=>m.finalReturn>0);
+  const bearish=picked.filter(m=>m.finalReturn<=0);
+  const probability=picked.length?(bullish.length/picked.length*100):null;
+  const avgCorr=picked.length?picked.reduce((a,m)=>a+m.corr,0)/picked.length:0;
+  const robustness=Math.max(1,Math.min(5,Math.round(avgCorr*4+ (picked.length>=6?1:0))));
+
+  function avgPath(arr){
+    if(arr.length===0) return null;
+    const maxLen=Math.max(...arr.map(m=>m.forward.length));
+    const out=new Array(maxLen).fill(null).map(()=>({sum:0,cnt:0}));
+    arr.forEach(m=>m.forward.forEach((v,i)=>{ out[i].sum+=v; out[i].cnt++; }));
+    return out.map(o=>o.cnt?o.sum/o.cnt:null);
+  }
+
+  return { queryNorm, queryStart, matches:picked, bullish, bearish, probability, robustness, avgCorr,
+    avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null };
+}
+
+let patChartObj=null;
+window.runPatternSearch=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
+  const queryLen=parseInt(el("patQueryLen").value);
+  const forwardLen=parseInt(el("patForwardLen").value);
+  el("patStatus").textContent="⏳ Ricerca pattern simili nello storico...";
+  el("patResultsWrap").style.display="none";
+
+  await new Promise(r=>setTimeout(r,30)); // lascia respirare la UI prima del calcolo (può essere pesante su storici lunghi)
+  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15);
+  if(!result){
+    el("patStatus").textContent="❌ Storico insufficiente per questa combinazione di lunghezze — prova con periodi più corti o carica più storico (tab Grafico → Ultimi N anni).";
+    return;
+  }
+  el("patStatus").textContent=`✅ Trovati ${result.matches.length} match storici (correlazione media ${(result.avgCorr*100).toFixed(0)}%)`;
+  el("patResultsWrap").style.display="block";
+
+  // Grafico: query (linea gialla) + proiezioni avanti (most correlated, avg long, avg short)
+  const labels=[]; 
+  for(let i=0;i<queryLen;i++) labels.push("Q"+i);
+  for(let i=0;i<forwardLen+1;i++) labels.push("+"+i);
+
+  const queryData=result.queryNorm.concat(new Array(forwardLen+1).fill(null));
+  const buildProjection=(path)=>{
+    if(!path) return new Array(labels.length).fill(null);
+    const out=new Array(queryLen-1).fill(null);
+    const anchor=result.queryNorm[result.queryNorm.length-1];
+    out.push(anchor); // punto di raccordo = oggi
+    path.slice(1).forEach(v=>out.push(anchor+v));
+    while(out.length<labels.length) out.push(null);
+    return out;
+  };
+  const mostCorrData=buildProjection(result.mostCorrelated?.forward);
+  const avgLongData=buildProjection(result.avgLongPath);
+  const avgShortData=buildProjection(result.avgShortPath);
+
+  const ctx=el("patChart");
+  if(patChartObj) patChartObj.destroy();
+  patChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels, datasets:[
+      {label:"Andamento recente", data:queryData, borderColor:"#ffd23f", borderWidth:2.5, pointRadius:0, tension:0.1, spanGaps:false},
+      {label:"Match più correlato", data:mostCorrData, borderColor:"#4fa3ff", borderWidth:2, borderDash:[5,3], pointRadius:0, tension:0.1, spanGaps:true},
+      {label:"Media casi rialzisti", data:avgLongData, borderColor:"#00d4b8", borderWidth:1.5, borderDash:[2,2], pointRadius:0, tension:0.1, spanGaps:true},
+      {label:"Media casi ribassisti", data:avgShortData, borderColor:"#ff6b6b", borderWidth:1.5, borderDash:[2,2], pointRadius:0, tension:0.1, spanGaps:true}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:12},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+  });
+
+  const probCol=result.probability>=60?"#00d4b8":result.probability<=40?"#ff6b6b":"#ffd23f";
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("patCardsWrap").innerHTML=
+    card("Probabilità Rialzo", result.probability!=null?result.probability.toFixed(0)+"%":"--", probCol)+
+    card("Robustezza", "★".repeat(result.robustness)+"☆".repeat(5-result.robustness), "#ffd23f")+
+    card("Correlazione Media", (result.avgCorr*100).toFixed(0)+"%", "var(--dim)")+
+    card("N. Match Trovati", result.matches.length, "var(--dim)");
+
+  let h=`<table><tr><th>Inizio</th><th>Fine</th><th>Correlazione</th><th>Esito (+${forwardLen}gg)</th><th>Max Ribasso</th><th>Max Rialzo</th></tr>`;
+  result.matches.forEach(m=>{
+    h+=`<tr>
+      <td style="font-size:10px;">${m.startDate.toLocaleDateString("it-IT")}</td>
+      <td style="font-size:10px;">${m.endDate.toLocaleDateString("it-IT")}</td>
+      <td style="font-weight:700;color:${m.corr>0.7?'#00d4b8':m.corr>0.4?'#ffd23f':'var(--dim)'};">${(m.corr*100).toFixed(0)}%</td>
+      <td style="font-weight:700;color:${m.finalReturn>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(m.finalReturn)}</td>
+      <td style="color:#ff6b6b;">${m.maxDrop.toFixed(1)}%</td>
+      <td style="color:#00d4b8;">+${m.maxRise.toFixed(1)}%</td>
+    </tr>`;
+  });
+  h+="</table>";
+  el("patTableWrap").innerHTML=h;
 };
 </script>
 
