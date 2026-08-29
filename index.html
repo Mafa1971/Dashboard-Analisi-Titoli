@@ -308,6 +308,41 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">📋 CONTO ECONOMICO E STATO PATRIMONIALE PER ANNO</div>
           <div id="fundTableWrap" style="overflow-x:auto;"></div>
         </div>
+
+        <div class="panel">
+          <div class="panel-title">📈 PREZZO vs FONDAMENTALI
+            <select id="priceFundMode" onchange="renderPriceFundamentalsChart(LAST_FUND_ROWS)" style="margin-left:8px;">
+              <option value="revenue">Ricavi</option>
+              <option value="netIncome" selected>Utile Netto</option>
+              <option value="pe">P/E (approssimato, annuale)</option>
+            </select>
+          </div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">Il valore fondamentale è annuale (a gradini) mentre il prezzo è giornaliero — normale che appaiano "a scalini". Il P/E qui è approssimato con l'EPS dell'ultimo bilancio annuale disponibile, non trimestrale come i P/E "ttm" ufficiali.</div>
+          <div style="height:280px;"><canvas id="priceFundChart"></canvas></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">💰 VALUE GENERATION</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:6px;">SHARES OUTSTANDING</div>
+              <div style="height:220px;"><canvas id="sharesChart"></canvas></div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:6px;">WEIGHTED FINANCIALS (per azione)</div>
+              <div style="height:220px;"><canvas id="weightedChart"></canvas></div>
+            </div>
+          </div>
+          <div class="cards" id="valueGenCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px;"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">🎯 FAIR VALUE & SOLIDITÀ</div>
+          <div class="cards" id="fairValueCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF e Peter Lynch dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
+          <div style="height:220px;"><canvas id="altmanChart"></canvas></div>
+          <div id="altmanInfo" style="margin-top:10px;font-size:12px;"></div>
+        </div>
       </div>
 
       <!-- TAB MARKOV -->
@@ -467,6 +502,7 @@ const AUTH_KEY = "analyzer_auth_v1";
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
 let volumeChartObj=null;
 let LAST_CYCLES=null;
+let LAST_FUND_ROWS=null;
 let CHART_DATA_BY_TIME={};
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
@@ -553,9 +589,16 @@ function rsiSeriesCalc(closes,period=14){
   return out;
 }
 function toSeriesData(dates,vals){
-  const out=[];
-  for(let i=0;i<vals.length;i++){ if(vals[i]!=null) out.push({time:dates[i].toISOString().slice(0,10),value:vals[i]}); }
-  return out;
+  // IMPORTANTE: non saltare i valori nulli (es. i primi 14gg di RSI, i primi
+  // 19gg di media volumi) — vanno inclusi come "whitespace point" (senza value)
+  // per mantenere lo STESSO numero di barre del grafico principale. Se si
+  // saltano, la serie ha meno punti e gli indici usati per sincronizzare lo
+  // scroll tra i pannelli (candele/RSI/volumi) non corrispondono più alle
+  // stesse date, causando lo sfasamento quando si scorre il grafico.
+  return dates.map((d,i)=> vals[i]!=null
+    ? {time:d.toISOString().slice(0,10), value:vals[i]}
+    : {time:d.toISOString().slice(0,10)}
+  );
 }
 
 // ── ANALYZE ───────────────────────────────────────────────────────────
@@ -1778,14 +1821,24 @@ window.loadFundamentals=async function(){
         revenue, netIncome,
         netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
         ebitda: numOrNull(inc.ebitda),
+        ebit: numOrNull(inc.ebit),
+        eps: numOrNull(inc.netIncome)!=null && numOrNull(bal.commonStockSharesOutstanding) ? numOrNull(inc.netIncome)/numOrNull(bal.commonStockSharesOutstanding) : null,
         totalAssets: numOrNull(bal.totalAssets),
         totalEquity: numOrNull(bal.totalShareholderEquity),
         totalLiab: numOrNull(bal.totalLiabilities),
+        totalCurrentAssets: numOrNull(bal.totalCurrentAssets),
+        totalCurrentLiab: numOrNull(bal.totalCurrentLiabilities),
+        retainedEarnings: numOrNull(bal.retainedEarnings),
+        sharesOutstanding: numOrNull(bal.commonStockSharesOutstanding),
         fcf: (opCF!=null&&capex!=null)?(opCF+capex):null // capex è già negativo in Alpha Vantage
       };
     }).reverse(); // dal più vecchio al più recente
 
     renderFundamentals(rows);
+    LAST_FUND_ROWS=rows;
+    renderPriceFundamentalsChart(rows);
+    renderValueGeneration(rows);
+    renderFairValueSolidity(rows);
     el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker}`;
   }catch(err){
     el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
@@ -1843,6 +1896,198 @@ function renderFundamentals(rows){
   h+="</table>";
   el("fundTableWrap").innerHTML=h;
 }
+
+// ── PREZZO vs FONDAMENTALI (combo, come Forecast.biz) ─────────────────
+let priceFundChartObj=null;
+window.renderPriceFundamentalsChart=function(rows){
+  if(!rows||!STOCK) return;
+  const mode=el("priceFundMode").value;
+  // Prezzo giornaliero: normalizziamo l'asse x sulle date del titolo (STOCK.dates)
+  const labels=STOCK.dates.map(d=>d.toISOString().slice(0,10));
+  const priceData=STOCK.closes;
+
+  // Valore fondamentale "a gradini": per ogni giorno, prendi l'ultimo bilancio
+  // annuale disponibile a quella data (rows è ordinato dal più vecchio).
+  function stepValueFor(field, transform){
+    let ri=0;
+    return STOCK.dates.map(d=>{
+      while(ri<rows.length-1 && new Date(rows[ri+1].year)<=d) ri++;
+      const r=rows[ri];
+      if(!r || new Date(r.year)>d) return null; // prima del primo bilancio disponibile
+      const v=transform?transform(r):r[field];
+      return v;
+    });
+  }
+
+  let fundData, fundLabel, fundColor;
+  if(mode==="revenue"){ fundData=stepValueFor("revenue"); fundLabel="Ricavi (annuale)"; fundColor="#00d4b8"; }
+  else if(mode==="netIncome"){ fundData=stepValueFor("netIncome"); fundLabel="Utile Netto (annuale)"; fundColor="#00d4b8"; }
+  else { fundData=stepValueFor(null, r=>r.eps && r.eps!==0 ? null : null); // placeholder, calcolato sotto
+    fundLabel="P/E (approssimato)"; fundColor="#ffd23f"; }
+
+  // Per il P/E: prezzo del giorno ÷ EPS dell'ultimo bilancio annuale disponibile
+  let peData=null;
+  if(mode==="pe"){
+    let ri=0;
+    peData=STOCK.dates.map((d,i)=>{
+      while(ri<rows.length-1 && new Date(rows[ri+1].year)<=d) ri++;
+      const r=rows[ri];
+      if(!r || new Date(r.year)>d || !r.eps || r.eps<=0) return null;
+      return STOCK.closes[i]/r.eps;
+    });
+  }
+
+  const ctx=el("priceFundChart");
+  if(priceFundChartObj) priceFundChartObj.destroy();
+  const datasets=[
+    { label:"Prezzo", data:priceData, borderColor:"#4fa3ff", backgroundColor:"rgba(79,163,255,0.08)", borderWidth:2, pointRadius:0, tension:0.1, yAxisID:"yPrice" }
+  ];
+  if(mode==="pe"){
+    datasets.push({ label:fundLabel, data:peData, borderColor:fundColor, borderWidth:1.5, pointRadius:0, tension:0.1, spanGaps:true, yAxisID:"yFund" });
+  } else {
+    datasets.push({ label:fundLabel, data:fundData, borderColor:fundColor, backgroundColor:fundColor+"22", borderWidth:1.5, pointRadius:0, tension:0, spanGaps:true, fill:true, yAxisID:"yFund" });
+  }
+
+  priceFundChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels, datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+        yPrice:{position:"left",ticks:{color:"#4fa3ff",font:{size:9}},grid:{color:"#1e2d45"},title:{display:true,text:STOCK.currency,color:"#4fa3ff",font:{size:9}}},
+        yFund:{position:"right",ticks:{color:fundColor,font:{size:9},callback:v=>mode==="pe"?v.toFixed(0)+"x":fmtBig(v)},grid:{display:false}}
+      }}
+  });
+};
+
+// ── VALUE GENERATION: Shares Outstanding + Weighted Financials ────────
+let sharesChartObj=null, weightedChartObj=null;
+window.renderValueGeneration=function(rows){
+  if(!rows) return;
+  const labels=rows.map(r=>r.year.slice(0,4));
+  const shares=rows.map(r=>r.sharesOutstanding);
+
+  const ctxS=el("sharesChart");
+  if(sharesChartObj) sharesChartObj.destroy();
+  sharesChartObj=new Chart(ctxS.getContext("2d"),{
+    type:"line",
+    data:{labels, datasets:[{label:"Shares Outstanding", data:shares, borderColor:"#4fa3ff", backgroundColor:"rgba(79,163,255,0.15)", fill:true, tension:0.2, pointRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>fmtBig(v)},grid:{color:"#1e2d45"}}}}
+  });
+
+  const revPerShare=rows.map(r=>r.sharesOutstanding?r.revenue/r.sharesOutstanding:null);
+  const niPerShare=rows.map(r=>r.sharesOutstanding?r.netIncome/r.sharesOutstanding:null);
+  const fcfPerShare=rows.map(r=>r.sharesOutstanding?r.fcf/r.sharesOutstanding:null);
+
+  const ctxW=el("weightedChart");
+  if(weightedChartObj) weightedChartObj.destroy();
+  weightedChartObj=new Chart(ctxW.getContext("2d"),{
+    type:"bar",
+    data:{labels, datasets:[
+      {label:"Ricavi/Az.", data:revPerShare, backgroundColor:"#ffd23f"},
+      {label:"Utile/Az.", data:niPerShare, backgroundColor:"#4fa3ff"},
+      {label:"FCF/Az.", data:fcfPerShare, backgroundColor:"#00d4b8"}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:9}}}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+v.toFixed(1)},grid:{color:"#1e2d45"}}}}
+  });
+
+  const first=rows.find(r=>r.sharesOutstanding!=null), last=[...rows].reverse().find(r=>r.sharesOutstanding!=null);
+  const sharesDecreasing = first && last && last.sharesOutstanding < first.sharesOutstanding;
+  const validNi=niPerShare.filter(v=>v!=null);
+  const niPerShareIncreasing = validNi.length>=2 && validNi[validNi.length-1] > validNi[0];
+  const robust = sharesDecreasing && niPerShareIncreasing;
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
+  el("valueGenCardsWrap").innerHTML=
+    card("Shares Outstanding", sharesDecreasing?"In calo (buyback)":"In aumento (diluizione)", sharesDecreasing?"#00d4b8":"#ff6b6b")+
+    card("Utile per Azione", niPerShareIncreasing?"In crescita":"In calo", niPerShareIncreasing?"#00d4b8":"#ff6b6b")+
+    card("Valutazione Complessiva", robust?"Robusta":"Da monitorare", robust?"#00d4b8":"#ffd23f");
+};
+
+// ── FAIR VALUE (Peter Lynch, DCF semplificato) + ALTMAN Z-SCORE ────────
+let altmanChartObj=null;
+window.renderFairValueSolidity=function(rows){
+  if(!rows||!STOCK) return;
+  const last=rows[rows.length-1];
+  const price=STOCK.closes[STOCK.closes.length-1];
+
+  // Peter Lynch: Fair Value = EPS × (crescita utili % + dividend yield %)
+  // Usiamo la crescita media dell'utile netto sugli ultimi bilanci disponibili come proxy.
+  const validNI=rows.map(r=>r.netIncome).filter(v=>v!=null);
+  let earningsGrowthPct=null;
+  if(validNI.length>=2){
+    const first=validNI[0], lastV=validNI[validNI.length-1];
+    const years=validNI.length-1;
+    if(first>0) earningsGrowthPct = (Math.pow(lastV/first,1/years)-1)*100;
+  }
+  const eps=last.eps;
+  const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*Math.max(earningsGrowthPct,0) : null;
+
+  // DCF semplificato: proiettiamo il FCF per azione a 5 anni con la crescita
+  // storica media (cap 15%/anno per prudenza), sconto al 9%, no valore terminale
+  // oltre l'orizzonte per semplicità — è una stima MOLTO approssimativa.
+  const fcfPerShareLast = last.sharesOutstanding ? last.fcf/last.sharesOutstanding : null;
+  let dcfFV=null;
+  if(fcfPerShareLast!=null && earningsGrowthPct!=null){
+    const g=Math.min(Math.max(earningsGrowthPct,0),15)/100;
+    const discount=0.09;
+    let sum=0, fcf=fcfPerShareLast;
+    for(let y=1;y<=5;y++){ fcf*=(1+g); sum+=fcf/Math.pow(1+discount,y); }
+    const terminal=(fcf*(1+0.025))/(discount-0.025)/Math.pow(1+discount,5); // crescita terminale 2.5%
+    dcfFV=sum+terminal;
+  }
+
+  const fvValues=[lynchFV,dcfFV].filter(v=>v!=null && v>0);
+  const avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
+  const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("fairValueCardsWrap").innerHTML=
+    card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
+    card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
+    card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
+    card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b");
+
+  // Altman Z-Score per anno: Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MktCap/TL) + 1.0*(Sales/TA)
+  const zScores=rows.map(r=>{
+    if(!r.totalAssets||!r.totalCurrentAssets==null||!r.totalCurrentLiab==null||!r.sharesOutstanding) return null;
+    const wc=(r.totalCurrentAssets??0)-(r.totalCurrentLiab??0);
+    const ta=r.totalAssets;
+    // Prezzo approssimato a fine anno: il close di STOCK più vicino a quella data
+    const targetTime=new Date(r.year).getTime();
+    let closestIdx=0, closestDiff=Infinity;
+    STOCK.dates.forEach((d,i)=>{ const diff=Math.abs(d.getTime()-targetTime); if(diff<closestDiff){ closestDiff=diff; closestIdx=i; } });
+    const priceAtYear=STOCK.closes[closestIdx];
+    const mktCap=priceAtYear*r.sharesOutstanding;
+    if(!ta||!r.totalLiab) return null;
+    const z=1.2*(wc/ta) + 1.4*((r.retainedEarnings||0)/ta) + 3.3*((r.ebit||0)/ta) + 0.6*(mktCap/r.totalLiab) + 1.0*((r.revenue||0)/ta);
+    return parseFloat(z.toFixed(2));
+  });
+
+  const ctx=el("altmanChart");
+  if(altmanChartObj) altmanChartObj.destroy();
+  altmanChartObj=new Chart(ctx.getContext("2d"),{
+    type:"bar",
+    data:{labels:rows.map(r=>r.year.slice(0,4)), datasets:[{label:"Altman Z-Score", data:zScores,
+      backgroundColor:zScores.map(z=>z==null?"#7d8aa3":z>2.99?"#00d4b8":z>1.81?"#ffd23f":"#ff6b6b")}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}}
+  });
+
+  const lastZ=zScores[zScores.length-1];
+  const zCol=lastZ==null?"var(--dim)":lastZ>2.99?"#00d4b8":lastZ>1.81?"#ffd23f":"#ff6b6b";
+  const zText=lastZ==null?"Dati insufficienti":lastZ>2.99?"Basso rischio di fallimento":lastZ>1.81?"Zona grigia — attenzione":"Alto rischio di fallimento";
+  el("altmanInfo").innerHTML=`<strong style="color:${zCol};">Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}. <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
+};
 
 // ── CATENE DI MARKOV ──────────────────────────────────────────────────
 const STATE_NAMES=["Forte Ribasso","Ribasso","Laterale","Rialzo","Forte Rialzo"];
