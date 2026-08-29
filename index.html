@@ -343,6 +343,20 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div style="height:220px;"><canvas id="altmanChart"></canvas></div>
           <div id="altmanInfo" style="margin-top:10px;font-size:12px;"></div>
         </div>
+
+        <div class="panel">
+          <div class="panel-title">✅ PIOTROSKI F-SCORE</div>
+          <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:16px;">
+            <div>
+              <div id="piotroskiScoreWrap" style="text-align:center;padding:16px;background:var(--panel2);border-radius:10px;margin-bottom:10px;"></div>
+              <div style="height:160px;"><canvas id="piotroskiTrendChart"></canvas></div>
+            </div>
+            <div>
+              <div style="font-size:9px;color:var(--dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">I 9 segnali (ultimo anno vs anno precedente)</div>
+              <div id="piotroskiSignalsWrap" style="font-size:11px;"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB MARKOV -->
@@ -1822,14 +1836,17 @@ window.loadFundamentals=async function(){
         netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
         ebitda: numOrNull(inc.ebitda),
         ebit: numOrNull(inc.ebit),
+        grossProfit: numOrNull(inc.grossProfit),
         eps: numOrNull(inc.netIncome)!=null && numOrNull(bal.commonStockSharesOutstanding) ? numOrNull(inc.netIncome)/numOrNull(bal.commonStockSharesOutstanding) : null,
         totalAssets: numOrNull(bal.totalAssets),
         totalEquity: numOrNull(bal.totalShareholderEquity),
         totalLiab: numOrNull(bal.totalLiabilities),
         totalCurrentAssets: numOrNull(bal.totalCurrentAssets),
         totalCurrentLiab: numOrNull(bal.totalCurrentLiabilities),
+        longTermDebt: numOrNull(bal.longTermDebt),
         retainedEarnings: numOrNull(bal.retainedEarnings),
         sharesOutstanding: numOrNull(bal.commonStockSharesOutstanding),
+        opCF, // cash flow operativo grezzo (serve per Piotroski, separato dal FCF)
         fcf: (opCF!=null&&capex!=null)?(opCF+capex):null // capex è già negativo in Alpha Vantage
       };
     }).reverse(); // dal più vecchio al più recente
@@ -1839,6 +1856,7 @@ window.loadFundamentals=async function(){
     renderPriceFundamentalsChart(rows);
     renderValueGeneration(rows);
     renderFairValueSolidity(rows);
+    renderPiotroski(rows);
     el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker}`;
   }catch(err){
     el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
@@ -2087,6 +2105,69 @@ window.renderFairValueSolidity=function(rows){
   const zCol=lastZ==null?"var(--dim)":lastZ>2.99?"#00d4b8":lastZ>1.81?"#ffd23f":"#ff6b6b";
   const zText=lastZ==null?"Dati insufficienti":lastZ>2.99?"Basso rischio di fallimento":lastZ>1.81?"Zona grigia — attenzione":"Alto rischio di fallimento";
   el("altmanInfo").innerHTML=`<strong style="color:${zCol};">Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}. <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
+};
+
+// ── PIOTROSKI F-SCORE (9 segnali, anno corrente vs precedente) ─────────
+let piotroskiTrendChartObj=null;
+function computePiotroskiForYear(cur,prev){
+  if(!cur||!prev) return null;
+  const signals=[];
+  const roaCur = cur.totalAssets ? cur.netIncome/cur.totalAssets : null;
+  const roaPrev = prev.totalAssets ? prev.netIncome/prev.totalAssets : null;
+  const curRatioCur = cur.totalCurrentLiab ? cur.totalCurrentAssets/cur.totalCurrentLiab : null;
+  const curRatioPrev = prev.totalCurrentLiab ? prev.totalCurrentAssets/prev.totalCurrentLiab : null;
+  const leverageCur = cur.totalAssets ? (cur.longTermDebt||0)/cur.totalAssets : null;
+  const leveragePrev = prev.totalAssets ? (prev.longTermDebt||0)/prev.totalAssets : null;
+  const grossMarginCur = cur.revenue ? cur.grossProfit/cur.revenue : null;
+  const grossMarginPrev = prev.revenue ? prev.grossProfit/prev.revenue : null;
+  const turnoverCur = cur.totalAssets ? cur.revenue/cur.totalAssets : null;
+  const turnoverPrev = prev.totalAssets ? prev.revenue/prev.totalAssets : null;
+
+  signals.push({ label:"ROA positivo", pass: roaCur!=null && roaCur>0 });
+  signals.push({ label:"Cash Flow Operativo positivo", pass: cur.opCF!=null && cur.opCF>0 });
+  signals.push({ label:"ROA migliorato", pass: roaCur!=null && roaPrev!=null && roaCur>roaPrev });
+  signals.push({ label:"CFO > Utile Netto (qualità utile)", pass: cur.opCF!=null && cur.netIncome!=null && cur.opCF>cur.netIncome });
+  signals.push({ label:"Leverage diminuito", pass: leverageCur!=null && leveragePrev!=null && leverageCur<leveragePrev });
+  signals.push({ label:"Current Ratio migliorato", pass: curRatioCur!=null && curRatioPrev!=null && curRatioCur>curRatioPrev });
+  signals.push({ label:"Nessuna nuova emissione azioni", pass: cur.sharesOutstanding!=null && prev.sharesOutstanding!=null && cur.sharesOutstanding<=prev.sharesOutstanding });
+  signals.push({ label:"Gross Margin migliorato", pass: grossMarginCur!=null && grossMarginPrev!=null && grossMarginCur>grossMarginPrev });
+  signals.push({ label:"Asset Turnover migliorato", pass: turnoverCur!=null && turnoverPrev!=null && turnoverCur>turnoverPrev });
+
+  const score=signals.filter(s=>s.pass).length;
+  return { score, signals };
+}
+window.renderPiotroski=function(rows){
+  if(!rows||rows.length<2) return;
+  const results=[];
+  for(let i=1;i<rows.length;i++) results.push({ year:rows[i].year.slice(0,4), ...computePiotroskiForYear(rows[i],rows[i-1]) });
+
+  const last=results[results.length-1];
+  const col=last.score>=7?"#00d4b8":last.score>=4?"#ffd23f":"#ff6b6b";
+  const label=last.score>=7?"Forte":last.score>=4?"Intermedio":"Debole";
+  el("piotroskiScoreWrap").innerHTML=`
+    <div style="font-size:42px;font-weight:800;color:${col};line-height:1;">${last.score}<span style="font-size:20px;color:var(--dim);">/9</span></div>
+    <div style="font-size:12px;color:${col};font-weight:700;margin-top:6px;">${label}</div>
+    <div style="font-size:10px;color:var(--dim);margin-top:4px;">Anno ${last.year}</div>`;
+
+  el("piotroskiSignalsWrap").innerHTML = last.signals.map(s=>
+    `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #1a2030;">
+      <span style="color:${s.pass?'#00d4b8':'#ff6b6b'};font-weight:700;">${s.pass?"✓":"✕"}</span>
+      <span style="color:${s.pass?'var(--txt)':'var(--dim)'};">${s.label}</span>
+    </div>`
+  ).join("");
+
+  const ctx=el("piotroskiTrendChart");
+  if(piotroskiTrendChartObj) piotroskiTrendChartObj.destroy();
+  piotroskiTrendChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels:results.map(r=>r.year), datasets:[{label:"F-Score", data:results.map(r=>r.score),
+      borderColor:"#ffd23f", backgroundColor:"rgba(255,210,63,0.15)", fill:true, stepped:true, pointRadius:4,
+      pointBackgroundColor:results.map(r=>r.score>=7?"#00d4b8":r.score>=4?"#ffd23f":"#ff6b6b")}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{min:0,max:9,ticks:{color:"#7d8aa3",font:{size:9},stepSize:1},grid:{color:"#1e2d45"}}}}
+  });
 };
 
 // ── CATENE DI MARKOV ──────────────────────────────────────────────────
