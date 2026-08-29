@@ -733,12 +733,18 @@ function renderVolumeChart(){
     timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"},
     handleScroll:false, handleScale:false
   });
-  const volSeries=volumeChartObj.addHistogramSeries({priceLineVisible:false});
+  // priceFormat "volume" mostra numeri compatti (25.4M invece di 25457455.00):
+  // oltre a essere più leggibile, restringe la larghezza dell'asse prezzi,
+  // che altrimenti — essendo molto più largo di quello del grafico principale
+  // e dell'RSI — causava un lieve disallineamento pixel tra i pannelli anche
+  // a sincronizzazione corretta (ogni pannello ha un'area di disegno diversa
+  // se l'asse verticale occupa più o meno spazio).
+  const volSeries=volumeChartObj.addHistogramSeries({priceLineVisible:false, priceFormat:{type:"volume"}});
   const volData=STOCK.dates.map((d,i)=>({time:d.toISOString().slice(0,10),value:STOCK.volumes[i]||0,
     color: (i>0 && STOCK.closes[i]>=STOCK.closes[i-1]) ? "rgba(0,212,184,0.7)" : "rgba(255,107,107,0.7)"}));
   volSeries.setData(volData);
   const volMA20=smaSeriesCalc(STOCK.volumes,20);
-  const maSeries=volumeChartObj.addLineSeries({color:"#ffd23f",lineWidth:1.3,priceLineVisible:false});
+  const maSeries=volumeChartObj.addLineSeries({color:"#ffd23f",lineWidth:1.3,priceLineVisible:false,priceFormat:{type:"volume"}});
   maSeries.setData(toSeriesData(STOCK.dates,volMA20));
   const mainRangeV=chart.timeScale().getVisibleLogicalRange();
   if(mainRangeV) volumeChartObj.timeScale().setVisibleLogicalRange(mainRangeV); else volumeChartObj.timeScale().fitContent();
