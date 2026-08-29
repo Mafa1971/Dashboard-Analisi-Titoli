@@ -118,7 +118,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern">🔮 Pattern</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
-        <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita">🔄 Ergodicità</button>
+        <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo">🎲 Monte Carlo</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -539,6 +539,50 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="historyTableWrap" style="overflow-x:auto;"></div>
         </div>
       </div>
+
+      <!-- TAB MONTE CARLO -->
+      <div id="tabMonteCarlo" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🎲 SIMULAZIONE MONTE CARLO</div>
+          <div style="font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.6;">
+            Simulo migliaia di possibili percorsi futuri ripescando casualmente (bootstrap) dai rendimenti giornalieri storici del titolo. Non è una previsione — è una mappa di scenari plausibili <strong style="color:var(--txt);">se</strong> il titolo continua a comportarsi statisticamente come in passato (stessa volatilità, stessa distribuzione di rendimenti).
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Orizzonte:
+              <select id="mcHorizon">
+                <option value="63">3 mesi</option>
+                <option value="126">6 mesi</option>
+                <option value="252" selected>1 anno</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">N. Simulazioni:
+              <select id="mcSims">
+                <option value="1000">1.000</option>
+                <option value="2000" selected>2.000</option>
+                <option value="5000">5.000</option>
+              </select>
+            </label>
+            <button class="btn primary" onclick="runMonteCarlo()">🎲 SIMULA</button>
+          </div>
+          <div id="mcStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+        </div>
+
+        <div id="mcResultsWrap" style="display:none;">
+          <div class="panel">
+            <div class="panel-title">📈 SCENARI (Pessimistico / Mediano / Ottimistico)</div>
+            <div style="height:340px;"><canvas id="mcChart"></canvas></div>
+          </div>
+          <div class="cards" id="mcCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));"></div>
+          <div class="panel">
+            <div class="panel-title">🎯 PROBABILITÀ DI SOGLIE</div>
+            <div id="mcThresholdWrap" style="overflow-x:auto;"></div>
+          </div>
+          <div class="panel">
+            <button class="btn primary" onclick="askAIAboutTab('montecarlo')">🤖 Chiedi a Claude — interpreta questi scenari</button>
+            <div id="aiTabMonteCarlo" style="margin-top:12px;"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
@@ -555,7 +599,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
-    <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Ergod.</span></button>
+    <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
   </nav>
 </div>
 
@@ -2570,6 +2614,25 @@ Questi match storici sono abbastanza numerosi e correlati da essere presi sul se
 Spiega in modo semplice cosa significa questo gap tra media ensemble e media time per chi guarda solo "il rendimento medio storico" di questo titolo. Il comportamento passato sembra rappresentativo o il titolo è troppo volatile perché una media storica sia affidabile?`;
   }
 
+  if(tabName==="montecarlo"){
+    if(!LAST_MC_RESULT){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi SIMULA nel tab Monte Carlo, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const r=LAST_MC_RESULT;
+    prompt=base+`Risultati simulazione Monte Carlo (bootstrap su rendimenti giornalieri storici, orizzonte ${r.horizon} giorni, ${r.nSims} simulazioni):
+- Scenario Pessimistico (5° percentile): ${fmtPct(r.pessimistic)}
+- Scenario Mediano: ${fmtPct(r.median)}
+- Scenario Ottimistico (95° percentile): ${fmtPct(r.optimistic)}
+- Rendimento medio atteso: ${fmtPct(r.meanReturn)}
+- Probabilità di perdita: ${r.probLoss.toFixed(0)}%
+- VaR 95%: ${fmtPct(r.var95)} | CVaR 95%: ${fmtPct(r.cvar95)}
+- Drawdown medio atteso: ${r.avgMaxDD.toFixed(1)}%
+- Probabilità di toccare +20%: ${r.hitUpProb[20].toFixed(0)}% | di toccare -20%: ${r.hitDownProb[20].toFixed(0)}%
+
+Interpreta questi scenari per un investitore: il rapporto rischio/rendimento sembra favorevole su questo orizzonte? Ricorda che è una proiezione statistica basata sul passato, non una previsione garantita.`;
+  }
+
   try{
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -3122,6 +3185,132 @@ window.renderErgodicita=function(){
     }).join("");
   }catch(e){ el("ergoMarkovPersistWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Dati insufficienti</div>`; }
 };
+
+// ── MONTE CARLO (bootstrap sui rendimenti giornalieri storici) ─────────
+let mcChartObj=null;
+let LAST_MC_RESULT=null;
+
+function percentile(sortedArr,p){
+  const idx=(sortedArr.length-1)*p;
+  const lo=Math.floor(idx), hi=Math.ceil(idx);
+  if(lo===hi) return sortedArr[lo];
+  return sortedArr[lo]+(sortedArr[hi]-sortedArr[lo])*(idx-lo);
+}
+
+window.runMonteCarlo=function(){
+  if(!STOCK){ el("mcStatus").textContent="Analizza prima un titolo"; return; }
+  const horizon=parseInt(el("mcHorizon").value);
+  const nSims=parseInt(el("mcSims").value);
+  el("mcStatus").textContent="⏳ Simulazione in corso...";
+  el("mcResultsWrap").style.display="none";
+
+  setTimeout(()=>{ // lascia respirare la UI prima del calcolo pesante
+    const dailyReturns=calcDailyReturns(STOCK.closes);
+    if(dailyReturns.length<60){ el("mcStatus").textContent="❌ Storico insufficiente per una simulazione affidabile."; return; }
+
+    // Bootstrap: per ogni simulazione, pesco casualmente (con reinserimento)
+    // 'horizon' rendimenti giornalieri REALI dallo storico, preservando così
+    // la vera forma della distribuzione (code grasse, asimmetrie) invece di
+    // assumere una normale teorica.
+    const n=dailyReturns.length;
+    const paths=[]; // ogni path è un array di valori % cumulati (100 = partenza)
+    for(let s=0;s<nSims;s++){
+      let val=100;
+      const path=[val];
+      for(let d=0;d<horizon;d++){
+        const r=dailyReturns[Math.floor(Math.random()*n)];
+        val*=(1+r);
+        path.push(val);
+      }
+      paths.push(path);
+    }
+
+    // Percentili giorno per giorno (fan chart)
+    const p05=[],p25=[],p50=[],p75=[],p95=[];
+    for(let d=0;d<=horizon;d++){
+      const vals=paths.map(p=>p[d]).sort((a,b)=>a-b);
+      p05.push(percentile(vals,0.05));
+      p25.push(percentile(vals,0.25));
+      p50.push(percentile(vals,0.50));
+      p75.push(percentile(vals,0.75));
+      p95.push(percentile(vals,0.95));
+    }
+
+    const finals=paths.map(p=>p[p.length-1]);
+    const finalReturns=finals.map(v=>(v-100)); // in %, dato che si parte da 100
+    finalReturns.sort((a,b)=>a-b);
+    const probLoss=finalReturns.filter(r=>r<0).length/nSims*100;
+    const meanReturn=finalReturns.reduce((a,b)=>a+b,0)/nSims;
+    const var95=percentile(finalReturns,0.05); // perdita al 5° percentile
+    const cvar95Arr=finalReturns.filter(r=>r<=var95);
+    const cvar95=cvar95Arr.length?cvar95Arr.reduce((a,b)=>a+b,0)/cvar95Arr.length:var95;
+
+    // Drawdown atteso su ogni path simulato (max calo dal picco)
+    const maxDDs=paths.map(p=>{
+      let peak=p[0], dd=0;
+      p.forEach(v=>{ if(v>peak) peak=v; const cur=(v-peak)/peak*100; if(cur<dd) dd=cur; });
+      return dd;
+    });
+    const avgMaxDD=maxDDs.reduce((a,b)=>a+b,0)/nSims;
+
+    // Probabilità di toccare soglie (in qualsiasi momento del percorso, non solo a fine periodo)
+    const thresholds=[10,20,30];
+    const hitUpProb={}, hitDownProb={};
+    thresholds.forEach(t=>{
+      hitUpProb[t]=paths.filter(p=>p.some(v=>v>=100*(1+t/100))).length/nSims*100;
+      hitDownProb[t]=paths.filter(p=>p.some(v=>v<=100*(1-t/100))).length/nSims*100;
+    });
+
+    LAST_MC_RESULT={ horizon, nSims, meanReturn, probLoss, var95, cvar95, avgMaxDD, hitUpProb, hitDownProb,
+      pessimistic:p05[p05.length-1]-100, median:p50[p50.length-1]-100, optimistic:p95[p95.length-1]-100 };
+
+    renderMonteCarloResults(p05,p25,p50,p75,p95,horizon);
+    el("mcStatus").textContent=`✅ ${nSims.toLocaleString("it-IT")} simulazioni completate su orizzonte di ${horizon} giorni`;
+    el("mcResultsWrap").style.display="block";
+  }, 30);
+};
+
+function renderMonteCarloResults(p05,p25,p50,p75,p95,horizon){
+  const r=LAST_MC_RESULT;
+  const labels=Array.from({length:horizon+1},(_,i)=>i===0?"Oggi":"+"+i+"gg");
+
+  const ctx=el("mcChart");
+  if(mcChartObj) mcChartObj.destroy();
+  mcChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels, datasets:[
+      {label:"95° percentile (ottimistico)", data:p95.map(v=>v-100), borderColor:"#00d4b8", borderWidth:1, pointRadius:0, tension:0.1, fill:"+1", backgroundColor:"rgba(0,212,184,0.08)"},
+      {label:"75° percentile", data:p75.map(v=>v-100), borderColor:"#00d4b855", borderWidth:1, pointRadius:0, tension:0.1, fill:"+1", backgroundColor:"rgba(0,212,184,0.12)"},
+      {label:"Mediana (50°)", data:p50.map(v=>v-100), borderColor:"#ffd23f", borderWidth:2.5, pointRadius:0, tension:0.1, fill:false},
+      {label:"25° percentile", data:p25.map(v=>v-100), borderColor:"#ff6b6b55", borderWidth:1, pointRadius:0, tension:0.1, fill:"+1", backgroundColor:"rgba(255,107,107,0.12)"},
+      {label:"5° percentile (pessimistico)", data:p05.map(v=>v-100), borderColor:"#ff6b6b", borderWidth:1, pointRadius:0, tension:0.1, fill:false}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:9},boxWidth:12}}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
+  });
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("mcCardsWrap").innerHTML=
+    card("Scenario Pessimistico (5°)", fmtPct(r.pessimistic), "#ff6b6b")+
+    card("Scenario Mediano", fmtPct(r.median), "#ffd23f")+
+    card("Scenario Ottimistico (95°)", fmtPct(r.optimistic), "#00d4b8")+
+    card("Rendimento Medio Atteso", fmtPct(r.meanReturn), r.meanReturn>=0?"#00d4b8":"#ff6b6b")+
+    card("Probabilità di Perdita", r.probLoss.toFixed(0)+"%", r.probLoss>50?"#ff6b6b":"#ffd23f")+
+    card("VaR 95%", fmtPct(r.var95), "#ff6b6b")+
+    card("CVaR 95% (Expected Shortfall)", fmtPct(r.cvar95), "#ff6b6b")+
+    card("Drawdown Medio Atteso", r.avgMaxDD.toFixed(1)+"%", "#ff9f1c");
+
+  let h=`<table><tr><th>Soglia</th><th>Probabilità di TOCCARE +X%</th><th>Probabilità di TOCCARE -X%</th></tr>`;
+  [10,20,30].forEach(t=>{
+    h+=`<tr><td style="font-weight:700;">${t}%</td>
+      <td style="color:#00d4b8;font-weight:700;">${r.hitUpProb[t].toFixed(0)}%</td>
+      <td style="color:#ff6b6b;font-weight:700;">${r.hitDownProb[t].toFixed(0)}%</td></tr>`;
+  });
+  h+="</table>";
+  el("mcThresholdWrap").innerHTML=h;
+}
 </script>
 
 <!-- MODAL GUIDA -->
