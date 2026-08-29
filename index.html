@@ -119,6 +119,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern">🔮 Pattern</button>
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo">🎲 Monte Carlo</button>
+        <button class="btn tabnav" onclick="switchTab('Regime')" id="tnRegime">🌡️ Regime</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
       </nav>
 
@@ -528,6 +529,29 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
+      <!-- TAB REGIME DI MERCATO -->
+      <div id="tabRegime" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🌡️ REGIME DI MERCATO
+            <button class="btn primary" style="font-size:10px;" onclick="calcRegime()">↺ Calcola Regime</button>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Se hai già confrontato un benchmark (tab Benchmark), lo riuso. Altrimenti scarico automaticamente l'S&P500 (^GSPC) come riferimento di mercato.</div>
+          <div id="regimeStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="regimePanel"></div>
+        </div>
+
+        <div class="panel" id="regimeSeasonPanel" style="display:none;">
+          <div class="panel-title">📅 STAGIONALITÀ CONDIZIONATA AL REGIME</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Confronta il rendimento medio mensile del titolo negli anni in cui il benchmark ha chiuso positivo (mercato "toro") contro quelli in cui ha chiuso negativo ("orso") — più utile della stagionalità semplice, perché isola l'effetto del contesto di mercato.</div>
+          <div id="regimeSeasonWrap" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="panel" id="regimeAiPanel" style="display:none;">
+          <button class="btn primary" onclick="askAIAboutTab('regime')">🤖 Chiedi a Claude — cosa implica questo regime per il titolo?</button>
+          <div id="aiTabRegime" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
       <!-- TAB STORICO ANALISI -->
       <div id="tabStorico" class="tab-content">
         <div class="panel">
@@ -601,6 +625,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
+    <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
@@ -2636,6 +2661,21 @@ Spiega in modo semplice cosa significa questo gap tra media ensemble e media tim
 Interpreta questi scenari per un investitore: il rapporto rischio/rendimento sembra favorevole su questo orizzonte? Ricorda che è una proiezione statistica basata sul passato, non una previsione garantita.`;
   }
 
+  if(tabName==="regime"){
+    if(!LAST_REGIME_RESULT){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi Calcola Regime, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const r=LAST_REGIME_RESULT;
+    prompt=base+`Regime di mercato calcolato (usando ${r.benchTicker} come riferimento):
+- Regime: ${r.regime} (score ${r.score}/100)
+- Trend del mercato: ${r.benchTrend>0?"rialzista (sopra SMA200)":"ribassista (sotto SMA200)"}
+- Volatilità di mercato (21gg): ${r.benchVol!=null?r.benchVol.toFixed(1)+"%":"N/D"}
+- RSI del titolo: ${r.stockRSI!=null?r.stockRSI.toFixed(0):"N/D"}
+
+Cosa implica questo regime di mercato per chi possiede o valuta questo titolo? Conviene essere più aggressivi o più cauti in un contesto del genere?`;
+  }
+
   try{
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -3437,6 +3477,110 @@ window.generatePdfReport=function(requestedTicker){
 
   doc.save(`report_${STOCK.ticker}_${new Date().toISOString().slice(0,10)}.pdf`);
 };
+
+// ── REGIME DI MERCATO ────────────────────────────────────────────────
+let LAST_REGIME_RESULT=null;
+
+async function ensureBenchmarkForRegime(defaultTicker){
+  if(BENCH) return true;
+  try{
+    const p1=Math.floor(STOCK.dates[0].getTime()/1000), p2=Math.floor(STOCK.dates[STOCK.dates.length-1].getTime()/1000);
+    const data=await fetchYahoo(defaultTicker,"max","1d",p1,p2);
+    const parsed=parseYahooResult(data);
+    if(!parsed.closes || parsed.closes.length<200) return false;
+    BENCH={ ticker:defaultTicker, ...parsed };
+    return true;
+  }catch(e){ return false; }
+}
+
+window.calcRegime=async function(){
+  if(!STOCK){ el("regimeStatus").textContent="Analizza prima un titolo"; return; }
+  el("regimeStatus").textContent="⏳ Calcolo regime di mercato...";
+  el("regimeSeasonPanel").style.display="none";
+  el("regimeAiPanel").style.display="none";
+
+  const ok=await ensureBenchmarkForRegime("^GSPC");
+  if(!ok){ el("regimeStatus").textContent="❌ Impossibile scaricare un indice di mercato di riferimento (^GSPC). Prova a confrontare manualmente un benchmark nel tab Benchmark."; return; }
+
+  // Trend e volatilità del benchmark (il "mercato" in senso lato)
+  const benchSMA200=smaSeriesCalc(BENCH.closes,200).slice(-1)[0];
+  const benchPrice=BENCH.closes[BENCH.closes.length-1];
+  const benchTrend=benchSMA200?(benchPrice>benchSMA200?1:-1):0;
+  const benchStrength=benchSMA200?((benchPrice-benchSMA200)/benchSMA200*100):0;
+  const benchReturns21=calcDailyReturns(BENCH.closes.slice(-22));
+  const benchVol=calcVolatility(benchReturns21);
+
+  // Salute tecnica del titolo stesso
+  const stockRSI=rsiSeriesCalc(STOCK.closes,14).slice(-1)[0];
+  const stockSMA50=smaSeriesCalc(STOCK.closes,50).slice(-1)[0];
+  const stockSMA200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0];
+  const stockPrice=STOCK.closes[STOCK.closes.length-1];
+
+  let score=50;
+  score+=benchTrend*Math.min(20,Math.abs(benchStrength)*2);
+  if(stockRSI>60) score+=10; else if(stockRSI>50) score+=5; else if(stockRSI<40) score-=10; else if(stockRSI<50) score-=5;
+  if(stockSMA50!=null) score+= stockPrice>stockSMA50?8:-8;
+  if(stockSMA200!=null) score+= stockPrice>stockSMA200?8:-8;
+  if(benchVol!=null){ if(benchVol>30) score-=15; else if(benchVol>20) score-=5; else if(benchVol<12) score+=10; }
+  score=Math.max(0,Math.min(100,score));
+
+  let regime,color,emoji,note;
+  if(score>=80){ regime="BULL"; color="#00d4b8"; emoji="🚀"; note="Mercato fortemente rialzista e titolo tecnicamente forte — contesto favorevole alla continuazione del trend."; }
+  else if(score>=60){ regime="RISK-ON"; color="#80ed99"; emoji="🟢"; note="Trend positivo diffuso — momentum a favore, ma senza euforia eccessiva."; }
+  else if(score>=40){ regime="NEUTRO"; color="#ffd23f"; emoji="🟡"; note="Mercato laterale/incerto — i segnali tecnici vanno pesati con più cautela in questa fase."; }
+  else if(score>=20){ regime="RISK-OFF"; color="#ff9f1c"; emoji="🔴"; note="Segnali di debolezza diffusi — prudenza, valuta stop loss più stretti."; }
+  else { regime="BEAR"; color="#ff6b6b"; emoji="🐻"; note="Mercato ribassista — contesto sfavorevole, i rimbalzi vanno trattati con sospetto."; }
+
+  LAST_REGIME_RESULT={ score, regime, benchTicker:BENCH.ticker, benchTrend, benchVol, stockRSI };
+
+  el("regimePanel").innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:32px;">${emoji}</span>
+        <div><div style="font-size:20px;font-weight:800;color:${color};">${regime}</div>
+        <div style="font-size:11px;color:var(--dim);">${note}</div></div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:24px;font-weight:800;color:${color};">${score}/100</div>
+      </div>
+    </div>
+    <div style="background:#1a2236;border-radius:8px;height:12px;position:relative;overflow:hidden;margin-bottom:14px;">
+      <div style="position:absolute;left:0;top:0;height:100%;width:${score}%;background:linear-gradient(90deg,#ff6b6b,#ff9f1c,#ffd23f,#80ed99,#00d4b8);border-radius:8px;"></div>
+      <div style="position:absolute;top:0;left:${score}%;transform:translateX(-50%);width:3px;height:100%;background:#fff;"></div>
+    </div>
+    <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+      <div class="card"><div class="v" style="font-size:14px;">${BENCH.ticker}</div><div class="l">Benchmark Usato</div></div>
+      <div class="card"><div class="v" style="color:${benchTrend>0?'#00d4b8':'#ff6b6b'};">${benchTrend>0?"Sopra SMA200 ✅":"Sotto SMA200 ❌"}</div><div class="l">Trend Mercato</div></div>
+      <div class="card"><div class="v" style="color:${benchVol>25?'#ff6b6b':benchVol>15?'#ffd23f':'#00d4b8'};">${benchVol!=null?benchVol.toFixed(1)+"%":"--"}</div><div class="l">Volatilità Mercato (21gg)</div></div>
+      <div class="card"><div class="v" style="color:${stockRSI>70?'#ff7700':stockRSI<30?'#00d4b8':'var(--txt)'};">${stockRSI!=null?stockRSI.toFixed(0):"--"}</div><div class="l">RSI del Titolo</div></div>
+    </div>`;
+
+  renderSeasonalityByRegime();
+  el("regimeSeasonPanel").style.display="block";
+  el("regimeAiPanel").style.display="block";
+  el("regimeStatus").textContent=`✅ Regime calcolato usando ${BENCH.ticker} come riferimento di mercato`;
+};
+
+function renderSeasonalityByRegime(){
+  if(!BENCH || !STOCK) return;
+  // Classifica ogni anno del BENCHMARK come "toro" (rendimento annuo positivo)
+  // o "orso" (negativo), poi ricalcola la stagionalità mensile del TITOLO
+  // separatamente per i due gruppi di anni.
+  const benchAnnual=computeAnnualReturnsByYear(BENCH.dates,BENCH.closes);
+  const bullYears=[], bearYears=[];
+  Object.entries(benchAnnual).forEach(([y,ret])=>{ (ret>=0?bullYears:bearYears).push(parseInt(y)); });
+
+  const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+  const monthNames=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  const avgFor=(years,m)=>{ const v=years.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?v.reduce((a,b)=>a+b,0)/v.length:null; };
+
+  let h=`<div style="font-size:11px;color:var(--dim);margin-bottom:10px;">🐂 Anni "toro" per ${BENCH.ticker}: ${bullYears.join(", ")||"nessuno"} &nbsp;|&nbsp; 🐻 Anni "orso": ${bearYears.join(", ")||"nessuno"}</div>`;
+  h+=`<table><tr><th>Mese</th>${monthNames.map(m=>`<th>${m}</th>`).join("")}</tr>`;
+  h+=`<tr><td style="font-weight:700;color:#00d4b8;">🐂 In mercato Toro (${bullYears.length}y)</td>${monthNames.map((_,m)=>{ const v=avgFor(bullYears,m); return `<td style="color:${v==null?'var(--dim)':v>=0?'#00d4b8':'#ff6b6b'};">${v!=null?v.toFixed(1)+'%':'--'}</td>`; }).join("")}</tr>`;
+  h+=`<tr><td style="font-weight:700;color:#ff6b6b;">🐻 In mercato Orso (${bearYears.length}y)</td>${monthNames.map((_,m)=>{ const v=avgFor(bearYears,m); return `<td style="color:${v==null?'var(--dim)':v>=0?'#00d4b8':'#ff6b6b'};">${v!=null?v.toFixed(1)+'%':'--'}</td>`; }).join("")}</tr>`;
+  h+="</table>";
+  el("regimeSeasonWrap").innerHTML=h;
+}
 </script>
 
 <!-- MODAL GUIDA -->
