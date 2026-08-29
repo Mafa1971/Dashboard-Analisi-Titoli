@@ -25,7 +25,7 @@ exports.handler = async function (event) {
     };
   }
 
-  const fnMap = { income: "INCOME_STATEMENT", balance: "BALANCE_SHEET", cashflow: "CASH_FLOW" };
+  const fnMap = { income: "INCOME_STATEMENT", balance: "BALANCE_SHEET", cashflow: "CASH_FLOW", overview: "OVERVIEW" };
   const fn = fnMap[statement] || "INCOME_STATEMENT";
   const url = `https://www.alphavantage.co/query?function=${fn}&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`;
 
