@@ -716,10 +716,10 @@ function renderCandles(){
   // Sincronizzazione UNICA per intervallo di TEMPO reale (non per indice barra)
   // tra grafico principale, RSI e Volumi — più robusta della sincronizzazione
   // per indice quando le serie hanno lunghezze o gap leggermente diversi.
-  chart.timeScale().subscribeVisibleTimeRangeChange(range=>{
+  chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{
     if(!range) return;
-    if(rsiChart) rsiChart.timeScale().setVisibleRange(range);
-    if(volumeChartObj) volumeChartObj.timeScale().setVisibleRange(range);
+    if(rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
+    if(volumeChartObj) volumeChartObj.timeScale().setVisibleLogicalRange(range);
   });
 }
 
@@ -740,8 +740,8 @@ function renderVolumeChart(){
   const volMA20=smaSeriesCalc(STOCK.volumes,20);
   const maSeries=volumeChartObj.addLineSeries({color:"#ffd23f",lineWidth:1.3,priceLineVisible:false});
   maSeries.setData(toSeriesData(STOCK.dates,volMA20));
-  const mainRangeV=chart.timeScale().getVisibleRange();
-  if(mainRangeV) volumeChartObj.timeScale().setVisibleRange(mainRangeV); else volumeChartObj.timeScale().fitContent();
+  const mainRangeV=chart.timeScale().getVisibleLogicalRange();
+  if(mainRangeV) volumeChartObj.timeScale().setVisibleLogicalRange(mainRangeV); else volumeChartObj.timeScale().fitContent();
 
   // Segnale volume: ultimo giorno vs media 20gg
   const lastVol=STOCK.volumes[STOCK.volumes.length-1];
@@ -787,8 +787,8 @@ function renderRSIChart(){
   rsiLineSeries.setData(toSeriesData(STOCK.dates,rsi));
   rsiLineSeries.createPriceLine({price:70,color:"#ff6b6b",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"70"});
   rsiLineSeries.createPriceLine({price:30,color:"#00d4b8",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"30"});
-  const mainRange=chart.timeScale().getVisibleRange();
-  if(mainRange) rsiChart.timeScale().setVisibleRange(mainRange); else rsiChart.timeScale().fitContent();
+  const mainRange=chart.timeScale().getVisibleLogicalRange();
+  if(mainRange) rsiChart.timeScale().setVisibleLogicalRange(mainRange); else rsiChart.timeScale().fitContent();
 }
 
 window.toggleIndicator=function(name,checked){
