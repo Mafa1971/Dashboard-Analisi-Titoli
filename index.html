@@ -2568,16 +2568,13 @@ function saveAnalysisToHistory(totalReturn){
     periodStart:STOCK.dates[0].toISOString().slice(0,10),
     periodEnd:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)
   };
-  const last=hist[hist.length-1];
-  // Se l'ultima voce è lo STESSO titolo con lo stesso periodo dati (rianalisi
-  // ravvicinata, es. cliccato ANALIZZA più volte), aggiorna quella invece di
-  // aggiungerne un'altra — evita righe duplicate nello storico.
-  if(last && last.ticker===entry.ticker && last.periodStart===entry.periodStart && last.periodEnd===entry.periodEnd){
-    hist[hist.length-1]=entry;
-  } else {
-    hist.push(entry);
-  }
-  saveHistoryArr(hist);
+  // Deduplica PER TICKER su TUTTO lo storico (non solo l'ultima voce inserita):
+  // se il titolo è già presente da qualche parte, rimuovo la vecchia riga e
+  // rimetto quella aggiornata in fondo (= più recente), invece di accumulare
+  // righe duplicate ogni volta che si rianalizza lo stesso titolo.
+  const filtered=hist.filter(h=>h.ticker!==entry.ticker);
+  filtered.push(entry);
+  saveHistoryArr(filtered);
 }
 window.renderHistoryTab=function(){
   const hist=loadAnalysisHistory().slice().reverse();
@@ -2594,11 +2591,20 @@ window.renderHistoryTab=function(){
       <td style="color:${r.totalReturnPct>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${fmtPct(r.totalReturnPct)}</td>
       <td>${r.sessions}</td>
       <td style="font-size:10px;color:var(--dim);">${r.periodStart} → ${r.periodEnd}</td>
-      <td><button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${r.ticker}';switchTab('Grafico');analyzeTicker();">↻ Rianalizza</button></td>
+      <td style="white-space:nowrap;">
+        <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${r.ticker}';switchTab('Grafico');analyzeTicker();">↻ Rianalizza</button>
+        <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="deleteHistoryEntry('${r.ticker}')" title="Elimina questa riga">✕</button>
+      </td>
     </tr>`;
   });
   h+="</table>";
   wrap.innerHTML=h;
+};
+window.deleteHistoryEntry=function(ticker){
+  if(!confirm(`Eliminare l'analisi di ${ticker} dallo storico?`)) return;
+  const hist=loadAnalysisHistory().filter(h=>h.ticker!==ticker);
+  saveHistoryArr(hist);
+  renderHistoryTab();
 };
 window.clearAnalysisHistory=function(){
   if(!confirm("Svuotare tutto lo storico delle analisi salvate in questo browser?")) return;
