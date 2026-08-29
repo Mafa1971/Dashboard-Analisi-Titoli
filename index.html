@@ -290,6 +290,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB BILANCIO -->
       <div id="tabBilancio" class="tab-content">
         <div class="panel">
+          <div class="panel-title">📊 DATI DI MERCATO ATTUALI
+            <button class="btn ghost" style="font-size:10px;" onclick="loadQuickRatios()">↻ Aggiorna</button>
+          </div>
+          <div id="quickRatiosStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;min-height:14px;"></div>
+          <div id="quickRatiosWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));"></div>
+        </div>
+        <div class="panel">
           <div class="panel-title">📑 BILANCIO / CONTO ECONOMICO
             <button class="btn primary" style="font-size:10px;" onclick="loadFundamentals()">📥 CARICA DATI</button>
           </div>
@@ -594,6 +601,7 @@ window.analyzeTicker=async function(){
 
     switchTab("Grafico");
     saveAnalysisToHistory(totalReturn);
+    loadQuickRatios();
     el("analyzeStatus").textContent=`✅ ${ticker}: ${STOCK.dates.length} sessioni analizzate (${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")})`;
   }catch(err){
     el("analyzeStatus").textContent="❌ Errore: "+err.message;
@@ -656,7 +664,8 @@ function renderVolumeChart(){
     width:container.clientWidth, height:100,
     layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
     grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
-    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"}
+    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"},
+    handleScroll:false, handleScale:false
   });
   const volSeries=volumeChartObj.addHistogramSeries({priceLineVisible:false});
   const volData=STOCK.dates.map((d,i)=>({time:d.toISOString().slice(0,10),value:STOCK.volumes[i]||0,
@@ -665,7 +674,8 @@ function renderVolumeChart(){
   const volMA20=smaSeriesCalc(STOCK.volumes,20);
   const maSeries=volumeChartObj.addLineSeries({color:"#ffd23f",lineWidth:1.3,priceLineVisible:false});
   maSeries.setData(toSeriesData(STOCK.dates,volMA20));
-  volumeChartObj.timeScale().fitContent();
+  const mainRangeV=chart.timeScale().getVisibleLogicalRange();
+  if(mainRangeV) volumeChartObj.timeScale().setVisibleLogicalRange(mainRangeV); else volumeChartObj.timeScale().fitContent();
   chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{ if(volumeChartObj && range) volumeChartObj.timeScale().setVisibleLogicalRange(range); });
 
   // Segnale volume: ultimo giorno vs media 20gg
@@ -704,14 +714,16 @@ function renderRSIChart(){
     width:container.clientWidth, height:120,
     layout:{background:{color:"#111827"},textColor:"#7d8aa3"},
     grid:{vertLines:{color:"#1e2d45"},horzLines:{color:"#1e2d45"}},
-    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"}
+    timeScale:{borderColor:"#1e2d45",visible:true}, rightPriceScale:{borderColor:"#1e2d45"},
+    handleScroll:false, handleScale:false // solo il grafico principale è interattivo, questo lo segue passivamente
   });
   rsiLineSeries=rsiChart.addLineSeries({color:"#4fa3ff",lineWidth:1.5,priceLineVisible:false});
   const rsi=rsiSeriesCalc(STOCK.closes,14);
   rsiLineSeries.setData(toSeriesData(STOCK.dates,rsi));
   rsiLineSeries.createPriceLine({price:70,color:"#ff6b6b",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"70"});
   rsiLineSeries.createPriceLine({price:30,color:"#00d4b8",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"30"});
-  rsiChart.timeScale().fitContent();
+  const mainRange=chart.timeScale().getVisibleLogicalRange();
+  if(mainRange) rsiChart.timeScale().setVisibleLogicalRange(mainRange); else rsiChart.timeScale().fitContent();
   chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{ if(rsiChart && range) rsiChart.timeScale().setVisibleLogicalRange(range); });
 }
 
@@ -860,7 +872,16 @@ function calcFVGICT(opens,highs,lows,closes){
     if(lows[i]>highs[i-2]) fvgs.push({idx:i,type:"bullish",top:lows[i],bottom:highs[i-2]});
     if(highs[i]!=null && lows[i-2]!=null && highs[i]<lows[i-2]) fvgs.push({idx:i,type:"bearish",top:lows[i-2],bottom:highs[i]});
   }
-  return fvgs.slice(-20); // ultime 20 FVG (più margine per restare nel range visibile)
+  // Unisci FVG molto vicine tra loro (stesso tipo, entro 3 barre) per evitare
+  // box impilati e illeggibili quando ci sono più gap consecutivi.
+  const merged=[];
+  fvgs.forEach(f=>{
+    const last=merged[merged.length-1];
+    if(last && last.type===f.type && f.idx-last.idx<=3){
+      last.idx=f.idx; last.top=Math.max(last.top,f.top); last.bottom=Math.min(last.bottom,f.bottom);
+    } else merged.push({...f});
+  });
+  return merged.slice(-20); // ultime 20 FVG (più margine per restare nel range visibile)
 }
 
 // ── STRUTTURA DI MERCATO SMC (porting fedele da Pine Script) ────────────
@@ -983,8 +1004,8 @@ function drawICTCanvasOverlay(){
   if(el("chkFVG").checked){
     const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
     debugCounts.fvgFound=fvgs.length;
-    fvgs.forEach(f=>{
-      const startIdx=Math.max(0,f.idx-2), endIdx=Math.min(STOCK.dates.length-1,f.idx+15);
+    fvgs.slice(-8).forEach(f=>{ // mostra solo le 8 più recenti, per non affollare il grafico
+      const startIdx=Math.max(0,f.idx-2), endIdx=Math.min(STOCK.dates.length-1,f.idx+7);
       const x0=xForIdx(startIdx), x1=xForIdx(endIdx);
       const yTop=candleSeries.priceToCoordinate(f.top);
       const yBottom=candleSeries.priceToCoordinate(f.bottom);
@@ -1038,11 +1059,13 @@ function drawICTCanvasOverlay(){
   structs.forEach(st=>debugCounts.eventsFound+=st.events.length);
 
   // Order Block: disegnato PRIMA delle linee struttura, così resta "sotto"
+  // Mostriamo solo gli ULTIMI 5 eventi per livello (swing/internal) — il conteggio
+  // completo resta nel contatore di debug, ma disegnare tutti affolla il grafico.
   structs.forEach(st=>{
-    st.events.forEach(ev=>{
+    st.events.slice(-5).forEach(ev=>{
       const ob=findOrderBlockRange(STOCK.highs,STOCK.lows,ev.fromIdx,ev.idx,ev.dir);
       if(!ob) return;
-      const endIdx=Math.min(STOCK.dates.length-1, ev.idx+(st.tier==="swing"?20:8));
+      const endIdx=Math.min(STOCK.dates.length-1, ev.idx+(st.tier==="swing"?10:5));
       const x0=xForIdx(ob.idx), x1=xForIdx(endIdx);
       const yTop=candleSeries.priceToCoordinate(ob.top);
       const yBottom=candleSeries.priceToCoordinate(ob.bottom);
@@ -1066,7 +1089,7 @@ function drawICTCanvasOverlay(){
 
   // BOS / CHoCH: linea orizzontale dal punto rotto al punto di conferma
   structs.forEach(st=>{
-    st.events.forEach(ev=>{
+    st.events.slice(-5).forEach(ev=>{
       const x0=xForIdx(ev.fromIdx), x1=xForIdx(ev.idx);
       const y=candleSeries.priceToCoordinate(ev.price);
       if(x0==null||x1==null||y==null) return;
@@ -1654,6 +1677,83 @@ async function fetchFundamental(ticker,statement){
 }
 function numOrNull(v){ if(v==null||v==="None") return null; const n=parseFloat(v); return isNaN(n)?null:n; }
 
+// ── DATI DI MERCATO ATTUALI (Yahoo con fallback Alpha Vantage) ────────
+function fmtBigNum(v){
+  if(v==null||isNaN(v)) return "--";
+  const abs=Math.abs(v);
+  if(abs>=1e12) return (v/1e12).toFixed(2)+"T";
+  if(abs>=1e9) return (v/1e9).toFixed(2)+"Mld";
+  if(abs>=1e6) return (v/1e6).toFixed(1)+"Mln";
+  return v.toFixed(0);
+}
+window.loadQuickRatios=async function(){
+  if(!STOCK){ el("quickRatiosStatus").textContent="Analizza prima un titolo"; return; }
+  el("quickRatiosStatus").textContent="⏳ Provo Yahoo (gratis, senza limiti)...";
+  el("quickRatiosWrap").innerHTML="";
+
+  let data=null, source=null;
+  // 1) TENTATIVO YAHOO — gratis, ma può bloccarsi per via del crumb/cookie
+  try{
+    const res=await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(STOCK.ticker)}&type=quoteSummary`);
+    const json=await res.json();
+    const r=json?.quoteSummary?.result?.[0];
+    if(r && (r.summaryDetail || r.price)){
+      const sd=r.summaryDetail||{}, dk=r.defaultKeyStatistics||{}, fd=r.financialData||{}, pr=r.price||{};
+      data={
+        pe: sd.trailingPE?.raw ?? null,
+        forwardPE: sd.forwardPE?.raw ?? dk.forwardPE?.raw ?? null,
+        peg: dk.pegRatio?.raw ?? null,
+        dividendYield: sd.dividendYield?.raw!=null ? sd.dividendYield.raw*100 : null,
+        marketCap: pr.marketCap?.raw ?? sd.marketCap?.raw ?? null,
+        beta: dk.beta?.raw ?? null,
+        targetPrice: fd.targetMeanPrice?.raw ?? null
+      };
+      // Se Yahoo risponde ma con TUTTI i campi vuoti, non è utile: forziamo il fallback
+      if(Object.values(data).every(v=>v==null)) data=null; else source="Yahoo (gratis)";
+    }
+  }catch(e){ /* silenzioso, si passa al fallback */ }
+
+  // 2) FALLBACK ALPHA VANTAGE — solo se Yahoo non ha dato nulla di utile
+  if(!data){
+    el("quickRatiosStatus").textContent="⏳ Yahoo non disponibile, provo Alpha Vantage (1 richiesta)...";
+    try{
+      const res=await fetch(`/.netlify/functions/fundamentals?ticker=${encodeURIComponent(STOCK.ticker)}&statement=overview`);
+      const json=await res.json();
+      if(json && json.Symbol){
+        data={
+          pe: parseFloat(json.PERatio)||null,
+          forwardPE: parseFloat(json.ForwardPE)||null,
+          peg: parseFloat(json.PEGRatio)||null,
+          dividendYield: json.DividendYield!=null ? parseFloat(json.DividendYield)*100 : null,
+          marketCap: parseFloat(json.MarketCapitalization)||null,
+          beta: parseFloat(json.Beta)||null,
+          targetPrice: parseFloat(json.AnalystTargetPrice)||null
+        };
+        source="Alpha Vantage (fallback)";
+      } else if(json.Note || json.Information){
+        throw new Error("Limite Alpha Vantage raggiunto");
+      }
+    }catch(e){
+      el("quickRatiosStatus").textContent="❌ Nessuna fonte disponibile al momento: "+e.message;
+      return;
+    }
+  }
+
+  if(!data){ el("quickRatiosStatus").textContent="❌ Dati di mercato non disponibili per questo ticker"; return; }
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("quickRatiosWrap").innerHTML=
+    card("P/E (ttm)", data.pe!=null?data.pe.toFixed(1)+"x":"--", data.pe&&data.pe<15?"#00d4b8":data.pe&&data.pe>35?"#ff6b6b":"var(--txt)")+
+    card("Forward P/E", data.forwardPE!=null?data.forwardPE.toFixed(1)+"x":"--","var(--txt)")+
+    card("PEG Ratio", data.peg!=null?data.peg.toFixed(2):"--", data.peg&&data.peg<1?"#00d4b8":data.peg&&data.peg>2?"#ff6b6b":"var(--txt)")+
+    card("Dividend Yield", data.dividendYield!=null?data.dividendYield.toFixed(2)+"%":"--", data.dividendYield>3?"#00d4b8":"var(--txt)")+
+    card("Market Cap", fmtBigNum(data.marketCap), "var(--txt)")+
+    card("Beta", data.beta!=null?data.beta.toFixed(2):"--","var(--txt)")+
+    card("Target Analisti", data.targetPrice!=null?STOCK.currency+" "+data.targetPrice.toFixed(2):"--","#4fa3ff");
+
+  el("quickRatiosStatus").innerHTML=`✅ Fonte: <strong>${source}</strong>`;
+};
+
 window.loadFundamentals=async function(){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   el("fundStatus").textContent="⏳ Scarico dati di bilancio (3 richieste ad Alpha Vantage, con pausa per rispettare il limite 1/sec)...";
@@ -2133,7 +2233,7 @@ function saveHistoryArr(arr){
 function saveAnalysisToHistory(totalReturn){
   if(!STOCK) return;
   const hist=loadAnalysisHistory();
-  hist.push({
+  const entry={
     ticker:STOCK.ticker, name:STOCK.name, currency:STOCK.currency,
     analyzedAt:new Date().toISOString(),
     price:STOCK.closes[STOCK.closes.length-1],
@@ -2141,7 +2241,16 @@ function saveAnalysisToHistory(totalReturn){
     sessions:STOCK.dates.length,
     periodStart:STOCK.dates[0].toISOString().slice(0,10),
     periodEnd:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)
-  });
+  };
+  const last=hist[hist.length-1];
+  // Se l'ultima voce è lo STESSO titolo con lo stesso periodo dati (rianalisi
+  // ravvicinata, es. cliccato ANALIZZA più volte), aggiorna quella invece di
+  // aggiungerne un'altra — evita righe duplicate nello storico.
+  if(last && last.ticker===entry.ticker && last.periodStart===entry.periodStart && last.periodEnd===entry.periodEnd){
+    hist[hist.length-1]=entry;
+  } else {
+    hist.push(entry);
+  }
   saveHistoryArr(hist);
 }
 window.renderHistoryTab=function(){
@@ -2184,6 +2293,51 @@ window.exportAnalysisHistoryCSV=function(){
 window.exportCurrentAnalysisJSON=function(){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   const returns=calcDailyReturns(STOCK.closes);
+  const threshold=parseFloat(el("zigzagThreshold")?.value)||10;
+  const cycles=LAST_CYCLES || computeCycles(STOCK.dates,STOCK.closes,threshold);
+
+  // Benchmark: solo se è già stato confrontato in questa sessione (tab Benchmark)
+  let benchmarkData=null;
+  if(BENCH){
+    const stockPct=normalizeToPct(STOCK.closes), benchPct=normalizeToPct(BENCH.closes);
+    benchmarkData={
+      ticker:BENCH.ticker,
+      rendimentoTitolo:stockPct[stockPct.length-1],
+      rendimentoBenchmark:benchPct[benchPct.length-1],
+      beta:calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates)
+    };
+  }
+
+  // Stagionalità: ricalcolo veloce del mese corrente/prossimo (dati sempre disponibili da STOCK)
+  const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+  const years=Object.keys(grid).map(Number).sort((a,b)=>a-b);
+  const monthNamesExp=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+  const seasonality=monthNamesExp.map((name,m)=>{
+    const vals=years.map(y=>grid[y]?.[m]).filter(v=>v!=null);
+    return { mese:name, rendimentoMedio: vals.length?parseFloat((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2)):null,
+      probabilitaPositiva: vals.length?parseFloat((vals.filter(v=>v>0).length/vals.length*100).toFixed(0)):null, nAnni:vals.length };
+  });
+
+  // Markov: stato attuale giornaliero (soglie di default 0.5/1.5 σ)
+  let markovData=null;
+  try{
+    const series=periodReturnSeries(STOCK.dates,STOCK.closes,"daily");
+    const states=classifyStates(series,0.5,1.5);
+    markovData={ statoAttuale: STATE_NAMES[states[states.length-1]] };
+  }catch(e){}
+
+  // ICT: riepilogo sintetico (ultimo evento struttura swing, ultimo FVG, POC)
+  const swingLen=parseInt(el("swingLen")?.value)||50;
+  const structSwing=computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,swingLen);
+  const fvgList=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
+  const lastEvent=structSwing.events[structSwing.events.length-1];
+  const ictData={
+    trendStruttura: structSwing.trend==="up"?"rialzista":structSwing.trend==="down"?"ribassista":null,
+    ultimoEvento: lastEvent?{tipo:lastEvent.label, direzione:lastEvent.dir, prezzo:lastEvent.price}:null,
+    fvgApertiRecenti: fvgList.slice(-3).map(f=>({tipo:f.type, top:f.top, bottom:f.bottom})),
+    poc: calcPOCSimple(STOCK.closes,STOCK.volumes)
+  };
+
   const data={
     ticker:STOCK.ticker, name:STOCK.name, currency:STOCK.currency,
     exportedAt:new Date().toISOString(),
@@ -2198,7 +2352,13 @@ window.exportCurrentAnalysisJSON=function(){
     rischio:{
       sharpe:calcSharpe(returns), sortino:calcSortino(returns),
       volatilitaAnnua:calcVolatility(returns), maxDrawdown:calcMaxDrawdown(STOCK.closes)
-    }
+    },
+    cicloInCorso: cycles.current ? { tipo:cycles.current.type==="up"?"rialzista":"ribassista", giorni:cycles.current.days, rendimento:parseFloat(cycles.current.retPct.toFixed(2)) } : null,
+    benchmark: benchmarkData,
+    stagionalitaMensile: seasonality,
+    markov: markovData,
+    ict: ictData,
+    nota: "Bilancio (Alpha Vantage) e Pattern Correlation non inclusi automaticamente — esporta quei dati separatamente se servono, dato che richiedono chiamate API o calcoli pesanti a parte."
   };
   const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const a=document.createElement("a");
