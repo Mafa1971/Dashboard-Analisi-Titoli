@@ -114,9 +114,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Rischio')" id="tnRischio">🎯 Rischio</button>
         <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio">📑 Bilancio</button>
         <button class="btn tabnav" onclick="switchTab('Markov')" id="tnMarkov">🔗 Markov</button>
+        <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita">🔄 Ergodicità</button>
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern">🔮 Pattern</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
+        <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita">🔄 Ergodicità</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -204,6 +206,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="benchStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
           <div id="benchCardsWrap"></div>
           <div id="benchChart"></div>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('benchmark')">🤖 Chiedi a Claude — come si comporta vs il benchmark?</button>
+          <div id="aiTabBenchmark" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -357,6 +361,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
           </div>
         </div>
+        <div class="panel">
+          <button class="btn primary" onclick="askAIAboutTab('bilancio')">🤖 Chiedi a Claude — giudizio complessivo sul bilancio</button>
+          <div id="aiTabBilancio" style="margin-top:12px;"></div>
+        </div>
       </div>
 
       <!-- TAB MARKOV -->
@@ -413,6 +421,45 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="markovAnomalyWrap"></div>
           <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('markov')">🤖 Chiedi a Claude — interpreta la catena di Markov</button>
           <div id="aiTabMarkov" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <!-- TAB ERGODICITÀ -->
+      <div id="tabErgodicita" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🔄 TIME AVERAGE vs ENSEMBLE AVERAGE</div>
+          <div style="font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.6;">
+            Non chiediamoci solo "quanto ha reso il titolo", ma: <strong style="color:var(--txt);">il rendimento medio storico rappresenta davvero la crescita che avresti realmente ottenuto?</strong><br>
+            La <strong style="color:#4fa3ff;">Media Ensemble</strong> è la media aritmetica dei rendimenti periodici (come se ogni giorno fosse una scommessa indipendente). La <strong style="color:#00d4b8;">Media Time (realizzata)</strong> è la crescita composta effettiva. Per un processo volatile le due NON coincidono mai — la differenza si chiama <strong style="color:#ffd23f;">volatility drag</strong>, ed è tanto più grande quanto più il titolo è volatile.
+          </div>
+          <div class="cards" id="ergoAvgCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">📈 RENDIMENTO E VOLATILITÀ ROLLING (finestra 1 anno)</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Se questa linea fosse piatta, la media storica sarebbe rappresentativa di ogni periodo. Più oscilla, meno un singolo numero storico basta a descrivere il titolo.</div>
+          <div style="height:260px;"><canvas id="ergoRollingChart"></canvas></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">📉 DISTRIBUZIONE DEI DRAWDOWN</div>
+          <div class="cards" id="ergoDrawdownCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
+          <div style="height:220px;"><canvas id="ergoDrawdownChart"></canvas></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">⏱️ TEMPO SOPRA/SOTTO LA SMA 200</div>
+          <div class="cards" id="ergoThresholdCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">🎲 PROBABILITÀ DI PERMANENZA NEGLI STATI</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Riuso della catena di Markov giornaliera (tab Markov) — quanto tende a "restare" in ciascuno stato invece di cambiare.</div>
+          <div class="cards" id="ergoMarkovPersistWrap" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
+        </div>
+        <div class="panel">
+          <button class="btn primary" onclick="askAIAboutTab('ergodicita')">🤖 Chiedi a Claude — il passato è rappresentativo del futuro?</button>
+          <div id="aiTabErgodicita" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -474,6 +521,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel">
             <div class="panel-title">📋 EVENTI STORICI CORRELATI</div>
             <div id="patTableWrap" style="overflow-x:auto;"></div>
+            <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('pattern')">🤖 Chiedi a Claude — questi pattern storici sono affidabili?</button>
+            <div id="aiTabPattern" style="margin-top:12px;"></div>
           </div>
         </div>
       </div>
@@ -502,9 +551,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Rischio')" id="tabBtnRischio"><span class="tab-icon">🎯</span><span class="tab-label">Rischio</span></button>
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
     <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
+    <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Ergod.</span></button>
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
+    <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Ergod.</span></button>
   </nav>
 </div>
 
@@ -517,6 +568,7 @@ let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Se
 let volumeChartObj=null;
 let LAST_CYCLES=null;
 let LAST_FUND_ROWS=null;
+let LAST_PATTERN_RESULT=null;
 let CHART_DATA_BY_TIME={};
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
@@ -549,6 +601,7 @@ window.switchTab=function(name){
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
   if(name==="Rischio" && STOCK) renderRisk();
   if(name==="Markov" && STOCK) renderMarkov();
+  if(name==="Ergodicita" && STOCK) renderErgodicita();
   if(name==="Storico") renderHistoryTab();
 };
 
@@ -2450,6 +2503,73 @@ Interpreta queste probabilità in modo pratico: cosa suggeriscono per i prossimi
 Ci sono pattern stagionali abbastanza consistenti da essere utili, o sono solo rumore statistico dato il numero di anni disponibili? Quale mese è storicamente il più favorevole/sfavorevole per questo titolo?`;
   }
 
+  if(tabName==="benchmark"){
+    if(!BENCH){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi CONFRONTA per scegliere un benchmark, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const stockPct=normalizeToPct(STOCK.closes), benchPct=normalizeToPct(BENCH.closes);
+    const stockRet=stockPct[stockPct.length-1], benchRet=benchPct[benchPct.length-1];
+    const beta=calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates);
+    prompt=base+`Confronto con il benchmark ${BENCH.ticker} sullo stesso periodo (${STOCK.dates.length} sessioni):
+- Rendimento ${STOCK.ticker}: ${fmtPct(stockRet)}
+- Rendimento ${BENCH.ticker}: ${fmtPct(benchRet)}
+- Sovraperformance: ${fmtPct(stockRet-benchRet)}
+- Beta: ${beta!=null?beta.toFixed(2):"N/D"}
+
+Il titolo sta battendo il benchmark aggiustando per il rischio (beta)? Cosa significa in pratica questo beta per chi lo tiene in portafoglio insieme al benchmark?`;
+  }
+
+  if(tabName==="bilancio"){
+    if(!LAST_FUND_ROWS || LAST_FUND_ROWS.length===0){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi CARICA DATI nel pannello Bilancio, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1];
+    const prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+    const revGrowth=(last&&prev&&prev.revenue)?((last.revenue-prev.revenue)/prev.revenue*100):null;
+    const piotroski=computePiotroskiForYear(last,prev);
+    prompt=base+`Dati di bilancio più recenti (${last.year.slice(0,4)}):
+- Ricavi: ${fmtBig(last.revenue)} (crescita YoY: ${revGrowth!=null?fmtPct(revGrowth):"N/D"})
+- Utile Netto: ${fmtBig(last.netIncome)} — Margine Netto: ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}
+- Free Cash Flow: ${fmtBig(last.fcf)}
+- Piotroski F-Score: ${piotroski?piotroski.score+"/9":"N/D"}
+- Debt/Equity: ${(last.totalEquity&&last.totalLiab)?(last.totalLiab/last.totalEquity).toFixed(2):"N/D"}
+
+Dai un giudizio complessivo sulla salute finanziaria dell'azienda basandoti su questi numeri: crescita, redditività, solidità. È un'azienda in miglioramento o in peggioramento rispetto all'anno prima?`;
+  }
+
+  if(tabName==="pattern"){
+    if(!LAST_PATTERN_RESULT){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi CERCA PATTERN SIMILI nel tab Pattern, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const r=LAST_PATTERN_RESULT;
+    prompt=base+`Ricerca di pattern storici simili all'andamento recente (correlazione statistica su serie normalizzate):
+- Match trovati: ${r.matches.length}, correlazione media: ${(r.avgCorr*100).toFixed(0)}%
+- Probabilità di esito rialzista nei match trovati: ${r.probability!=null?r.probability.toFixed(0)+"%":"N/D"}
+- Match più correlato: ${r.mostCorrelated?fmtPct(r.mostCorrelated.finalReturn)+" nel periodo successivo":"N/D"}
+
+Questi match storici sono abbastanza numerosi e correlati da essere presi sul serio, o rischiano di essere semplice rumore statistico (pattern matching illusorio)? Sii onesto sui limiti di questo tipo di analisi.`;
+  }
+
+  if(tabName==="ergodicita"){
+    const dailyReturns=calcDailyReturns(STOCK.closes);
+    const meanDaily=meanArr(dailyReturns);
+    const ensembleAnnual=meanDaily*252*100;
+    const logReturns=dailyReturns.map(r=>Math.log(1+r));
+    const timeAvgAnnual=(Math.exp(meanArr(logReturns)*252)-1)*100;
+    const {episodes}=calcDrawdownEpisodes(STOCK.closes);
+    const avgDD=episodes.length?meanArr(episodes.map(e=>e.depth)):null;
+    prompt=base+`Analisi di ergodicità (time average vs ensemble average):
+- Media Ensemble (aritmetica, annua): ${fmtPct(ensembleAnnual)}
+- Media Time realizzata (CAGR, annua): ${fmtPct(timeAvgAnnual)}
+- Volatility Drag: ${(ensembleAnnual-timeAvgAnnual).toFixed(2)}%/anno
+- Drawdown medio storico: ${avgDD!=null?avgDD.toFixed(1)+"%":"N/D"} su ${episodes.length} episodi
+
+Spiega in modo semplice cosa significa questo gap tra media ensemble e media time per chi guarda solo "il rendimento medio storico" di questo titolo. Il comportamento passato sembra rappresentativo o il titolo è troppo volatile perché una media storica sia affidabile?`;
+  }
+
   try{
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -2785,6 +2905,7 @@ window.runPatternSearch=async function(){
 
   await new Promise(r=>setTimeout(r,30)); // lascia respirare la UI prima del calcolo (può essere pesante su storici lunghi)
   const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15);
+  LAST_PATTERN_RESULT = result;
   if(!result){
     el("patStatus").textContent="❌ Storico insufficiente per questa combinazione di lunghezze — prova con periodi più corti o carica più storico (tab Grafico → Ultimi N anni).";
     return;
@@ -2848,6 +2969,158 @@ window.runPatternSearch=async function(){
   });
   h+="</table>";
   el("patTableWrap").innerHTML=h;
+};
+
+// ── ERGODICITÀ ────────────────────────────────────────────────────────
+function meanArr(arr){ return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null; }
+function medianArr(arr){ if(!arr.length) return null; const s=[...arr].sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+
+function calcRollingSeries(dates,closes,windowDays){
+  const n=closes.length;
+  const returns=calcDailyReturns(closes); // lunghezza n-1, returns[i] = rendimento del giorno dates[i+1]
+  const rollRet=new Array(n).fill(null), rollVol=new Array(n).fill(null);
+  for(let i=windowDays;i<n;i++){
+    // rendimento rolling: crescita composta sugli ultimi windowDays giorni, annualizzata
+    const ret=(closes[i]/closes[i-windowDays])-1;
+    rollRet[i]=(Math.pow(1+ret,252/windowDays)-1)*100;
+    // volatilità rolling sugli stessi giorni (usando i rendimenti giornalieri)
+    const slice=returns.slice(i-windowDays,i);
+    const avg=meanArr(slice);
+    const variance=meanArr(slice.map(r=>Math.pow(r-avg,2)));
+    rollVol[i]=Math.sqrt(variance*252)*100;
+  }
+  return {rollRet,rollVol};
+}
+
+function calcDrawdownEpisodes(closes){
+  let peak=closes[0], peakIdx=0, inDD=false, troughVal=null, troughIdx=null;
+  const episodes=[];
+  for(let i=1;i<closes.length;i++){
+    if(closes[i]>=peak){
+      if(inDD){
+        episodes.push({ depth:(troughVal-peak)/peak*100, daysToTrough:troughIdx-peakIdx, daysToRecover:i-troughIdx, recovered:true });
+        inDD=false;
+      }
+      peak=closes[i]; peakIdx=i;
+    } else {
+      if(!inDD || closes[i]<troughVal){ troughVal=closes[i]; troughIdx=i; }
+      inDD=true;
+    }
+  }
+  let ongoing=null;
+  if(inDD) ongoing={ depth:(troughVal-peak)/peak*100, daysSincePeak:closes.length-1-peakIdx, recovered:false };
+  return { episodes, ongoing };
+}
+
+function calcTimeAboveBelowThreshold(closes,thresholdSeries){
+  let daysAbove=0, daysBelow=0; const streaksAbove=[], streaksBelow=[];
+  let curStreak=0, curSide=null;
+  for(let i=0;i<closes.length;i++){
+    if(thresholdSeries[i]==null) continue;
+    const above=closes[i]>=thresholdSeries[i];
+    if(above) daysAbove++; else daysBelow++;
+    if(curSide===null){ curSide=above; curStreak=1; }
+    else if(above===curSide){ curStreak++; }
+    else { (curSide?streaksAbove:streaksBelow).push(curStreak); curSide=above; curStreak=1; }
+  }
+  if(curStreak>0) (curSide?streaksAbove:streaksBelow).push(curStreak);
+  const tot=daysAbove+daysBelow;
+  return {
+    pctAbove: tot?daysAbove/tot*100:null, pctBelow: tot?daysBelow/tot*100:null,
+    avgStreakAbove: meanArr(streaksAbove), avgStreakBelow: meanArr(streaksBelow)
+  };
+}
+
+let ergoRollingChartObj=null, ergoDrawdownChartObj=null;
+window.renderErgodicita=function(){
+  if(!STOCK) return;
+  const {dates,closes}=STOCK;
+  const dailyReturns=calcDailyReturns(closes);
+
+  // ── Time Average vs Ensemble Average ──────────────────────────────
+  const meanDaily=meanArr(dailyReturns);
+  const ensembleAnnualPct=meanDaily*252*100; // media aritmetica annualizzata semplice
+  const logReturns=dailyReturns.map(r=>Math.log(1+r));
+  const meanLogDaily=meanArr(logReturns);
+  const timeAvgAnnualPct=(Math.exp(meanLogDaily*252)-1)*100; // crescita composta reale (CAGR)
+  const volDrag=ensembleAnnualPct-timeAvgAnnualPct;
+  const volAnnualPct=calcVolatility(dailyReturns);
+
+  const card=(label,val,col,sub)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div>${sub?`<div style="font-size:9px;color:var(--dim);margin-top:3px;">${sub}</div>`:""}</div>`;
+  el("ergoAvgCardsWrap").innerHTML=
+    card("Media Ensemble (annua)", fmtPct(ensembleAnnualPct), "#4fa3ff", "media aritmetica semplice")+
+    card("Media Time — Realizzata (CAGR)", fmtPct(timeAvgAnnualPct), "#00d4b8", "crescita composta effettiva")+
+    card("Volatility Drag", (volDrag>=0?"-":"+")+Math.abs(volDrag).toFixed(2)+"%/anno", "#ffd23f", "quanto la media semplice sovrastima la crescita reale")+
+    card("Volatilità Annua", volAnnualPct!=null?volAnnualPct.toFixed(1)+"%":"--", volAnnualPct>25?"#ff6b6b":volAnnualPct>15?"#ffd23f":"#00d4b8", "più alta = drag maggiore");
+
+  // ── Rolling return/vol (finestra 252gg = 1 anno) ──────────────────
+  const {rollRet,rollVol}=calcRollingSeries(dates,closes,252);
+  const ctxR=el("ergoRollingChart");
+  if(ergoRollingChartObj) ergoRollingChartObj.destroy();
+  ergoRollingChartObj=new Chart(ctxR.getContext("2d"),{
+    type:"line",
+    data:{labels:dates.map(d=>d.toISOString().slice(0,10)), datasets:[
+      {label:"Rendimento Rolling 1Y (annualizzato)", data:rollRet, borderColor:"#00d4b8", borderWidth:1.5, pointRadius:0, tension:0.1, yAxisID:"y", spanGaps:true},
+      {label:"Volatilità Rolling 1Y (annualizzata)", data:rollVol, borderColor:"#ff9f1c", borderWidth:1.5, pointRadius:0, tension:0.1, yAxisID:"y2", spanGaps:true}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:9}}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+        y:{position:"left",ticks:{color:"#00d4b8",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}},
+        y2:{position:"right",ticks:{color:"#ff9f1c",font:{size:9},callback:v=>v+"%"},grid:{display:false}}
+      }}
+  });
+
+  // ── Distribuzione drawdown ─────────────────────────────────────────
+  const {episodes,ongoing}=calcDrawdownEpisodes(closes);
+  const depths=episodes.map(e=>e.depth);
+  const recoverTimes=episodes.map(e=>e.daysToRecover);
+  el("ergoDrawdownCardsWrap").innerHTML=
+    card("N. Drawdown Rilevati", episodes.length, "var(--txt)")+
+    card("Drawdown Medio", depths.length?meanArr(depths).toFixed(1)+"%":"--", "#ff6b6b")+
+    card("Drawdown Mediano", medianArr(depths)!=null?medianArr(depths).toFixed(1)+"%":"--", "#ffd23f")+
+    card("Tempo Medio di Recupero", recoverTimes.length?Math.round(meanArr(recoverTimes))+" gg":"--", "var(--txt)")+
+    (ongoing ? card("Drawdown Attuale (in corso)", ongoing.depth.toFixed(1)+"% da "+ongoing.daysSincePeak+" gg", "#ff6b6b", "non ancora recuperato") : card("Drawdown Attuale", "Nessuno — sui massimi", "#00d4b8"));
+
+  // Istogramma profondità drawdown (bucket)
+  const buckets=[0,5,10,15,20,30,50,100];
+  const bucketLabels=["0-5%","5-10%","10-15%","15-20%","20-30%","30-50%",">50%"];
+  const bucketCounts=new Array(bucketLabels.length).fill(0);
+  depths.forEach(d=>{
+    const abs=Math.abs(d);
+    for(let b=0;b<buckets.length-1;b++){ if(abs>=buckets[b]&&abs<buckets[b+1]){ bucketCounts[b]++; break; } }
+  });
+  const ctxD=el("ergoDrawdownChart");
+  if(ergoDrawdownChartObj) ergoDrawdownChartObj.destroy();
+  ergoDrawdownChartObj=new Chart(ctxD.getContext("2d"),{
+    type:"bar",
+    data:{labels:bucketLabels, datasets:[{label:"N. episodi", data:bucketCounts, backgroundColor:"#ff6b6b88"}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},stepSize:1},grid:{color:"#1e2d45"}}}}
+  });
+
+  // ── Tempo sopra/sotto SMA200 ───────────────────────────────────────
+  const sma200=smaSeriesCalc(closes,200);
+  const th=calcTimeAboveBelowThreshold(closes,sma200);
+  el("ergoThresholdCardsWrap").innerHTML=
+    card("% Tempo Sopra SMA200", th.pctAbove!=null?th.pctAbove.toFixed(0)+"%":"--", "#00d4b8")+
+    card("% Tempo Sotto SMA200", th.pctBelow!=null?th.pctBelow.toFixed(0)+"%":"--", "#ff6b6b")+
+    card("Durata Media Fase Sopra", th.avgStreakAbove!=null?Math.round(th.avgStreakAbove)+" gg":"--", "var(--txt)")+
+    card("Durata Media Fase Sotto", th.avgStreakBelow!=null?Math.round(th.avgStreakBelow)+" gg":"--", "var(--txt)");
+
+  // ── Probabilità di permanenza (Markov giornaliero, riuso) ─────────
+  try{
+    const series=periodReturnSeries(dates,closes,"daily");
+    const states=classifyStates(series,0.5,1.5);
+    const {matrix}=buildTransitionMatrix(states);
+    el("ergoMarkovPersistWrap").innerHTML=STATE_NAMES.map((n,i)=>{
+      const p=matrix[i][i];
+      return card(n, p!=null?(p*100).toFixed(0)+"%":"--", STATE_COLORS[i]);
+    }).join("");
+  }catch(e){ el("ergoMarkovPersistWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Dati insufficienti</div>`; }
 };
 </script>
 
