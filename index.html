@@ -6,6 +6,7 @@
 <title>FMP — Analizzatore Singolo Titolo</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -117,8 +118,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita">🔄 Ergodicità</button>
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI">🤖 AI Claude</button>
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern">🔮 Pattern</button>
-        <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo">🎲 Monte Carlo</button>
+        <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico">📜 Storico</button>
       </nav>
 
       <!-- TAB GRAFICO -->
@@ -533,6 +534,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">📜 STORICO ANALISI
             <button class="btn ghost" style="font-size:10px;" onclick="exportAnalysisHistoryCSV()">💾 Esporta Storico (CSV)</button>
             <button class="btn ghost" style="font-size:10px;" onclick="exportCurrentAnalysisJSON()">📥 Esporta Analisi Corrente (JSON)</button>
+            <button class="btn primary" style="font-size:10px;" onclick="generatePdfReport()">📄 Esporta PDF Riassuntivo</button>
             <button class="btn danger" style="font-size:10px;background:#ff6b6b22;border-color:#ff6b6b44;color:#ff6b6b;" onclick="clearAnalysisHistory()">🗑 Svuota Storico</button>
           </div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni titolo analizzato con ANALIZZA viene salvato automaticamente qui (nel browser). Non è sincronizzato tra dispositivi diversi.</div>
@@ -598,8 +600,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Ergod.</span></button>
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
-    <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
+    <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
 
@@ -613,6 +615,7 @@ let volumeChartObj=null;
 let LAST_CYCLES=null;
 let LAST_FUND_ROWS=null;
 let LAST_PATTERN_RESULT=null;
+let AI_ANALYSIS_LOG=[]; // {ticker, tab, answer, timestamp} — alimentato da ogni risposta AI, usato dal PDF
 let CHART_DATA_BY_TIME={};
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
@@ -2643,6 +2646,7 @@ Interpreta questi scenari per un investitore: il rapporto rischio/rendimento sem
     catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
     const answer=data.text||data.error||"Errore nella risposta.";
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
+    if(data.text) AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:tabName, answer:data.text, timestamp:new Date().toISOString() });
   }catch(err){
     box.innerHTML=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
   }
@@ -2738,6 +2742,7 @@ Domanda: ${question}`;
     el("aiLoadingMsg")?.remove();
     chatEl.innerHTML+=`<div style="align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 10px 0;padding:10px 13px;font-size:12px;max-width:90%;line-height:1.6;">${mdToHtml(answer)}</div>`;
     chatEl.scrollTop=chatEl.scrollHeight;
+    if(data.text) AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:"AI Claude (domanda: "+question+")", answer:data.text, timestamp:new Date().toISOString() });
   }catch(err){
     el("aiLoadingMsg")?.remove();
     chatEl.innerHTML+=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
@@ -2789,6 +2794,7 @@ window.renderHistoryTab=function(){
       <td style="font-size:10px;color:var(--dim);">${r.periodStart} → ${r.periodEnd}</td>
       <td style="white-space:nowrap;">
         <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${r.ticker}';switchTab('Grafico');analyzeTicker();">↻ Rianalizza</button>
+        <button class="icon-btn" style="background:none;border:none;color:#ffd23f;cursor:pointer;font-size:13px;padding:2px 6px;" onclick="generatePdfReport('${r.ticker}')" title="Genera PDF di questo titolo">📄</button>
         <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="deleteHistoryEntry('${r.ticker}')" title="Elimina questa riga">✕</button>
       </td>
     </tr>`;
@@ -3311,6 +3317,126 @@ function renderMonteCarloResults(p05,p25,p50,p75,p95,horizon){
   h+="</table>";
   el("mcThresholdWrap").innerHTML=h;
 }
+
+// ── EXPORT PDF RIASSUNTIVO (jsPDF, sfondo bianco, per archivio) ────────
+window.generatePdfReport=function(requestedTicker){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  // Se richiesto un ticker diverso da quello attualmente caricato (bottone
+  // per riga nello Storico), avvisa: possiamo esportare solo i dati
+  // EFFETTIVAMENTE calcolati in questa sessione per il titolo corrente —
+  // non recuperiamo retroattivamente analisi di sessioni passate.
+  if(requestedTicker && requestedTicker!==STOCK.ticker){
+    if(!confirm(`Il PDF può includere solo dati già calcolati in questa sessione. ${STOCK.ticker} è il titolo attualmente caricato, non ${requestedTicker}.\n\nVuoi rianalizzare ${requestedTicker} ora? (Bilancio/Pattern/AI andranno poi ricalcolati manualmente prima di generare il PDF)`)) return;
+    el("tickerInput").value=requestedTicker;
+    switchTab("Grafico");
+    analyzeTicker();
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc=new jsPDF({unit:"mm",format:"a4"});
+  const pageW=210, pageH=297, marginL=16, marginR=16, maxW=pageW-marginL-marginR;
+  let y=20;
+
+  function ensureSpace(neededMm){
+    if(y+neededMm>pageH-15){ doc.addPage(); y=20; }
+  }
+  function addTitle(text){
+    ensureSpace(12);
+    doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(20,20,20);
+    doc.text(text, marginL, y); y+=7;
+    doc.setDrawColor(200,200,200); doc.line(marginL,y-3,pageW-marginR,y-3);
+  }
+  function addLine(label,value,color){
+    ensureSpace(6);
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(90,90,90);
+    doc.text(label, marginL, y);
+    doc.setFont("helvetica","bold");
+    doc.setTextColor(...(color||[20,20,20]));
+    doc.text(String(value), marginL+70, y);
+    y+=6;
+  }
+  function addParagraph(text,fontSize=9){
+    doc.setFont("helvetica","normal"); doc.setFontSize(fontSize); doc.setTextColor(40,40,40);
+    const lines=doc.splitTextToSize(text, maxW);
+    lines.forEach(line=>{ ensureSpace(5); doc.text(line, marginL, y); y+=5; });
+    y+=2;
+  }
+
+  // ── COPERTINA / RIEPILOGO ──────────────────────────────────────────
+  doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.setTextColor(20,20,20);
+  doc.text(`Report di Analisi — ${STOCK.ticker}`, marginL, y); y+=8;
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(90,90,90);
+  doc.text(`${STOCK.name} · Generato il ${new Date().toLocaleString("it-IT")}`, marginL, y); y+=10;
+
+  const totalReturn=((STOCK.closes[STOCK.closes.length-1]-STOCK.closes[0])/STOCK.closes[0]*100);
+  addTitle("Riepilogo Generale");
+  addLine("Prezzo Attuale:", `${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}`);
+  addLine("Rendimento Periodo Analizzato:", fmtPct(totalReturn), totalReturn>=0?[0,140,110]:[200,40,40]);
+  addLine("Periodo Dati:", `${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")} (${STOCK.dates.length} sessioni)`);
+  y+=4;
+
+  // ── BILANCIO ────────────────────────────────────────────────────────
+  if(LAST_FUND_ROWS && LAST_FUND_ROWS.length>0){
+    addTitle("📑 Bilancio / Conto Economico");
+    const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1];
+    const prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+    const revGrowth=(last&&prev&&prev.revenue)?((last.revenue-prev.revenue)/prev.revenue*100):null;
+    addLine("Ricavi (ultimo anno):", fmtBig(last.revenue));
+    addLine("Utile Netto (ultimo anno):", fmtBig(last.netIncome), last.netIncome>=0?[0,140,110]:[200,40,40]);
+    addLine("Margine Netto:", last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D");
+    addLine("Crescita Ricavi YoY:", revGrowth!=null?fmtPct(revGrowth):"N/D");
+    addLine("Free Cash Flow:", fmtBig(last.fcf));
+    if(prev){
+      const piotroski=computePiotroskiForYear(last,prev);
+      if(piotroski) addLine("Piotroski F-Score:", piotroski.score+"/9", piotroski.score>=7?[0,140,110]:piotroski.score>=4?[200,150,0]:[200,40,40]);
+    }
+    y+=4;
+  } else {
+    addTitle("📑 Bilancio / Conto Economico");
+    addParagraph("Dati non caricati in questa sessione — vai sul tab Bilancio e premi CARICA DATI prima di generare il PDF, se vuoi includerli.");
+  }
+
+  // ── PATTERN CORRELATION ────────────────────────────────────────────
+  addTitle("🔮 Pattern Correlation Finder");
+  if(LAST_PATTERN_RESULT){
+    const r=LAST_PATTERN_RESULT;
+    addLine("Match Storici Trovati:", r.matches.length);
+    addLine("Correlazione Media:", (r.avgCorr*100).toFixed(0)+"%");
+    addLine("Probabilità Esito Rialzista:", r.probability!=null?r.probability.toFixed(0)+"%":"N/D");
+    if(r.mostCorrelated) addLine("Match Più Correlato — Esito:", fmtPct(r.mostCorrelated.finalReturn), r.mostCorrelated.finalReturn>=0?[0,140,110]:[200,40,40]);
+    y+=4;
+  } else {
+    addParagraph("Ricerca pattern non eseguita in questa sessione — vai sul tab Pattern e premi CERCA PATTERN SIMILI prima di generare il PDF, se vuoi includerla.");
+  }
+
+  // ── ANALISI AI ──────────────────────────────────────────────────────
+  const tickerAiLog=AI_ANALYSIS_LOG.filter(a=>a.ticker===STOCK.ticker);
+  addTitle(`🤖 Analisi AI (Claude) — ${tickerAiLog.length} analisi salvate`);
+  if(tickerAiLog.length===0){
+    addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Claude\" nelle varie tab (o il tab AI Claude) prima di generare il PDF, se vuoi includerle.");
+  } else {
+    tickerAiLog.forEach(a=>{
+      ensureSpace(10);
+      doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(20,20,20);
+      doc.text(`Tab: ${a.tab}  ·  ${new Date(a.timestamp).toLocaleString("it-IT")}`, marginL, y); y+=5;
+      // Rimuovo markdown grezzo (** e ##) per una lettura pulita nel PDF
+      const cleanText=a.answer.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^##?\s*/gm,"").replace(/\n{2,}/g,"\n");
+      addParagraph(cleanText, 9);
+      y+=3;
+    });
+  }
+
+  // ── PIE DI PAGINA ────────────────────────────────────────────────────
+  const pageCount=doc.internal.getNumberOfPages();
+  for(let p=1;p<=pageCount;p++){
+    doc.setPage(p);
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(150,150,150);
+    doc.text(`FMP Analyzer — Documento generato automaticamente, non costituisce consulenza finanziaria — Pagina ${p}/${pageCount}`, marginL, pageH-8);
+  }
+
+  doc.save(`report_${STOCK.ticker}_${new Date().toISOString().slice(0,10)}.pdf`);
+};
 </script>
 
 <!-- MODAL GUIDA -->
