@@ -208,7 +208,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="benchStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
           <div id="benchCardsWrap"></div>
           <div id="benchChart"></div>
-          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('benchmark')">🤖 Chiedi a Claude — come si comporta vs il benchmark?</button>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('benchmark')">🤖 Chiedi a Warren AI — come si comporta vs il benchmark?</button>
           <div id="aiTabBenchmark" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -246,7 +246,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">📋 TABELLA RENDIMENTI MENSILI PER ANNO</div>
           <div id="seasonTableWrap" style="overflow-x:auto;"></div>
-          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('stagionalita')">🤖 Chiedi a Claude — pattern stagionali affidabili?</button>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('stagionalita')">🤖 Chiedi a Warren AI — pattern stagionali affidabili?</button>
           <div id="aiTabStagionalita" style="margin-top:12px;"></div>
         </div>
         <div class="panel">
@@ -353,7 +353,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
         </div>
         <div class="panel">
-          <button class="btn primary" onclick="askAIAboutTab('bilancio')">🤖 Chiedi a Claude — giudizio complessivo sul bilancio</button>
+          <button class="btn primary" onclick="askAIAboutTab('bilancio')">🤖 Chiedi a Warren AI — giudizio complessivo sul bilancio</button>
           <div id="aiTabBilancio" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -410,7 +410,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">⚠️ TRANSIZIONI ANOMALE (più lontane dalla probabilità "casuale" del 20%)</div>
           <div id="markovAnomalyWrap"></div>
-          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('markov')">🤖 Chiedi a Claude — interpreta la catena di Markov</button>
+          <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('markov')">🤖 Chiedi a Warren AI — interpreta la catena di Markov</button>
           <div id="aiTabMarkov" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -421,7 +421,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
           <div class="cards" id="riskCardsWrap"></div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
-          <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Claude — interpreta questi numeri</button>
+          <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Warren AI — interpreta questi numeri</button>
           <div id="aiTabRischio" style="margin-top:12px;"></div>
         </div>
 
@@ -457,7 +457,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="cards" id="ergoMarkovPersistWrap" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"></div>
         </div>
         <div class="panel">
-          <button class="btn primary" onclick="askAIAboutTab('ergodicita')">🤖 Chiedi a Claude — il passato è rappresentativo del futuro?</button>
+          <button class="btn primary" onclick="askAIAboutTab('ergodicita')">🤖 Chiedi a Warren AI — il passato è rappresentativo del futuro?</button>
           <div id="aiTabErgodicita" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -520,7 +520,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel">
             <div class="panel-title">📋 EVENTI STORICI CORRELATI</div>
             <div id="patTableWrap" style="overflow-x:auto;"></div>
-            <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('pattern')">🤖 Chiedi a Claude — questi pattern storici sono affidabili?</button>
+            <button class="btn primary" style="margin-top:12px;" onclick="askAIAboutTab('pattern')">🤖 Chiedi a Warren AI — questi pattern storici sono affidabili?</button>
             <div id="aiTabPattern" style="margin-top:12px;"></div>
           </div>
         </div>
@@ -550,7 +550,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
 
         <div class="panel" id="regimeAiPanel" style="display:none;">
-          <button class="btn primary" onclick="askAIAboutTab('regime')">🤖 Chiedi a Claude — cosa implica questo regime per il titolo?</button>
+          <button class="btn primary" onclick="askAIAboutTab('regime')">🤖 Chiedi a Warren AI — cosa implica questo regime per il titolo?</button>
           <div id="aiTabRegime" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -572,7 +572,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
 
         <div class="panel" id="scoreAiPanel" style="display:none;">
-          <button class="btn primary" onclick="askAIAboutTab('score')">🤖 Chiedi a Claude — questo score ha senso?</button>
+          <button class="btn primary" onclick="askAIAboutTab('score')">🤖 Chiedi a Warren AI — questo score ha senso?</button>
           <div id="aiTabScore" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -629,7 +629,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div id="mcThresholdWrap" style="overflow-x:auto;"></div>
           </div>
           <div class="panel">
-            <button class="btn primary" onclick="askAIAboutTab('montecarlo')">🤖 Chiedi a Claude — interpreta questi scenari</button>
+            <button class="btn primary" onclick="askAIAboutTab('montecarlo')">🤖 Chiedi a Warren AI — interpreta questi scenari</button>
             <div id="aiTabMonteCarlo" style="margin-top:12px;"></div>
           </div>
         </div>
@@ -3504,6 +3504,41 @@ window.generatePdfReport=function(requestedTicker){
   addLine("Periodo Dati:", `${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")} (${STOCK.dates.length} sessioni)`);
   y+=4;
 
+  // ── STOCK QUANT SCORE (riepilogo esecutivo, in evidenza) ──────────────
+  if(LAST_STOCK_SCORE){
+    const s=LAST_STOCK_SCORE;
+    ensureSpace(20);
+    doc.setFillColor(245,245,235);
+    doc.rect(marginL-3, y-5, maxW+6, 34, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.setTextColor(20,20,20);
+    doc.text(`⭐ STOCK QUANT SCORE: ${s.score}/100`, marginL, y+2); y+=8;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text(`Basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili (${s.coveragePct}% del peso totale)`, marginL, y+2); y+=10;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(40,40,40);
+    Object.entries(s.components).forEach(([k,v])=>{
+      doc.text(`${SCORE_LABELS[k]}: ${v!=null?v.toFixed(0)+"/100":"N/D"}`, marginL, y);
+      y+=5;
+    });
+    y+=6;
+  } else {
+    addTitle("⭐ Stock Quant Score");
+    addParagraph("Score non calcolato in questa sessione — vai sul tab Stock Score e premi Calcola Score prima di generare il PDF, se vuoi includerlo.");
+  }
+
+  // ── REGIME DI MERCATO ──────────────────────────────────────────────
+  if(LAST_REGIME_RESULT){
+    addTitle("🌡️ Regime di Mercato");
+    const r=LAST_REGIME_RESULT;
+    addLine("Regime:", `${r.regime} (${r.score}/100)`, r.score>=60?[0,140,110]:r.score>=40?[200,150,0]:[200,40,40]);
+    addLine("Benchmark di Riferimento:", r.benchTicker);
+    addLine("Trend Mercato:", r.benchTrend>0?"Rialzista (sopra SMA200)":"Ribassista (sotto SMA200)");
+    addLine("Volatilità Mercato (21gg):", r.benchVol!=null?r.benchVol.toFixed(1)+"%":"N/D");
+    y+=4;
+  } else {
+    addTitle("🌡️ Regime di Mercato");
+    addParagraph("Regime non calcolato in questa sessione — vai sul tab Regime e premi Calcola Regime prima di generare il PDF, se vuoi includerlo.");
+  }
+
   // ── BILANCIO ────────────────────────────────────────────────────────
   if(LAST_FUND_ROWS && LAST_FUND_ROWS.length>0){
     addTitle("📑 Bilancio / Conto Economico");
@@ -3542,7 +3577,7 @@ window.generatePdfReport=function(requestedTicker){
   const tickerAiLog=AI_ANALYSIS_LOG.filter(a=>a.ticker===STOCK.ticker);
   addTitle(`🤖 Analisi AI (Claude) — ${tickerAiLog.length} analisi salvate`);
   if(tickerAiLog.length===0){
-    addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Claude\" nelle varie tab (o il tab AI Claude) prima di generare il PDF, se vuoi includerle.");
+    addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Warren AI\" nelle varie tab (o il tab AI Claude) prima di generare il PDF, se vuoi includerle.");
   } else {
     tickerAiLog.forEach(a=>{
       ensureSpace(10);
@@ -3841,7 +3876,13 @@ function scoreFromBilancio(){
 }
 function scoreFromValutazione(){
   if(!LAST_FAIR_VALUE||LAST_FAIR_VALUE.upsidePct==null) return null;
-  return Math.max(0,Math.min(100,50+LAST_FAIR_VALUE.upsidePct*1.2));
+  // Scala più morbida (0.5 invece di 1.2, con tetto ±80% sull'input): i
+  // modelli Fair Value semplificati (Peter Lynch/DCF) tendono a sottostimare
+  // molto i titoli growth ad alto multiplo — con una scala troppo ripida lo
+  // score collassava a 0 per QUALSIASI scostamento oltre il -42%, perdendo
+  // ogni distinzione tra "un po' caro" e "carissimo".
+  const capped=Math.max(-80,Math.min(80,LAST_FAIR_VALUE.upsidePct));
+  return Math.max(0,Math.min(100,50+capped*0.5));
 }
 function scoreFromMonteCarlo(){
   if(!LAST_MC_RESULT) return null;
