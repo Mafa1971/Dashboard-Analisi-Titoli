@@ -630,7 +630,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
           <div class="panel">
             <button class="btn primary" onclick="askAIAboutTab('montecarlo')">🤖 Chiedi a Warren AI — interpreta questi scenari</button>
-            <div id="aiTabMonteCarlo" style="margin-top:12px;"></div>
+            <div id="aiTabMontecarlo" style="margin-top:12px;"></div>
           </div>
         </div>
       </div>
@@ -3780,7 +3780,9 @@ window.generatePdfReport=function(requestedTicker){
       // Rimuovo markdown grezzo (** e ##) E le emoji (i font base di jsPDF
       // non le supportano e diventano caratteri illeggibili) per una lettura
       // pulita nel PDF.
-      const cleanText=a.answer.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^##?\s*/gm,"").replace(/\n{2,}/g,"\n").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu,"");
+      const cleanText=a.answer.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^##?\s*/gm,"").replace(/\n{2,}/g,"\n")
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]/gu,"")
+        .replace(/[ \t]{2,}/g," "); // ripulisce eventuali doppi spazi lasciati dalla rimozione
       addParagraph(cleanText, 9);
       y+=3;
     });
