@@ -669,6 +669,7 @@ let LAST_FUND_ROWS=null;
 let LAST_PATTERN_RESULT=null;
 let AI_ANALYSIS_LOG=[]; // {ticker, tab, answer, timestamp} — alimentato da ogni risposta AI, usato dal PDF
 let STOCK_SECTOR=null;
+let LAST_SECTOR_DATA=null;
 let LAST_FAIR_VALUE=null;
 let LAST_STOCK_SCORE=null;
 // Mappa nomi settore (Yahoo/Alpha Vantage usano nomi leggermente diversi) → ETF SPDR di settore
@@ -3396,7 +3397,8 @@ window.runMonteCarlo=function(){
     });
 
     LAST_MC_RESULT={ horizon, nSims, meanReturn, probLoss, var95, cvar95, avgMaxDD, hitUpProb, hitDownProb,
-      pessimistic:p05[p05.length-1]-100, median:p50[p50.length-1]-100, optimistic:p95[p95.length-1]-100 };
+      pessimistic:p05[p05.length-1]-100, median:p50[p50.length-1]-100, optimistic:p95[p95.length-1]-100,
+      p05,p25,p50,p75,p95 }; // array completi, servono per ricostruire il grafico nel PDF
 
     renderMonteCarloResults(p05,p25,p50,p75,p95,horizon);
     el("mcStatus").textContent=`✅ ${nSims.toLocaleString("it-IT")} simulazioni completate su orizzonte di ${horizon} giorni`;
@@ -3447,6 +3449,36 @@ function renderMonteCarloResults(p05,p25,p50,p75,p95,horizon){
 }
 
 // ── EXPORT PDF RIASSUNTIVO (jsPDF, sfondo bianco, per archivio) ────────
+// ── HELPER: grafici "a tema chiaro" fuori schermo, solo per il PDF ─────
+// I grafici dell'app sono in stile scuro (testo chiaro su sfondo scuro) —
+// se incollati così com'è su una pagina PDF bianca il testo sarebbe
+// illeggibile. Questi grafici vengono ricreati al volo con colori scuri
+// su sfondo bianco, usando gli STESSI dati già calcolati, poi convertiti
+// in immagine ed eliminati subito dopo.
+function renderPdfChartImage(chartConfig, widthPx=900, heightPx=420){
+  const canvas=document.createElement("canvas");
+  canvas.width=widthPx; canvas.height=heightPx;
+  const tempChart=new Chart(canvas.getContext("2d"), {
+    ...chartConfig,
+    options:{
+      ...chartConfig.options,
+      responsive:false, animation:false,
+      plugins:{...(chartConfig.options?.plugins||{}), legend:{...(chartConfig.options?.plugins?.legend||{}), labels:{color:"#222",font:{size:13}}}},
+      scales: chartConfig.options?.scales ? Object.fromEntries(Object.entries(chartConfig.options.scales).map(([k,v])=>[k,{
+        ...v, ticks:{...(v.ticks||{}),color:"#333"}, grid:{...(v.grid||{}),color:"#ddd"}
+      }])) : undefined
+    }
+  });
+  // Sfondo bianco esplicito (i canvas Chart.js sono trasparenti di default)
+  const ctx=canvas.getContext("2d");
+  ctx.save(); ctx.globalCompositeOperation="destination-over";
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.restore();
+  const dataUrl=canvas.toDataURL("image/png");
+  tempChart.destroy();
+  return dataUrl;
+}
+
 window.generatePdfReport=function(requestedTicker){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   // Se richiesto un ticker diverso da quello attualmente caricato (bottone
@@ -3490,6 +3522,12 @@ window.generatePdfReport=function(requestedTicker){
     lines.forEach(line=>{ ensureSpace(5); doc.text(line, marginL, y); y+=5; });
     y+=2;
   }
+  function addImage(dataUrl, aspectRatio){
+    const imgW=maxW, imgH=imgW*aspectRatio;
+    ensureSpace(imgH+8);
+    doc.addImage(dataUrl,"PNG",marginL,y,imgW,imgH);
+    y+=imgH+6;
+  }
 
   // ── COPERTINA / RIEPILOGO ──────────────────────────────────────────
   doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.setTextColor(20,20,20);
@@ -3507,13 +3545,27 @@ window.generatePdfReport=function(requestedTicker){
   // ── STOCK QUANT SCORE (riepilogo esecutivo, in evidenza) ──────────────
   if(LAST_STOCK_SCORE){
     const s=LAST_STOCK_SCORE;
-    ensureSpace(20);
+    ensureSpace(38);
     doc.setFillColor(245,245,235);
-    doc.rect(marginL-3, y-5, maxW+6, 34, "F");
+    doc.rect(marginL-3, y-5, maxW+6, 40, "F");
     doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.setTextColor(20,20,20);
-    doc.text(`⭐ STOCK QUANT SCORE: ${s.score}/100`, marginL, y+2); y+=8;
+    doc.text(`⭐ STOCK QUANT SCORE: ${s.score}/100`, marginL, y+2); y+=7;
     doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
-    doc.text(`Basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili (${s.coveragePct}% del peso totale)`, marginL, y+2); y+=10;
+    doc.text(`Basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili (${s.coveragePct}% del peso totale)`, marginL, y+2); y+=7;
+    // Barra colorata reale (gradiente rosso→giallo→verde) con indicatore di posizione
+    const barW=maxW, barH=5, segments=40;
+    for(let i=0;i<segments;i++){
+      const t=i/segments;
+      const r=t<0.5?255:Math.round(255-(t-0.5)*2*255);
+      const g=t<0.5?Math.round(t*2*180+70):220;
+      const b=60;
+      doc.setFillColor(r,g,b);
+      doc.rect(marginL+barW*t, y, barW/segments+0.5, barH, "F");
+    }
+    const markerX=marginL+barW*(s.score/100);
+    doc.setFillColor(20,20,20);
+    doc.triangle(markerX-2,y-2, markerX+2,y-2, markerX,y+1, "F");
+    y+=barH+10;
     doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(40,40,40);
     Object.entries(s.components).forEach(([k,v])=>{
       doc.text(`${SCORE_LABELS[k]}: ${v!=null?v.toFixed(0)+"/100":"N/D"}`, marginL, y);
@@ -3533,7 +3585,25 @@ window.generatePdfReport=function(requestedTicker){
     addLine("Benchmark di Riferimento:", r.benchTicker);
     addLine("Trend Mercato:", r.benchTrend>0?"Rialzista (sopra SMA200)":"Ribassista (sotto SMA200)");
     addLine("Volatilità Mercato (21gg):", r.benchVol!=null?r.benchVol.toFixed(1)+"%":"N/D");
-    y+=4;
+    y+=2;
+    if(LAST_SECTOR_DATA && LAST_SECTOR_DATA.closes && LAST_SECTOR_DATA.closes.length>10){
+      try{
+        const lookback=Math.min(504, STOCK.closes.length-1, LAST_SECTOR_DATA.closes.length-1);
+        const stockPct=normalizeToPct(STOCK.closes.slice(-lookback-1));
+        const sectorPct=normalizeToPct(LAST_SECTOR_DATA.closes.slice(-lookback-1));
+        const labels=STOCK.dates.slice(-lookback-1).map(d=>d.toISOString().slice(0,10));
+        const img=renderPdfChartImage({
+          type:"line",
+          data:{labels, datasets:[
+            {label:STOCK.ticker, data:stockPct, borderColor:"#b8860b", borderWidth:2, pointRadius:0, tension:0.1},
+            {label:LAST_SECTOR_DATA.etfTicker+" (Settore)", data:sectorPct, borderColor:"#2166ac", borderWidth:1.5, pointRadius:0, tension:0.1}
+          ]},
+          options:{scales:{x:{ticks:{maxTicksLimit:8}},y:{ticks:{callback:v=>v+"%"}}}}
+        });
+        addImage(img, 420/900);
+      }catch(e){ /* silenzioso, il PDF continua senza il grafico */ }
+    }
+    y+=2;
   } else {
     addTitle("🌡️ Regime di Mercato");
     addParagraph("Regime non calcolato in questa sessione — vai sul tab Regime e premi Calcola Regime prima di generare il PDF, se vuoi includerlo.");
@@ -3554,7 +3624,29 @@ window.generatePdfReport=function(requestedTicker){
       const piotroski=computePiotroskiForYear(last,prev);
       if(piotroski) addLine("Piotroski F-Score:", piotroski.score+"/9", piotroski.score>=7?[0,140,110]:piotroski.score>=4?[200,150,0]:[200,40,40]);
     }
-    y+=4;
+    y+=2;
+    // Grafico Altman Z-Score storico
+    try{
+      const zScores=LAST_FUND_ROWS.map(r=>{
+        if(!r.totalAssets||r.totalCurrentAssets==null||r.totalCurrentLiab==null||!r.sharesOutstanding||!r.totalLiab) return null;
+        const wc=(r.totalCurrentAssets??0)-(r.totalCurrentLiab??0), ta=r.totalAssets;
+        const targetTime=new Date(r.year).getTime();
+        let closestIdx=0, closestDiff=Infinity;
+        STOCK.dates.forEach((d,i)=>{ const diff=Math.abs(d.getTime()-targetTime); if(diff<closestDiff){ closestDiff=diff; closestIdx=i; } });
+        const mktCap=STOCK.closes[closestIdx]*r.sharesOutstanding;
+        return parseFloat((1.2*(wc/ta)+1.4*((r.retainedEarnings||0)/ta)+3.3*((r.ebit||0)/ta)+0.6*(mktCap/r.totalLiab)+1.0*((r.revenue||0)/ta)).toFixed(2));
+      });
+      if(zScores.some(z=>z!=null)){
+        const img=renderPdfChartImage({
+          type:"bar",
+          data:{labels:LAST_FUND_ROWS.map(r=>r.year.slice(0,4)), datasets:[{label:"Altman Z-Score", data:zScores,
+            backgroundColor:zScores.map(z=>z==null?"#999":z>2.99?"#1a9850":z>1.81?"#d4a017":"#c0392b")}]},
+          options:{plugins:{legend:{display:false}}, scales:{x:{},y:{}}}
+        });
+        addImage(img, 420/900);
+      }
+    }catch(e){ /* silenzioso */ }
+    y+=2;
   } else {
     addTitle("📑 Bilancio / Conto Economico");
     addParagraph("Dati non caricati in questa sessione — vai sul tab Bilancio e premi CARICA DATI prima di generare il PDF, se vuoi includerli.");
@@ -3573,9 +3665,37 @@ window.generatePdfReport=function(requestedTicker){
     addParagraph("Ricerca pattern non eseguita in questa sessione — vai sul tab Pattern e premi CERCA PATTERN SIMILI prima di generare il PDF, se vuoi includerla.");
   }
 
+  // ── MONTE CARLO ─────────────────────────────────────────────────────
+  addTitle("🎲 Simulazione Monte Carlo");
+  if(LAST_MC_RESULT && LAST_MC_RESULT.p50){
+    const mc=LAST_MC_RESULT;
+    addLine("Scenario Pessimistico (5°):", fmtPct(mc.pessimistic), [200,40,40]);
+    addLine("Scenario Mediano:", fmtPct(mc.median));
+    addLine("Scenario Ottimistico (95°):", fmtPct(mc.optimistic), [0,140,110]);
+    addLine("Probabilità di Perdita:", mc.probLoss.toFixed(0)+"%");
+    addLine("VaR 95% / CVaR 95%:", `${fmtPct(mc.var95)} / ${fmtPct(mc.cvar95)}`, [200,40,40]);
+    y+=2;
+    try{
+      const labels=Array.from({length:mc.horizon+1},(_,i)=>i===0?"Oggi":"+"+i);
+      const img=renderPdfChartImage({
+        type:"line",
+        data:{labels, datasets:[
+          {label:"95° (ottimistico)", data:mc.p95.map(v=>v-100), borderColor:"#1a9850", borderWidth:1, pointRadius:0},
+          {label:"Mediana", data:mc.p50.map(v=>v-100), borderColor:"#b8860b", borderWidth:2.5, pointRadius:0},
+          {label:"5° (pessimistico)", data:mc.p05.map(v=>v-100), borderColor:"#c0392b", borderWidth:1, pointRadius:0}
+        ]},
+        options:{scales:{x:{ticks:{maxTicksLimit:8}},y:{ticks:{callback:v=>v+"%"}}}}
+      });
+      addImage(img, 420/900);
+    }catch(e){ /* silenzioso */ }
+    y+=2;
+  } else {
+    addParagraph("Simulazione non eseguita in questa sessione — vai sul tab Monte Carlo e premi SIMULA prima di generare il PDF, se vuoi includerla.");
+  }
+
   // ── ANALISI AI ──────────────────────────────────────────────────────
   const tickerAiLog=AI_ANALYSIS_LOG.filter(a=>a.ticker===STOCK.ticker);
-  addTitle(`🤖 Analisi AI (Claude) — ${tickerAiLog.length} analisi salvate`);
+  addTitle(`🤖 Analisi Warren AI — ${tickerAiLog.length} analisi salvate`);
   if(tickerAiLog.length===0){
     addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Warren AI\" nelle varie tab (o il tab AI Claude) prima di generare il PDF, se vuoi includerle.");
   } else {
@@ -3747,6 +3867,7 @@ async function renderSectorComparison(){
     const p1=Math.floor(STOCK.dates[0].getTime()/1000), p2=Math.floor(STOCK.dates[STOCK.dates.length-1].getTime()/1000);
     const data=await fetchYahoo(etfTicker,"max","1d",p1,p2);
     const sector=parseYahooResult(data);
+    LAST_SECTOR_DATA={ etfTicker, sectorName:STOCK_SECTOR, closes:sector.closes, dates:sector.dates };
     if(!sector.closes || sector.closes.length<50){ el("regimeSectorInfo").textContent="❌ Dati settore non disponibili."; return; }
 
     const sectorSMA200=smaSeriesCalc(sector.closes,200).slice(-1)[0];
