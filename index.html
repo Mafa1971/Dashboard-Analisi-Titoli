@@ -613,7 +613,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       </div>
     </div>
 
-    <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p></div></div>
+    <div id="emptyWrap"><div class="empty-state"><div class="ic">📈</div><p>Inserisci un ticker e premi ANALIZZA</p>
+      <button class="btn ghost" style="margin-top:14px;" onclick="showHistoryWithoutAnalysis()">📜 Oppure vedi lo Storico Analisi</button>
+    </div></div>
   </main>
 
   <nav class="tab-bar">
@@ -679,6 +681,15 @@ document.getElementById("btnLogout").addEventListener("click",()=>{
 (function(){ try{ if(localStorage.getItem(AUTH_KEY)==="1") showApp(); }catch(e){} })();
 
 // ── TAB SWITCH ────────────────────────────────────────────────────────
+window.showHistoryWithoutAnalysis=function(){
+  // Permette di consultare lo Storico anche senza aver ancora analizzato un
+  // titolo in questa sessione — forza la visibilità dell'area risultati e
+  // attiva solo il tab Storico (gli altri tab restano vuoti finché non si
+  // analizza davvero un titolo, dato che dipendono da STOCK).
+  el("resultsWrap").style.display="block";
+  el("emptyWrap").style.display="none";
+  switchTab("Storico");
+};
 window.switchTab=function(name){
   document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
   document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
@@ -860,6 +871,8 @@ function renderCandles(){
     if(!range) return;
     if(rsiChart) rsiChart.timeScale().setVisibleLogicalRange(range);
     if(volumeChartObj) volumeChartObj.timeScale().setVisibleLogicalRange(range);
+    drawICTCanvasOverlay(); // ridisegna FVG/Swing/Struttura in tempo reale durante il trascinamento,
+                             // non solo al rilascio del mouse (evento più reattivo di subscribeVisibleTimeRangeChange)
   });
 }
 
@@ -3544,12 +3557,17 @@ window.calcRegime=async function(){
   const stockSMA200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0];
   const stockPrice=STOCK.closes[STOCK.closes.length-1];
 
+  // Formula CONTINUA (non a "bonus fissi a scatti") — evita che troppi titoli
+  // saturino a 100 solo perché soddisfano contemporaneamente poche soglie
+  // discrete. Ogni componente scala in proporzione alla sua intensità reale,
+  // quindi il 100 pieno richiede un allineamento estremo di TUTTI i fattori,
+  // non solo il superamento di alcune soglie.
   let score=50;
-  score+=benchTrend*Math.min(20,Math.abs(benchStrength)*2);
-  if(stockRSI>60) score+=10; else if(stockRSI>50) score+=5; else if(stockRSI<40) score-=10; else if(stockRSI<50) score-=5;
-  if(stockSMA50!=null) score+= stockPrice>stockSMA50?8:-8;
-  if(stockSMA200!=null) score+= stockPrice>stockSMA200?8:-8;
-  if(benchVol!=null){ if(benchVol>30) score-=15; else if(benchVol>20) score-=5; else if(benchVol<12) score+=10; }
+  score+=benchTrend*Math.min(20,Math.abs(benchStrength)*1.5); // trend di mercato, max ±20
+  score+=Math.max(-15,Math.min(15,(stockRSI-50)*0.3)); // RSI continuo, centrato su 50
+  if(stockSMA50!=null) score+=Math.max(-8,Math.min(8,((stockPrice-stockSMA50)/stockSMA50*100)*0.8));
+  if(stockSMA200!=null) score+=Math.max(-8,Math.min(8,((stockPrice-stockSMA200)/stockSMA200*100)*0.4));
+  if(benchVol!=null) score+=Math.max(-15,Math.min(10,(18-benchVol)*0.7)); // volatilità continua, centrata su 18%
   score=Math.round(Math.max(0,Math.min(100,score)));
 
   let regime,color,emoji,note;
@@ -3614,12 +3632,33 @@ function renderSeasonalityByRegime(){
 let sectorChartObj=null;
 async function renderSectorComparison(){
   const panel=el("regimeSectorPanel");
-  if(!STOCK_SECTOR || !SECTOR_ETF_MAP[STOCK_SECTOR]){
-    panel.style.display="none";
+  panel.style.display="block";
+
+  // Se il settore non è stato rilevato da Yahoo (loadQuickRatios), proviamo
+  // un'ultima chiamata dedicata ad Alpha Vantage OVERVIEW prima di arrenderci
+  // — invece di nascondere il pannello in silenzio senza spiegare perché.
+  if(!STOCK_SECTOR){
+    el("regimeSectorInfo").textContent="⏳ Settore non rilevato da Yahoo, provo Alpha Vantage...";
+    try{
+      const res=await fetch(`/.netlify/functions/fundamentals?ticker=${encodeURIComponent(STOCK.ticker)}&statement=overview`);
+      const json=await res.json();
+      if(json?.Sector) STOCK_SECTOR=json.Sector;
+    }catch(e){ /* silenzioso, gestiamo sotto */ }
+  }
+
+  if(!STOCK_SECTOR){
+    el("regimeSectorInfo").innerHTML=`❌ Settore non disponibile per <strong>${STOCK.ticker}</strong> né da Yahoo né da Alpha Vantage — capita più spesso su titoli non statunitensi o meno coperti.`;
+    el("regimeSectorChart").style.display="none";
     return;
   }
+  if(!SECTOR_ETF_MAP[STOCK_SECTOR]){
+    el("regimeSectorInfo").innerHTML=`⚠️ Settore rilevato ("${STOCK_SECTOR}") ma non ho un ETF di riferimento mappato per questo nome — dimmelo e aggiungo la mappatura.`;
+    el("regimeSectorChart").style.display="none";
+    return;
+  }
+  el("regimeSectorChart").style.display="block";
+
   const etfTicker=SECTOR_ETF_MAP[STOCK_SECTOR];
-  panel.style.display="block";
   el("regimeSectorInfo").textContent=`⏳ Scarico dati per ${etfTicker} (ETF settoriale: ${STOCK_SECTOR})...`;
 
   try{
