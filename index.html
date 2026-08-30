@@ -3539,7 +3539,7 @@ window.generatePdfReport=function(requestedTicker){
   addTitle("Riepilogo Generale");
   addLine("Prezzo Attuale:", `${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}`);
   addLine("Rendimento Periodo Analizzato:", fmtPct(totalReturn), totalReturn>=0?[0,140,110]:[200,40,40]);
-  addLine("Periodo Dati:", `${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")} (${STOCK.dates.length} sessioni)`);
+  addLine("Periodo Dati:", `${STOCK.dates[0].toLocaleDateString("it-IT")} - ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")} (${STOCK.dates.length} sessioni)`);
   y+=4;
 
   // ── STOCK QUANT SCORE (riepilogo esecutivo, in evidenza) ──────────────
@@ -3549,7 +3549,7 @@ window.generatePdfReport=function(requestedTicker){
     doc.setFillColor(245,245,235);
     doc.rect(marginL-3, y-5, maxW+6, 40, "F");
     doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.setTextColor(20,20,20);
-    doc.text(`⭐ STOCK QUANT SCORE: ${s.score}/100`, marginL, y+2); y+=7;
+    doc.text(`STOCK QUANT SCORE: ${s.score}/100`, marginL, y+2); y+=7;
     doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
     doc.text(`Basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili (${s.coveragePct}% del peso totale)`, marginL, y+2); y+=7;
     // Barra colorata reale (gradiente rosso→giallo→verde) con indicatore di posizione
@@ -3573,13 +3573,13 @@ window.generatePdfReport=function(requestedTicker){
     });
     y+=6;
   } else {
-    addTitle("⭐ Stock Quant Score");
+    addTitle("Stock Quant Score");
     addParagraph("Score non calcolato in questa sessione — vai sul tab Stock Score e premi Calcola Score prima di generare il PDF, se vuoi includerlo.");
   }
 
   // ── REGIME DI MERCATO ──────────────────────────────────────────────
   if(LAST_REGIME_RESULT){
-    addTitle("🌡️ Regime di Mercato");
+    addTitle("Regime di Mercato");
     const r=LAST_REGIME_RESULT;
     addLine("Regime:", `${r.regime} (${r.score}/100)`, r.score>=60?[0,140,110]:r.score>=40?[200,150,0]:[200,40,40]);
     addLine("Benchmark di Riferimento:", r.benchTicker);
@@ -3605,13 +3605,39 @@ window.generatePdfReport=function(requestedTicker){
     }
     y+=2;
   } else {
-    addTitle("🌡️ Regime di Mercato");
+    addTitle("Regime di Mercato");
     addParagraph("Regime non calcolato in questa sessione — vai sul tab Regime e premi Calcola Regime prima di generare il PDF, se vuoi includerlo.");
   }
 
+  // ── ERGODICITÀ (sempre disponibile, calcolata dai soli dati prezzo) ────
+  addTitle("Rendimento e Volatilità Rolling (Ergodicità)");
+  try{
+    const dailyReturns=calcDailyReturns(STOCK.closes);
+    if(dailyReturns.length>=280){
+      const {rollRet,rollVol}=calcRollingSeries(STOCK.dates,STOCK.closes,252);
+      const labels=STOCK.dates.map(d=>d.toISOString().slice(0,10));
+      const img=renderPdfChartImage({
+        type:"line",
+        data:{labels, datasets:[
+          {label:"Rendimento Rolling 1Y", data:rollRet, borderColor:"#1a9850", borderWidth:1.5, pointRadius:0, yAxisID:"y"},
+          {label:"Volatilità Rolling 1Y", data:rollVol, borderColor:"#e08214", borderWidth:1.5, pointRadius:0, yAxisID:"y2"}
+        ]},
+        options:{scales:{
+          x:{ticks:{maxTicksLimit:8}},
+          y:{position:"left",ticks:{callback:v=>v+"%"}},
+          y2:{position:"right",ticks:{callback:v=>v+"%"},grid:{drawOnChartArea:false}}
+        }}
+      });
+      addImage(img, 420/900);
+    } else {
+      addParagraph("Storico insufficiente per calcolare il rolling a 1 anno (servono almeno ~280 sessioni).");
+    }
+  }catch(e){ addParagraph("Impossibile calcolare il grafico rolling."); }
+  y+=2;
+
   // ── BILANCIO ────────────────────────────────────────────────────────
   if(LAST_FUND_ROWS && LAST_FUND_ROWS.length>0){
-    addTitle("📑 Bilancio / Conto Economico");
+    addTitle("Bilancio / Conto Economico");
     const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1];
     const prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
     const revGrowth=(last&&prev&&prev.revenue)?((last.revenue-prev.revenue)/prev.revenue*100):null;
@@ -3625,6 +3651,28 @@ window.generatePdfReport=function(requestedTicker){
       if(piotroski) addLine("Piotroski F-Score:", piotroski.score+"/9", piotroski.score>=7?[0,140,110]:piotroski.score>=4?[200,150,0]:[200,40,40]);
     }
     y+=2;
+    // Grafico Prezzo vs Fondamentali (Utile Netto annuale "a gradini" sovrapposto al prezzo)
+    try{
+      let ri=0;
+      const niStep=STOCK.dates.map(d=>{
+        while(ri<LAST_FUND_ROWS.length-1 && new Date(LAST_FUND_ROWS[ri+1].year)<=d) ri++;
+        const r=LAST_FUND_ROWS[ri];
+        return (!r || new Date(r.year)>d) ? null : r.netIncome;
+      });
+      const img=renderPdfChartImage({
+        type:"line",
+        data:{labels:STOCK.dates.map(d=>d.toISOString().slice(0,10)), datasets:[
+          {label:"Prezzo", data:STOCK.closes, borderColor:"#2166ac", borderWidth:1.5, pointRadius:0, yAxisID:"y"},
+          {label:"Utile Netto (annuale)", data:niStep, borderColor:"#1a9850", borderWidth:1.5, pointRadius:0, yAxisID:"y2", spanGaps:true}
+        ]},
+        options:{scales:{
+          x:{ticks:{maxTicksLimit:8}},
+          y:{position:"left",ticks:{callback:v=>STOCK.currency+" "+v}},
+          y2:{position:"right",ticks:{callback:v=>fmtBig(v)},grid:{drawOnChartArea:false}}
+        }}
+      });
+      addImage(img, 420/900);
+    }catch(e){ /* silenzioso */ }
     // Grafico Altman Z-Score storico
     try{
       const zScores=LAST_FUND_ROWS.map(r=>{
@@ -3648,25 +3696,50 @@ window.generatePdfReport=function(requestedTicker){
     }catch(e){ /* silenzioso */ }
     y+=2;
   } else {
-    addTitle("📑 Bilancio / Conto Economico");
+    addTitle("Bilancio / Conto Economico");
     addParagraph("Dati non caricati in questa sessione — vai sul tab Bilancio e premi CARICA DATI prima di generare il PDF, se vuoi includerli.");
   }
 
   // ── PATTERN CORRELATION ────────────────────────────────────────────
-  addTitle("🔮 Pattern Correlation Finder");
+  addTitle("Pattern Correlation Finder");
   if(LAST_PATTERN_RESULT){
     const r=LAST_PATTERN_RESULT;
     addLine("Match Storici Trovati:", r.matches.length);
     addLine("Correlazione Media:", (r.avgCorr*100).toFixed(0)+"%");
     addLine("Probabilità Esito Rialzista:", r.probability!=null?r.probability.toFixed(0)+"%":"N/D");
     if(r.mostCorrelated) addLine("Match Più Correlato — Esito:", fmtPct(r.mostCorrelated.finalReturn), r.mostCorrelated.finalReturn>=0?[0,140,110]:[200,40,40]);
-    y+=4;
+    y+=2;
+    try{
+      const queryLen=r.queryNorm.length;
+      const forwardLen=(r.mostCorrelated?.forward?.length||r.avgLongPath?.length||r.avgShortPath?.length||1)-1;
+      const labels=[]; for(let i=0;i<queryLen;i++) labels.push("Q"+i); for(let i=0;i<=forwardLen;i++) labels.push("+"+i);
+      const anchor=r.queryNorm[r.queryNorm.length-1];
+      const buildProj=(path)=>{
+        if(!path) return new Array(labels.length).fill(null);
+        const out=new Array(queryLen-1).fill(null); out.push(anchor);
+        path.slice(1).forEach(v=>out.push(anchor+v));
+        while(out.length<labels.length) out.push(null);
+        return out;
+      };
+      const img=renderPdfChartImage({
+        type:"line",
+        data:{labels, datasets:[
+          {label:"Andamento recente", data:r.queryNorm.concat(new Array(forwardLen+1).fill(null)), borderColor:"#b8860b", borderWidth:2.5, pointRadius:0},
+          {label:"Match più correlato", data:buildProj(r.mostCorrelated?.forward), borderColor:"#2166ac", borderWidth:1.5, pointRadius:0, borderDash:[5,3]},
+          {label:"Media casi rialzisti", data:buildProj(r.avgLongPath), borderColor:"#1a9850", borderWidth:1, pointRadius:0, borderDash:[2,2]},
+          {label:"Media casi ribassisti", data:buildProj(r.avgShortPath), borderColor:"#c0392b", borderWidth:1, pointRadius:0, borderDash:[2,2]}
+        ]},
+        options:{scales:{x:{ticks:{maxTicksLimit:8}},y:{ticks:{callback:v=>v+"%"}}}}
+      });
+      addImage(img, 420/900);
+    }catch(e){ /* silenzioso */ }
+    y+=2;
   } else {
     addParagraph("Ricerca pattern non eseguita in questa sessione — vai sul tab Pattern e premi CERCA PATTERN SIMILI prima di generare il PDF, se vuoi includerla.");
   }
 
   // ── MONTE CARLO ─────────────────────────────────────────────────────
-  addTitle("🎲 Simulazione Monte Carlo");
+  addTitle("Simulazione Monte Carlo");
   if(LAST_MC_RESULT && LAST_MC_RESULT.p50){
     const mc=LAST_MC_RESULT;
     addLine("Scenario Pessimistico (5°):", fmtPct(mc.pessimistic), [200,40,40]);
@@ -3695,16 +3768,19 @@ window.generatePdfReport=function(requestedTicker){
 
   // ── ANALISI AI ──────────────────────────────────────────────────────
   const tickerAiLog=AI_ANALYSIS_LOG.filter(a=>a.ticker===STOCK.ticker);
-  addTitle(`🤖 Analisi Warren AI — ${tickerAiLog.length} analisi salvate`);
+  addTitle(`Analisi Warren AI — ${tickerAiLog.length} analisi salvate`);
   if(tickerAiLog.length===0){
-    addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Warren AI\" nelle varie tab (o il tab AI Claude) prima di generare il PDF, se vuoi includerle.");
+    addParagraph("Nessuna analisi AI richiesta in questa sessione per questo titolo — usa i pulsanti \"Chiedi a Warren AI\" nelle varie tab (o il tab Warren AI) prima di generare il PDF, se vuoi includerle.");
   } else {
     tickerAiLog.forEach(a=>{
       ensureSpace(10);
       doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(20,20,20);
       doc.text(`Tab: ${a.tab}  ·  ${new Date(a.timestamp).toLocaleString("it-IT")}`, marginL, y); y+=5;
       // Rimuovo markdown grezzo (** e ##) per una lettura pulita nel PDF
-      const cleanText=a.answer.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^##?\s*/gm,"").replace(/\n{2,}/g,"\n");
+      // Rimuovo markdown grezzo (** e ##) E le emoji (i font base di jsPDF
+      // non le supportano e diventano caratteri illeggibili) per una lettura
+      // pulita nel PDF.
+      const cleanText=a.answer.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^##?\s*/gm,"").replace(/\n{2,}/g,"\n").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu,"");
       addParagraph(cleanText, 9);
       y+=3;
     });
