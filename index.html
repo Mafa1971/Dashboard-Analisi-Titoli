@@ -646,19 +646,26 @@ let LAST_PATTERN_RESULT=null;
 let AI_ANALYSIS_LOG=[]; // {ticker, tab, answer, timestamp} — alimentato da ogni risposta AI, usato dal PDF
 let STOCK_SECTOR=null;
 // Mappa nomi settore (Yahoo/Alpha Vantage usano nomi leggermente diversi) → ETF SPDR di settore
+// Chiavi in MAIUSCOLO per confronto case-insensitive — Yahoo usa "Title Case"
+// (es. "Technology"), Alpha Vantage usa TUTTO MAIUSCOLO (es. "TECHNOLOGY"),
+// quindi normalizziamo sempre la stringa in ingresso prima di cercarla.
 const SECTOR_ETF_MAP={
-  "Technology":"XLK", "Information Technology":"XLK",
-  "Financial Services":"XLF", "Financials":"XLF",
-  "Healthcare":"XLV", "Health Care":"XLV",
-  "Energy":"XLE",
-  "Industrials":"XLI",
-  "Consumer Cyclical":"XLY", "Consumer Discretionary":"XLY",
-  "Consumer Defensive":"XLP", "Consumer Staples":"XLP",
-  "Utilities":"XLU",
-  "Basic Materials":"XLB", "Materials":"XLB",
-  "Real Estate":"XLRE",
-  "Communication Services":"XLC"
+  "TECHNOLOGY":"XLK", "INFORMATION TECHNOLOGY":"XLK",
+  "FINANCIAL SERVICES":"XLF", "FINANCIALS":"XLF", "FINANCE":"XLF", "TRADE & SERVICES":"XLF",
+  "HEALTHCARE":"XLV", "HEALTH CARE":"XLV", "LIFE SCIENCES":"XLV",
+  "ENERGY":"XLE",
+  "INDUSTRIALS":"XLI", "MANUFACTURING":"XLI",
+  "CONSUMER CYCLICAL":"XLY", "CONSUMER DISCRETIONARY":"XLY",
+  "CONSUMER DEFENSIVE":"XLP", "CONSUMER STAPLES":"XLP",
+  "UTILITIES":"XLU",
+  "BASIC MATERIALS":"XLB", "MATERIALS":"XLB",
+  "REAL ESTATE":"XLRE",
+  "COMMUNICATION SERVICES":"XLC", "TELECOMMUNICATIONS":"XLC"
 };
+function getSectorETF(sectorName){
+  if(!sectorName) return null;
+  return SECTOR_ETF_MAP[sectorName.trim().toUpperCase()] || null;
+}
 let CHART_DATA_BY_TIME={};
 let rsiChart=null, rsiLineSeries=null;
 let benchChartObj=null;
@@ -3651,14 +3658,14 @@ async function renderSectorComparison(){
     el("regimeSectorChart").style.display="none";
     return;
   }
-  if(!SECTOR_ETF_MAP[STOCK_SECTOR]){
+  if(!getSectorETF(STOCK_SECTOR)){
     el("regimeSectorInfo").innerHTML=`⚠️ Settore rilevato ("${STOCK_SECTOR}") ma non ho un ETF di riferimento mappato per questo nome — dimmelo e aggiungo la mappatura.`;
     el("regimeSectorChart").style.display="none";
     return;
   }
   el("regimeSectorChart").style.display="block";
 
-  const etfTicker=SECTOR_ETF_MAP[STOCK_SECTOR];
+  const etfTicker=getSectorETF(STOCK_SECTOR);
   el("regimeSectorInfo").textContent=`⏳ Scarico dati per ${etfTicker} (ETF settoriale: ${STOCK_SECTOR})...`;
 
   try{
