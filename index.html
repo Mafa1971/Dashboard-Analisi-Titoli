@@ -193,6 +193,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <div id="vpCustomInfo" style="font-size:11px;color:var(--dim);margin-top:8px;"></div>
             </div>
           </div>
+          <button class="btn primary" style="margin-top:14px;" onclick="askAIAboutTab('grafico')">🤖 Chiedi a Warren AI — interpreta cicli, rendimenti e Volume Profile</button>
+          <div id="aiTabGrafico" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -2635,6 +2637,26 @@ ${STATE_NAMES.map((n,i)=>`- ${n}: ${nextRow[i]||"N/D"}`).join("\n")}
 Interpreta queste probabilità in modo pratico: cosa suggeriscono per i prossimi 1-2 giorni? È uno scenario di continuazione o di possibile inversione?`;
   }
 
+  if(tabName==="grafico"){
+    const threshold=parseFloat(el("zigzagThreshold")?.value)||10;
+    const cycles=LAST_CYCLES || computeCycles(STOCK.dates,STOCK.closes,threshold);
+    const cur=cycles.current;
+    const vpFull=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+    prompt=base+`Dati tecnici dal grafico principale:
+
+Ciclo attuale (soglia inversione ${threshold}%):
+${cur?`- Fase ${cur.type==="up"?"rialzista":"ribassista"} in corso da ${cur.days} giorni, rendimento finora: ${fmtPct(cur.retPct)}`:"N/D"}
+- Ciclo medio rialzista: ${cycles.up.avgDays!=null?Math.round(cycles.up.avgDays)+" giorni, "+fmtPct(cycles.up.avgReturn):"N/D"}
+- Ciclo medio ribassista: ${cycles.down.avgDays!=null?Math.round(cycles.down.avgDays)+" giorni, "+fmtPct(cycles.down.avgReturn):"N/D"}
+
+Volume Profile (storico completo):
+- POC (livello a più volume): ${vpFull?STOCK.currency+" "+vpFull.poc.toFixed(2):"N/D"}
+- Value Area (68% del volume): ${vpFull?vpFull.vaLow.toFixed(2)+" - "+vpFull.vaHigh.toFixed(2):"N/D"}
+- Prezzo attuale: ${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}
+
+Il ciclo in corso è più lungo/corto della media storica? Il prezzo attuale è sopra, dentro o sotto la Value Area — cosa significa questo in pratica (zona di equilibrio, supporto, resistenza)?`;
+  }
+
   if(tabName==="stagionalita"){
     const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
     const years=Object.keys(grid).map(Number).sort((a,b)=>a-b);
@@ -3634,6 +3656,47 @@ window.generatePdfReport=function(requestedTicker){
     }
   }catch(e){ addParagraph("Impossibile calcolare il grafico rolling."); }
   y+=2;
+
+  // ── CICLI & VOLUME PROFILE (sempre disponibili, dai soli dati prezzo) ──
+  addTitle("Cicli e Volume Profile");
+  try{
+    const threshold=parseFloat(el("zigzagThreshold")?.value)||10;
+    const cycles=LAST_CYCLES || computeCycles(STOCK.dates,STOCK.closes,threshold);
+    const cur=cycles.current;
+    if(cur) addLine("Ciclo in Corso:", `${cur.type==="up"?"Rialzista":"Ribassista"}, ${cur.days} gg, ${fmtPct(cur.retPct)}`, cur.type==="up"?[0,140,110]:[200,40,40]);
+    addLine("Ciclo Medio Rialzista:", cycles.up.avgDays!=null?`${Math.round(cycles.up.avgDays)} gg, ${fmtPct(cycles.up.avgReturn)}`:"N/D");
+    addLine("Ciclo Medio Ribassista:", cycles.down.avgDays!=null?`${Math.round(cycles.down.avgDays)} gg, ${fmtPct(cycles.down.avgReturn)}`:"N/D");
+    const vpFull=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+    if(vpFull){
+      addLine("POC (Point of Control):", `${STOCK.currency} ${vpFull.poc.toFixed(2)}`, [180,140,10]);
+      addLine("Value Area (68% volume):", `${vpFull.vaLow.toFixed(2)} - ${vpFull.vaHigh.toFixed(2)}`);
+    }
+    y+=2;
+  }catch(e){ addParagraph("Impossibile calcolare cicli/volume profile."); }
+
+  // ── STAGIONALITÀ (sempre disponibile, dai soli dati prezzo) ────────────
+  addTitle("Stagionalità");
+  try{
+    const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+    const years=Object.keys(grid).map(Number).sort((a,b)=>a-b);
+    const monthNamesPdf=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+    if(years.length>=2){
+      const currentMonth=STOCK.dates[STOCK.dates.length-1].getMonth();
+      const nextMonth=(currentMonth+1)%12;
+      const avgFor=(m)=>{ const v=years.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?v.reduce((a,b)=>a+b,0)/v.length:null; };
+      const probPosFor=(m)=>{ const v=years.map(y=>grid[y]?.[m]).filter(x=>x!=null); return v.length?v.filter(x=>x>0).length/v.length*100:null; };
+      const bestMonth=monthNamesPdf.map((n,m)=>({n,avg:avgFor(m)})).filter(x=>x.avg!=null).sort((a,b)=>b.avg-a.avg)[0];
+      const worstMonth=monthNamesPdf.map((n,m)=>({n,avg:avgFor(m)})).filter(x=>x.avg!=null).sort((a,b)=>a.avg-b.avg)[0];
+      addLine("Anni di Storico Disponibili:", years.length);
+      addLine(`Mese Corrente (${monthNamesPdf[currentMonth]}):`, `Media ${avgFor(currentMonth)!=null?fmtPct(avgFor(currentMonth)):"N/D"}, Positivo ${probPosFor(currentMonth)!=null?probPosFor(currentMonth).toFixed(0)+"%":"N/D"} delle volte`);
+      addLine(`Prossimo Mese (${monthNamesPdf[nextMonth]}):`, `Media ${avgFor(nextMonth)!=null?fmtPct(avgFor(nextMonth)):"N/D"}, Positivo ${probPosFor(nextMonth)!=null?probPosFor(nextMonth).toFixed(0)+"%":"N/D"} delle volte`);
+      if(bestMonth) addLine("Mese Storicamente Migliore:", `${bestMonth.n} (${fmtPct(bestMonth.avg)})`, [0,140,110]);
+      if(worstMonth) addLine("Mese Storicamente Peggiore:", `${worstMonth.n} (${fmtPct(worstMonth.avg)})`, [200,40,40]);
+    } else {
+      addParagraph("Storico insufficiente per calcolare statistiche stagionali affidabili (servono almeno 2 anni).");
+    }
+    y+=2;
+  }catch(e){ addParagraph("Impossibile calcolare la stagionalità."); }
 
   // ── BILANCIO ────────────────────────────────────────────────────────
   if(LAST_FUND_ROWS && LAST_FUND_ROWS.length>0){
