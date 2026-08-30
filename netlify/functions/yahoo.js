@@ -24,7 +24,7 @@ exports.handler = async function (event) {
   // il frontend deve sempre prevedere un fallback (Alpha Vantage OVERVIEW)
   // se questa chiamata fallisce o torna dati vuoti.
   if (type === "quoteSummary") {
-    const modules = "price,summaryDetail,defaultKeyStatistics,financialData";
+    const modules = "price,summaryDetail,defaultKeyStatistics,financialData,assetProfile";
     const qsUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=${modules}`;
     try {
       const res = await fetch(qsUrl, { headers: commonHeaders });
