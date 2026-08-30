@@ -112,10 +112,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav active" onclick="switchTab('Grafico')" id="tnGrafico"><span style="font-size:16px;">📉</span> Grafico</button>
         <button class="btn tabnav" onclick="switchTab('Benchmark')" id="tnBenchmark"><span style="font-size:16px;">⚖️</span> Benchmark</button>
         <button class="btn tabnav" onclick="switchTab('Stagionalita')" id="tnStagionalita"><span style="font-size:16px;">📅</span> Stagionalità</button>
-        <button class="btn tabnav" onclick="switchTab('Rischio')" id="tnRischio"><span style="font-size:16px;">🎯</span> Rischio</button>
         <button class="btn tabnav" onclick="switchTab('Bilancio')" id="tnBilancio"><span style="font-size:16px;">📑</span> Bilancio</button>
         <button class="btn tabnav" onclick="switchTab('Markov')" id="tnMarkov"><span style="font-size:16px;">🔗</span> Markov</button>
-        <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita"><span style="font-size:16px;">🔄</span> Ergodicità</button>
+        <button class="btn tabnav" onclick="switchTab('Ergodicita')" id="tnErgodicita"><span style="font-size:16px;">🔄</span> Rischio & Ergodicità</button>
         <button class="btn tabnav" onclick="switchTab('AI')" id="tnAI"><span style="font-size:16px;">🤖</span> AI Claude</button>
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern"><span style="font-size:16px;">🔮</span> Pattern</button>
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo"><span style="font-size:16px;">🎲</span> Monte Carlo</button>
@@ -282,17 +281,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
-      <!-- TAB RISCHIO -->
-      <div id="tabRischio" class="tab-content">
-        <div class="panel">
-          <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
-          <div class="cards" id="riskCardsWrap"></div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
-          <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Claude — interpreta questi numeri</button>
-          <div id="aiTabRischio" style="margin-top:12px;"></div>
-        </div>
-      </div>
-
       <!-- TAB BILANCIO -->
       <div id="tabBilancio" class="tab-content">
         <div class="panel">
@@ -428,6 +416,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
       <!-- TAB ERGODICITÀ -->
       <div id="tabErgodicita" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
+          <div class="cards" id="riskCardsWrap"></div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
+          <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Claude — interpreta questi numeri</button>
+          <div id="aiTabRischio" style="margin-top:12px;"></div>
+        </div>
+
         <div class="panel">
           <div class="panel-title">🔄 TIME AVERAGE vs ENSEMBLE AVERAGE</div>
           <div style="font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.6;">
@@ -624,10 +620,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn active" onclick="switchTab('Grafico')" id="tabBtnGrafico"><span class="tab-icon">📉</span><span class="tab-label">Grafico</span></button>
     <button class="tab-btn" onclick="switchTab('Benchmark')" id="tabBtnBenchmark"><span class="tab-icon">⚖️</span><span class="tab-label">Benchmark</span></button>
     <button class="tab-btn" onclick="switchTab('Stagionalita')" id="tabBtnStagionalita"><span class="tab-icon">📅</span><span class="tab-label">Stagion.</span></button>
-    <button class="tab-btn" onclick="switchTab('Rischio')" id="tabBtnRischio"><span class="tab-icon">🎯</span><span class="tab-label">Rischio</span></button>
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
     <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
-    <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Ergod.</span></button>
+    <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Risk/Erg.</span></button>
     <button class="tab-btn" onclick="switchTab('AI')" id="tabBtnAI"><span class="tab-icon">🤖</span><span class="tab-label">AI</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
@@ -692,9 +687,8 @@ window.switchTab=function(name){
   el("tabBtn"+name).classList.add("active");
   const tn = el("tn"+name); if(tn) tn.classList.add("active");
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
-  if(name==="Rischio" && STOCK) renderRisk();
   if(name==="Markov" && STOCK) renderMarkov();
-  if(name==="Ergodicita" && STOCK) renderErgodicita();
+  if(name==="Ergodicita" && STOCK){ renderRisk(); renderErgodicita(); }
   if(name==="Storico") renderHistoryTab();
 };
 
@@ -1088,16 +1082,19 @@ function calcFVGICT(opens,highs,lows,closes){
     if(lows[i]>highs[i-2]) fvgs.push({idx:i,type:"bullish",top:lows[i],bottom:highs[i-2]});
     if(highs[i]!=null && lows[i-2]!=null && highs[i]<lows[i-2]) fvgs.push({idx:i,type:"bearish",top:lows[i-2],bottom:highs[i]});
   }
-  // Unisci FVG molto vicine tra loro (stesso tipo, entro 3 barre) per evitare
-  // box impilati e illeggibili quando ci sono più gap consecutivi.
-  const merged=[];
+  // Per ciascuna FVG cerchiamo quando viene "mitigata" (il prezzo torna a
+  // toccare la zona) — il rettangolo deve finire lì, non ad una lunghezza
+  // fissa arbitraria. Se non ancora mitigata, resta aperta fino all'ultimo
+  // giorno disponibile (comportamento standard degli indicatori SMC).
   fvgs.forEach(f=>{
-    const last=merged[merged.length-1];
-    if(last && last.type===f.type && f.idx-last.idx<=3){
-      last.idx=f.idx; last.top=Math.max(last.top,f.top); last.bottom=Math.min(last.bottom,f.bottom);
-    } else merged.push({...f});
+    let mitigatedIdx=null;
+    for(let k=f.idx+1;k<closes.length;k++){
+      if(f.type==="bullish" && lows[k]!=null && lows[k]<=f.top){ mitigatedIdx=k; break; }
+      if(f.type==="bearish" && highs[k]!=null && highs[k]>=f.bottom){ mitigatedIdx=k; break; }
+    }
+    f.mitigatedIdx=mitigatedIdx; // null = zona ancora "aperta"
   });
-  return merged.slice(-20); // ultime 20 FVG (più margine per restare nel range visibile)
+  return fvgs.slice(-20); // ultime 20 FVG (più margine per restare nel range visibile)
 }
 
 // ── STRUTTURA DI MERCATO SMC (porting fedele da Pine Script) ────────────
@@ -1221,7 +1218,8 @@ function drawICTCanvasOverlay(){
     const fvgs=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
     debugCounts.fvgFound=fvgs.length;
     fvgs.slice(-8).forEach(f=>{ // mostra solo le 8 più recenti, per non affollare il grafico
-      const startIdx=Math.max(0,f.idx-2), endIdx=Math.min(STOCK.dates.length-1,f.idx+7);
+      const startIdx=Math.max(0,f.idx-2);
+      const endIdx=f.mitigatedIdx!=null ? f.mitigatedIdx : STOCK.dates.length-1;
       const x0=xForIdx(startIdx), x1=xForIdx(endIdx);
       const yTop=candleSeries.priceToCoordinate(f.top);
       const yBottom=candleSeries.priceToCoordinate(f.bottom);
@@ -1230,11 +1228,15 @@ function drawICTCanvasOverlay(){
       debugCounts.fvgDrawn++;
       const bull=f.type==="bullish";
       const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
-      ctx.fillStyle=bull?"rgba(0,212,184,0.18)":"rgba(255,107,107,0.18)";
+      // Zona ancora aperta (non mitigata) = colore pieno. Zona già mitigata = più tenue.
+      const alpha=f.mitigatedIdx!=null?0.08:0.18;
+      ctx.fillStyle=bull?`rgba(0,212,184,${alpha})`:`rgba(255,107,107,${alpha})`;
       ctx.strokeStyle=bull?"rgba(0,212,184,0.9)":"rgba(255,107,107,0.9)";
       ctx.lineWidth=1.2;
+      if(f.mitigatedIdx!=null) ctx.setLineDash([3,2]); // tratteggiata se già "riempita"
       ctx.fillRect(x0,y,x1-x0,rectH);
       ctx.strokeRect(x0,y,x1-x0,rectH);
+      ctx.setLineDash([]);
       ctx.fillStyle=bull?"#00d4b8":"#ff6b6b";
       ctx.font="bold 10px JetBrains Mono, monospace";
       ctx.fillText(bull?"FVG ↑":"FVG ↓", Math.max(x0+4,4), y+13);
