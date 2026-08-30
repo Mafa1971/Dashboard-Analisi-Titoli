@@ -1228,18 +1228,21 @@ function drawICTCanvasOverlay(){
       debugCounts.fvgDrawn++;
       const bull=f.type==="bullish";
       const y=Math.min(yTop,yBottom), rectH=Math.max(2,Math.abs(yBottom-yTop));
-      // Zona ancora aperta (non mitigata) = colore pieno. Zona già mitigata = più tenue.
-      const alpha=f.mitigatedIdx!=null?0.08:0.18;
+      const midY=y+rectH/2;
+      // Stile pulito come TradingView: riempimento tenue, SENZA bordo esterno
+      // marcato, con solo una linea tratteggiata al 50% (livello di equilibrio).
+      // Zona già mitigata (riempita dal prezzo) = più tenue e riga più corta.
+      const alpha=f.mitigatedIdx!=null?0.10:0.20;
       ctx.fillStyle=bull?`rgba(0,212,184,${alpha})`:`rgba(255,107,107,${alpha})`;
-      ctx.strokeStyle=bull?"rgba(0,212,184,0.9)":"rgba(255,107,107,0.9)";
-      ctx.lineWidth=1.2;
-      if(f.mitigatedIdx!=null) ctx.setLineDash([3,2]); // tratteggiata se già "riempita"
       ctx.fillRect(x0,y,x1-x0,rectH);
-      ctx.strokeRect(x0,y,x1-x0,rectH);
+      ctx.strokeStyle=bull?"rgba(0,212,184,0.7)":"rgba(255,107,107,0.7)";
+      ctx.lineWidth=1;
+      ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(x0,midY); ctx.lineTo(x1,midY); ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle=bull?"#00d4b8":"#ff6b6b";
-      ctx.font="bold 10px JetBrains Mono, monospace";
-      ctx.fillText(bull?"FVG ↑":"FVG ↓", Math.max(x0+4,4), y+13);
+      ctx.font="9px JetBrains Mono, monospace";
+      ctx.fillText(bull?"FVG":"FVG", Math.max(x0+3,3), y+10);
     });
   }
 
