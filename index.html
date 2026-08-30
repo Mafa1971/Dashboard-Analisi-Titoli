@@ -119,6 +119,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern"><span style="font-size:16px;">🔮</span> Pattern</button>
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo"><span style="font-size:16px;">🎲</span> Monte Carlo</button>
         <button class="btn tabnav" onclick="switchTab('Regime')" id="tnRegime"><span style="font-size:16px;">🌡️</span> Regime</button>
+        <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico"><span style="font-size:16px;">📜</span> Storico</button>
       </nav>
 
@@ -554,6 +555,28 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
+      <!-- TAB STOCK QUANT SCORE -->
+      <div id="tabScore" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">⭐ STOCK QUANT SCORE
+            <button class="btn primary" style="font-size:10px;" onclick="calcStockScore()">↺ Calcola Score</button>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Aggrega tutte le altre tab in un unico punteggio 0-100. Non è una previsione di prezzo — classifica la qualità statistica/fondamentale del titolo rispetto a se stesso nel tempo. Le aree per cui non hai ancora caricato dati (Bilancio, Regime, Monte Carlo) vengono escluse e i pesi redistribuiti automaticamente tra quelle disponibili.</div>
+          <div id="scoreStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="scoreMainWrap"></div>
+        </div>
+
+        <div class="panel" id="scoreBreakdownPanel" style="display:none;">
+          <div class="panel-title">📊 DETTAGLIO PER AREA</div>
+          <div id="scoreBreakdownWrap" style="overflow-x:auto;"></div>
+        </div>
+
+        <div class="panel" id="scoreAiPanel" style="display:none;">
+          <button class="btn primary" onclick="askAIAboutTab('score')">🤖 Chiedi a Claude — questo score ha senso?</button>
+          <div id="aiTabScore" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
       <!-- TAB STORICO ANALISI -->
       <div id="tabStorico" class="tab-content">
         <div class="panel">
@@ -629,6 +652,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
     <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
+    <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
@@ -645,6 +669,8 @@ let LAST_FUND_ROWS=null;
 let LAST_PATTERN_RESULT=null;
 let AI_ANALYSIS_LOG=[]; // {ticker, tab, answer, timestamp} — alimentato da ogni risposta AI, usato dal PDF
 let STOCK_SECTOR=null;
+let LAST_FAIR_VALUE=null;
+let LAST_STOCK_SCORE=null;
 // Mappa nomi settore (Yahoo/Alpha Vantage usano nomi leggermente diversi) → ETF SPDR di settore
 // Chiavi in MAIUSCOLO per confronto case-insensitive — Yahoo usa "Title Case"
 // (es. "Technology"), Alpha Vantage usa TUTTO MAIUSCOLO (es. "TECHNOLOGY"),
@@ -2251,6 +2277,7 @@ window.renderFairValueSolidity=function(rows){
   const fvValues=[lynchFV,dcfFV].filter(v=>v!=null && v>0);
   const avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
+  LAST_FAIR_VALUE={avgFV,upsidePct};
 
   const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fairValueCardsWrap").innerHTML=
@@ -2722,6 +2749,19 @@ Interpreta questi scenari per un investitore: il rapporto rischio/rendimento sem
 - RSI del titolo: ${r.stockRSI!=null?r.stockRSI.toFixed(0):"N/D"}
 
 Cosa implica questo regime di mercato per chi possiede o valuta questo titolo? Conviene essere più aggressivi o più cauti in un contesto del genere?`;
+  }
+
+  if(tabName==="score"){
+    if(!LAST_STOCK_SCORE){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi Calcola Score, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const s=LAST_STOCK_SCORE;
+    const compLines=Object.entries(s.components).map(([k,v])=>`- ${SCORE_LABELS[k]}: ${v!=null?v.toFixed(0)+"/100":"N/D"}`).join("\n");
+    prompt=base+`Stock Quant Score aggregato: ${s.score}/100 (basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili, copertura ${s.coveragePct}% del peso totale):
+${compLines}
+
+Questo punteggio composito ha senso? Quali aree pesano di più nel risultato finale, e ci sono contraddizioni tra le diverse aree (es. bilancio forte ma momentum debole) che vale la pena segnalare a chi guarda solo il numero finale?`;
   }
 
   try{
@@ -3680,10 +3720,17 @@ async function renderSectorComparison(){
 
     el("regimeSectorInfo").innerHTML=`Settore identificato: <strong style="color:var(--txt);">${STOCK_SECTOR}</strong> → ETF di riferimento <strong style="color:#4fa3ff;">${etfTicker}</strong> — trend: <strong>${sectorTrend}</strong>`;
 
-    // Confronto a 3 linee: Titolo / Settore / Mercato (tutti normalizzati a 0% dal punto di partenza comune)
-    const stockPct=normalizeToPct(STOCK.closes);
-    const sectorPct=normalizeToPct(sector.closes);
-    const marketPct=BENCH?normalizeToPct(BENCH.closes):null;
+    // Confronto a 3 linee sugli ULTIMI 2 ANNI (non tutto lo storico): su
+    // titoli con crescita pluriennale enorme (es. NVDA), l'intero storico
+    // schiaccerebbe settore/mercato vicino allo 0%, rendendo il grafico
+    // inutile per capire "come sta andando il mercato adesso".
+    const lookbackDays=Math.min(504, STOCK.closes.length-1, sector.closes.length-1);
+    const stockSlice=STOCK.closes.slice(-lookbackDays-1);
+    const dateSlice=STOCK.dates.slice(-lookbackDays-1);
+    const sectorSlice=sector.closes.slice(-lookbackDays-1);
+    const stockPct=normalizeToPct(stockSlice);
+    const sectorPct=normalizeToPct(sectorSlice);
+    const marketPct=BENCH?normalizeToPct(BENCH.closes.slice(-lookbackDays-1)):null;
 
     const ctx=el("regimeSectorChart");
     if(sectorChartObj) sectorChartObj.destroy();
@@ -3694,7 +3741,7 @@ async function renderSectorComparison(){
     if(marketPct) datasets.push({label:BENCH.ticker+" (Mercato)", data:marketPct, borderColor:"#7d8aa3", borderWidth:1, pointRadius:0, tension:0.1, borderDash:[4,3]});
     sectorChartObj=new Chart(ctx.getContext("2d"),{
       type:"line",
-      data:{labels:STOCK.dates.map(d=>d.toISOString().slice(0,10)), datasets},
+      data:{labels:dateSlice.map(d=>d.toISOString().slice(0,10)), datasets},
       options:{responsive:true,maintainAspectRatio:false,
         plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
         scales:{x:{ticks:{color:"#7d8aa3",font:{size:8},maxTicksLimit:10},grid:{color:"#1e2d45"}},
@@ -3704,6 +3751,171 @@ async function renderSectorComparison(){
     el("regimeSectorInfo").textContent="❌ Errore nel caricamento dei dati settoriali: "+e.message;
   }
 }
+
+// ── STOCK QUANT SCORE ────────────────────────────────────────────────
+const SCORE_WEIGHTS={
+  stagionalita:10, momentum:10, markov:10, ergodicita:5,
+  piotroski:15, bilancio:20, valutazione:15, regime:10, montecarlo:5
+};
+const SCORE_LABELS={
+  stagionalita:"Stagionalità", momentum:"Momentum", markov:"Markov", ergodicita:"Ergodicità/Stabilità",
+  piotroski:"Piotroski F-Score", bilancio:"Bilancio", valutazione:"Valutazione", regime:"Regime di Mercato", montecarlo:"Monte Carlo"
+};
+const SCORE_HOW_TO_GET={
+  piotroski:"tab Bilancio → CARICA DATI", bilancio:"tab Bilancio → CARICA DATI", valutazione:"tab Bilancio → CARICA DATI",
+  regime:"tab Regime → Calcola Regime", montecarlo:"tab Monte Carlo → SIMULA"
+};
+
+function scoreFromSeasonality(){
+  if(!STOCK) return null;
+  const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes);
+  const years=Object.keys(grid).map(Number);
+  if(years.length<3) return null;
+  const currentMonth=STOCK.dates[STOCK.dates.length-1].getMonth();
+  const vals=years.map(y=>grid[y]?.[currentMonth]).filter(v=>v!=null);
+  if(vals.length<3) return null;
+  return vals.filter(v=>v>0).length/vals.length*100;
+}
+function scoreFromMomentum(){
+  if(!STOCK) return null;
+  const rsi=rsiSeriesCalc(STOCK.closes,14).slice(-1)[0];
+  if(rsi==null) return null;
+  const sma21=smaSeriesCalc(STOCK.closes,21).slice(-1)[0];
+  const sma100=smaSeriesCalc(STOCK.closes,100).slice(-1)[0];
+  const sma200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0];
+  const price=STOCK.closes[STOCK.closes.length-1];
+  let score=50+(rsi-50)*0.6;
+  if(sma21!=null&&sma100!=null&&sma200!=null){
+    if(price>sma21&&sma21>sma100&&sma100>sma200) score+=20;
+    else if(price<sma21&&sma21<sma100&&sma100<sma200) score-=20;
+    else score+= price>sma200?8:-8;
+  }
+  return Math.max(0,Math.min(100,score));
+}
+function scoreFromMarkov(){
+  if(!STOCK) return null;
+  try{
+    const series=periodReturnSeries(STOCK.dates,STOCK.closes,"daily");
+    const states=classifyStates(series,0.5,1.5);
+    const {matrix}=buildTransitionMatrix(states);
+    const cs=states[states.length-1];
+    const row=matrix[cs];
+    if(!row) return null;
+    const upProb=(row[3]||0)+(row[4]||0), downProb=(row[0]||0)+(row[1]||0);
+    return Math.max(0,Math.min(100,50+(upProb-downProb)*100));
+  }catch(e){ return null; }
+}
+function scoreFromErgodicita(){
+  if(!STOCK) return null;
+  const dailyReturns=calcDailyReturns(STOCK.closes);
+  if(dailyReturns.length<60) return null;
+  const meanDaily=meanArr(dailyReturns);
+  const ensembleAnnual=meanDaily*252*100;
+  const logReturns=dailyReturns.map(r=>Math.log(1+r));
+  const timeAvgAnnual=(Math.exp(meanArr(logReturns)*252)-1)*100;
+  const drag=ensembleAnnual-timeAvgAnnual; // volatility drag: più alto = meno "affidabile" la media storica
+  return Math.max(0,Math.min(100,100-Math.max(0,drag)*2.5));
+}
+function scoreFromPiotroski(){
+  if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return null;
+  const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+  const p=computePiotroskiForYear(last,prev);
+  return p?(p.score/9*100):null;
+}
+function scoreFromBilancio(){
+  if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2||!STOCK) return null;
+  const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+  let zComp=null;
+  if(last.totalAssets&&last.sharesOutstanding&&last.totalLiab){
+    const wc=(last.totalCurrentAssets??0)-(last.totalCurrentLiab??0), ta=last.totalAssets;
+    const price=STOCK.closes[STOCK.closes.length-1];
+    const mktCap=price*last.sharesOutstanding;
+    const z=1.2*(wc/ta)+1.4*((last.retainedEarnings||0)/ta)+3.3*((last.ebit||0)/ta)+0.6*(mktCap/last.totalLiab)+1.0*((last.revenue||0)/ta);
+    zComp=Math.max(0,Math.min(100,z/6*100));
+  }
+  const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null;
+  const growthComp=revGrowth!=null?Math.max(0,Math.min(100,50+revGrowth*2)):null;
+  const marginComp=last.netMargin!=null?Math.max(0,Math.min(100,50+last.netMargin*2)):null;
+  const comps=[zComp,growthComp,marginComp].filter(v=>v!=null);
+  return comps.length?comps.reduce((a,b)=>a+b,0)/comps.length:null;
+}
+function scoreFromValutazione(){
+  if(!LAST_FAIR_VALUE||LAST_FAIR_VALUE.upsidePct==null) return null;
+  return Math.max(0,Math.min(100,50+LAST_FAIR_VALUE.upsidePct*1.2));
+}
+function scoreFromMonteCarlo(){
+  if(!LAST_MC_RESULT) return null;
+  let score=100-LAST_MC_RESULT.probLoss;
+  score+=Math.max(-15,Math.min(15,LAST_MC_RESULT.meanReturn*0.3));
+  return Math.max(0,Math.min(100,score));
+}
+
+window.calcStockScore=function(){
+  if(!STOCK){ el("scoreStatus").textContent="Analizza prima un titolo"; return; }
+  const components={
+    stagionalita: scoreFromSeasonality(),
+    momentum: scoreFromMomentum(),
+    markov: scoreFromMarkov(),
+    ergodicita: scoreFromErgodicita(),
+    piotroski: scoreFromPiotroski(),
+    bilancio: scoreFromBilancio(),
+    valutazione: scoreFromValutazione(),
+    regime: LAST_REGIME_RESULT?LAST_REGIME_RESULT.score:null,
+    montecarlo: scoreFromMonteCarlo()
+  };
+
+  let totalWeight=0, weightedSum=0, missing=[];
+  Object.entries(SCORE_WEIGHTS).forEach(([key,weight])=>{
+    const val=components[key];
+    if(val!=null){ totalWeight+=weight; weightedSum+=val*weight; }
+    else missing.push(key);
+  });
+
+  if(totalWeight===0){
+    el("scoreStatus").textContent="❌ Nessun dato disponibile per calcolare lo score.";
+    return;
+  }
+  const finalScore=Math.round(weightedSum/totalWeight);
+  LAST_STOCK_SCORE={ score:finalScore, components, missing, coveragePct:Math.round(totalWeight) };
+
+  let label,color,emoji;
+  if(finalScore>=85){ label="Molto Interessante"; color="#00d4b8"; emoji="🟢🟢"; }
+  else if(finalScore>=70){ label="Interessante"; color="#80ed99"; emoji="🟢"; }
+  else if(finalScore>=50){ label="Neutrale"; color="#ffd23f"; emoji="🟡"; }
+  else if(finalScore>=30){ label="Attenzione"; color="#ff9f1c"; emoji="🟠"; }
+  else { label="Debole"; color="#ff6b6b"; emoji="🔴"; }
+
+  el("scoreMainWrap").innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span style="font-size:36px;">${emoji}</span>
+        <div><div style="font-size:22px;font-weight:800;color:${color};">${label}</div>
+        <div style="font-size:10px;color:var(--dim);">Basato su ${Object.keys(SCORE_WEIGHTS).length-missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree (${LAST_STOCK_SCORE.coveragePct}% del peso totale coperto)</div></div>
+      </div>
+      <div style="font-size:36px;font-weight:800;color:${color};">${finalScore}<span style="font-size:16px;color:var(--dim);">/100</span></div>
+    </div>
+    <div style="background:#1a2236;border-radius:8px;height:14px;position:relative;overflow:hidden;">
+      <div style="position:absolute;left:0;top:0;height:100%;width:${finalScore}%;background:linear-gradient(90deg,#ff6b6b,#ff9f1c,#ffd23f,#80ed99,#00d4b8);border-radius:8px;"></div>
+      <div style="position:absolute;top:0;left:${finalScore}%;transform:translateX(-50%);width:3px;height:100%;background:#fff;"></div>
+    </div>`;
+
+  let h=`<table><tr><th>Area</th><th>Peso</th><th>Punteggio</th><th>Contributo</th></tr>`;
+  Object.entries(SCORE_WEIGHTS).forEach(([key,weight])=>{
+    const val=components[key];
+    const contrib=val!=null?(val*weight/totalWeight).toFixed(1):"--";
+    h+=`<tr>
+      <td style="font-weight:700;">${SCORE_LABELS[key]}</td>
+      <td>${weight}%</td>
+      <td style="color:${val==null?'var(--dim)':val>=70?'#00d4b8':val>=40?'#ffd23f':'#ff6b6b'};">${val!=null?val.toFixed(0):(SCORE_HOW_TO_GET[key]?"N/D — "+SCORE_HOW_TO_GET[key]:"N/D")}</td>
+      <td>${contrib}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  el("scoreBreakdownWrap").innerHTML=h;
+  el("scoreBreakdownPanel").style.display="block";
+  el("scoreAiPanel").style.display="block";
+  el("scoreStatus").innerHTML=missing.length?`⚠️ ${missing.length} aree non disponibili (pesi redistribuiti automaticamente tra quelle presenti)`:"✅ Score calcolato su tutte le aree disponibili";
+};
 </script>
 
 <!-- MODAL GUIDA -->
