@@ -607,7 +607,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <button class="btn ghost" style="font-size:10px;" onclick="exportFundamentalsHistoryCSV()">📊 Esporta Bilanci Completi (CSV, anno per anno)</button>
             <button class="btn danger" style="font-size:10px;background:#ff6b6b22;border-color:#ff6b6b44;color:#ff6b6b;" onclick="clearAnalysisHistory()">🗑 Svuota Storico</button>
           </div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni titolo analizzato con ANALIZZA viene salvato automaticamente qui (nel browser). Non è sincronizzato tra dispositivi diversi.</div>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+            <div style="font-size:10px;color:var(--dim);">Ogni titolo analizzato con ANALIZZA viene salvato automaticamente qui, e sincronizzato tra i tuoi dispositivi — usali però uno alla volta, non contemporaneamente.</div>
+            <span id="cloudSyncStatus" style="font-size:10px;color:#4fa3ff;white-space:nowrap;">☁️ Cloud: sincronizzazione in corso...</span>
+            <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="loadHistoryFromCloudAndMerge()">↻ Sincronizza ora</button>
+          </div>
           <div id="historyTableWrap" style="overflow-x:auto;"></div>
         </div>
       </div>
@@ -3158,14 +3162,63 @@ Domanda: ${question}`;
   }
 };
 
-// ── STORICO ANALISI (localStorage) + EXPORT ─────────────────────────────
+// ── STORICO ANALISI (localStorage + sincronizzazione cloud) + EXPORT ───
 const HISTORY_KEY="analyzer_history_v1";
+let CLOUD_SYNC_STATUS="mai sincronizzato";
+
 function loadAnalysisHistory(){
   try{ return JSON.parse(localStorage.getItem(HISTORY_KEY)||"[]"); }catch(e){ return []; }
 }
 function saveHistoryArr(arr){
   try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(arr.slice(-200))); }catch(e){} // max 200 righe
+  syncHistoryToCloud(arr); // "fire and forget": non blocca l'interfaccia, se fallisce resta comunque salvato in locale
 }
+
+async function syncHistoryToCloud(arr){
+  try{
+    const res=await fetch("/.netlify/functions/history",{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(arr)
+    });
+    CLOUD_SYNC_STATUS = res.ok ? "sincronizzato" : "errore ("+res.status+")";
+  }catch(e){
+    CLOUD_SYNC_STATUS = "offline / non raggiungibile";
+  }
+  const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: "+CLOUD_SYNC_STATUS;
+}
+
+function mergeHistories(local, cloud){
+  // Unisce storico locale e cloud: per ogni ticker tiene la versione con
+  // analyzedAt più recente. Pensato per il PRIMO caricamento (o dopo aver
+  // usato un dispositivo diverso) — uso normale da un solo dispositivo alla
+  // volta, quindi un vero merge concorrente non serve.
+  const byTicker={};
+  [...local, ...cloud].forEach(entry=>{
+    const existing=byTicker[entry.ticker];
+    if(!existing || new Date(entry.analyzedAt) > new Date(existing.analyzedAt)) byTicker[entry.ticker]=entry;
+  });
+  return Object.values(byTicker).sort((a,b)=>new Date(a.analyzedAt)-new Date(b.analyzedAt));
+}
+
+async function loadHistoryFromCloudAndMerge(){
+  const local=loadAnalysisHistory();
+  try{
+    const res=await fetch("/.netlify/functions/history");
+    if(!res.ok) throw new Error("status "+res.status);
+    const cloud=await res.json();
+    const merged=mergeHistories(local, Array.isArray(cloud)?cloud:[]);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(merged.slice(-200)));
+    CLOUD_SYNC_STATUS="sincronizzato";
+    const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: sincronizzato ("+merged.length+" titoli)";
+    if(el("tabStorico")?.classList.contains("active")) renderHistoryTab();
+  }catch(e){
+    CLOUD_SYNC_STATUS="offline / non raggiungibile al primo avvio";
+    const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: non raggiungibile (uso solo la copia locale)";
+  }
+}
+// Sincronizza subito all'apertura della pagina, così lo storico di altri
+// dispositivi è già pronto appena vai sul tab Storico.
+loadHistoryFromCloudAndMerge();
+
 function saveAnalysisToHistory(totalReturn){
   if(!STOCK) return;
   const hist=loadAnalysisHistory();
