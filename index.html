@@ -218,18 +218,36 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB STAGIONALITA -->
       <div id="tabStagionalita" class="tab-content">
         <div class="panel">
-          <div class="panel-title">🔮 FORECAST STAGIONALE (un anno = una linea, come TradingView)</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(5)">Ultimi 5</button>
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(10)">Ultimi 10</button>
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(15)">Ultimi 15</button>
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(20)">Ultimi 20</button>
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(9999)">Tutti</button>
-            <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(0)">Nessuno</button>
+          <div class="panel-title">🔮 FORECAST STAGIONALE</div>
+          <div style="display:flex;gap:6px;margin-bottom:10px;">
+            <button class="btn primary" id="seasonModeMediaBtn" onclick="setSeasonMode('media')">📊 Anno Corrente vs Media Storica</button>
+            <button class="btn ghost" id="seasonModeSingoliBtn" onclick="setSeasonMode('singoli')">🎨 Confronto Anni Singoli</button>
           </div>
-          <div id="seasonYearChecks" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+
+          <div id="seasonMediaControls" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+            <span style="font-size:10px;color:var(--dim);">Media calcolata su:</span>
+            <button class="btn ghost seasonAvgBtn" data-n="3" onclick="setSeasonAvgN(3)">Ultimi 3</button>
+            <button class="btn ghost seasonAvgBtn" data-n="5" onclick="setSeasonAvgN(5)">Ultimi 5</button>
+            <button class="btn ghost seasonAvgBtn" data-n="7" onclick="setSeasonAvgN(7)">Ultimi 7</button>
+            <button class="btn primary seasonAvgBtn" data-n="10" onclick="setSeasonAvgN(10)">Ultimi 10</button>
+            <button class="btn ghost seasonAvgBtn" data-n="15" onclick="setSeasonAvgN(15)">Ultimi 15</button>
+            <button class="btn ghost seasonAvgBtn" data-n="9999" onclick="setSeasonAvgN(9999)">Tutti</button>
+          </div>
+
+          <div id="seasonSingoliControls" style="display:none;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(5)">Ultimi 5</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(10)">Ultimi 10</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(15)">Ultimi 15</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(20)">Ultimi 20</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(9999)">Tutti</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="quickSelectYears(0)">Nessuno</button>
+            </div>
+            <div id="seasonYearChecks" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+          </div>
+
           <div style="height:340px;"><canvas id="seasonForecastChart"></canvas></div>
-          <div style="font-size:10px;color:var(--dim);margin:10px 0 6px;">Ogni linea è il rendimento cumulato reale Gen→Dic di quell'anno. L'anno corrente è evidenziato in blu spesso.</div>
+          <div id="seasonForecastNote" style="font-size:10px;color:var(--dim);margin:10px 0 6px;"></div>
           <div id="correlationCardsWrap" style="overflow-x:auto;"></div>
         </div>
         <div class="panel">
@@ -1632,9 +1650,108 @@ window.quickSelectYears=function(n){
   renderSeasonalForecast();
 };
 
+let SEASON_VIEW_MODE="media"; // 'media' (nuovo default, vera stagionalità) o 'singoli' (vecchio spaghetti chart)
+let SEASON_AVG_N=10;
+
+window.setSeasonMode=function(mode){
+  SEASON_VIEW_MODE=mode;
+  document.getElementById("seasonModeMediaBtn").className="btn "+(mode==="media"?"primary":"ghost");
+  document.getElementById("seasonModeSingoliBtn").className="btn "+(mode==="singoli"?"primary":"ghost");
+  document.getElementById("seasonMediaControls").style.display=mode==="media"?"flex":"none";
+  document.getElementById("seasonSingoliControls").style.display=mode==="singoli"?"block":"none";
+  renderSeasonalForecast();
+};
+window.setSeasonAvgN=function(n){
+  SEASON_AVG_N=n;
+  document.querySelectorAll(".seasonAvgBtn").forEach(b=>{ b.className="btn "+(parseInt(b.dataset.n)===n?"primary":"ghost")+" seasonAvgBtn"; });
+  renderSeasonalForecast();
+};
+
 window.renderSeasonalForecast=function(){
   if(!STOCK) return;
   if(SEASON_ALL_YEARS.length===0) populateSeasonYearChecks();
+  if(SEASON_VIEW_MODE==="media") renderSeasonalForecastMedia();
+  else renderSeasonalForecastSingoli();
+};
+
+// ── MODALITÀ MEDIA: anno corrente vs media storica ± 1 dev.std ─────────
+// Questa è la "vera" stagionalità: non tante linee sovrapposte, ma un
+// confronto diretto tra l'anno in corso e il comportamento medio storico
+// nello stesso periodo, con una banda che mostra quanto varia normalmente.
+function renderSeasonalForecastMedia(){
+  const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
+  const allYears=SEASON_ALL_YEARS;
+  const currentYear=SEASON_CURRENT_YEAR;
+  const historicalYears=allYears.filter(y=>y!==currentYear).sort((a,b)=>b-a); // dal più recente
+  const usedYears = SEASON_AVG_N>=9999 ? historicalYears : historicalYears.slice(0,SEASON_AVG_N);
+
+  if(usedYears.length<2){
+    if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
+    el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Servono almeno 2 anni storici (esclusi quello corrente) per calcolare una media — prova "Tutti" o carica più storico.</div>`;
+    el("seasonForecastNote").textContent="";
+    return;
+  }
+
+  const meanData=new Array(366).fill(null), stdUpData=new Array(366).fill(null), stdDownData=new Array(366).fill(null);
+  for(let doy=1;doy<=366;doy++){
+    const vals=usedYears.map(y=>{ const pt=byYear[y]?.find(p=>p.doy===doy); return pt?pt.cumRet:null; }).filter(v=>v!=null);
+    if(vals.length>=2){
+      const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
+      const variance=vals.reduce((a,v)=>a+Math.pow(v-mean,2),0)/vals.length;
+      const std=Math.sqrt(variance);
+      meanData[doy-1]=parseFloat(mean.toFixed(2));
+      stdUpData[doy-1]=parseFloat((mean+std).toFixed(2));
+      stdDownData[doy-1]=parseFloat((mean-std).toFixed(2));
+    }
+  }
+  const currentData=new Array(366).fill(null);
+  const currentCurve=byYear[currentYear]||[];
+  currentCurve.forEach(pt=>{ currentData[pt.doy-1]=parseFloat(pt.cumRet.toFixed(2)); });
+
+  const ctx=el("seasonForecastChart");
+  if(seasonForecastChartObj) seasonForecastChartObj.destroy();
+  seasonForecastChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels:Array.from({length:366},(_,i)=>i+1), datasets:[
+      { label:"_bandUp", data:stdUpData, borderWidth:0, pointRadius:0, backgroundColor:"rgba(125,138,163,0.15)", fill:"+1", spanGaps:true, order:3 },
+      { label:"_bandDown", data:stdDownData, borderWidth:0, pointRadius:0, fill:false, spanGaps:true, order:3 },
+      { label:`Media Ultimi ${usedYears.length} Anni`, data:meanData, borderColor:"#ff9f1c", backgroundColor:"#ff9f1c",
+        borderWidth:2.5, pointRadius:0, tension:0.05, spanGaps:true, order:1 },
+      { label:`Anno Corrente (${currentYear})`, data:currentData, borderColor:"#2563eb", backgroundColor:"#2563eb",
+        borderWidth:3, pointRadius:0, tension:0.05, spanGaps:true, order:0 }
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{labels:{color:"#eef1f7",font:{size:10}, filter:item=>!item.text.startsWith("_")}},
+        tooltip:{mode:"index",intersect:false,filter:item=>!item.dataset.label.startsWith("_"),
+          callbacks:{title:items=>{ const doy=items[0].parsed.x+1; return dayOfYearToLabel(doy); }}}
+      },
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:9},callback:(v,i)=>{ const doy=i+1; const mi=MONTH_STARTS.indexOf(doy); return mi>=0?MONTH_NAMES_SHORT[mi]:""; },
+              autoSkip:false,maxRotation:0}, grid:{color:"#1e2d45"}},
+        y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}},
+      interaction:{mode:"index",intersect:false}}
+  });
+  el("seasonForecastNote").textContent=`La banda grigia mostra ±1 deviazione standard attorno alla media (l'oscillazione "normale" storica). Media calcolata su ${usedYears.length} anni: ${usedYears.slice().sort((a,b)=>a-b).join(", ")}.`;
+
+  // Card di confronto: dove siamo OGGI (ultimo giorno disponibile dell'anno corrente) vs media nello stesso periodo
+  const lastPt=currentCurve[currentCurve.length-1];
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  if(lastPt){
+    const meanAtSameDoy=meanData[lastPt.doy-1];
+    const delta=meanAtSameDoy!=null?lastPt.cumRet-meanAtSameDoy:null;
+    el("correlationCardsWrap").innerHTML=
+      card(`Anno Corrente (${currentYear}, YTD)`, fmtPct(lastPt.cumRet), lastPt.cumRet>=0?"#00d4b8":"#ff6b6b")+
+      card(`Media Storica (stesso periodo)`, meanAtSameDoy!=null?fmtPct(meanAtSameDoy):"N/D", "#ff9f1c")+
+      card("Scostamento dalla Media", delta!=null?(delta>=0?"+":"")+delta.toFixed(1)+" pt":"N/D", delta>0?"#00d4b8":"#ff6b6b")+
+      card("Anni Usati per la Media", usedYears.length, "var(--dim)");
+  } else {
+    el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun dato ancora disponibile per l'anno corrente.</div>`;
+  }
+}
+
+// ── MODALITÀ ANNI SINGOLI (vecchio comportamento, tenuto come opzione) ──
+function renderSeasonalForecastSingoli(){
   const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
   const years=[...document.querySelectorAll(".seasonYearChk:checked")].map(c=>parseInt(c.value)).sort((a,b)=>a-b);
 
@@ -1642,6 +1759,7 @@ window.renderSeasonalForecast=function(){
   if(years.length===0){
     if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
     el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun anno selezionato — spunta almeno un anno qui sopra.</div>`;
+    el("seasonForecastNote").textContent="";
     return;
   }
   years.forEach((y,idx)=>{
@@ -1670,6 +1788,7 @@ window.renderSeasonalForecast=function(){
         y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}},
       interaction:{mode:"index",intersect:false}}
   });
+  el("seasonForecastNote").textContent="Ogni linea è il rendimento cumulato reale Gen→Dic di quell'anno. L'anno corrente è evidenziato in blu spesso.";
 
   // Legenda ordinata per rendimento decrescente, come TradingView
   legendRows.sort((a,b)=>b.val-a.val);
@@ -1683,7 +1802,7 @@ window.renderSeasonalForecast=function(){
   });
   h+="</div>";
   el("correlationCardsWrap").innerHTML=h;
-};
+}
 function dayOfYearToLabel(doy){
   let mi=0; for(let i=0;i<MONTH_STARTS.length;i++){ if(doy>=MONTH_STARTS[i]) mi=i; }
   const day = doy - MONTH_STARTS[mi] + 1;
