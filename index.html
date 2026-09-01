@@ -3207,6 +3207,13 @@ async function loadHistoryFromCloudAndMerge(){
     const cloud=await res.json();
     const merged=mergeHistories(local, Array.isArray(cloud)?cloud:[]);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(merged.slice(-200)));
+    // IMPORTANTE: dopo aver unito locale+cloud, il risultato va anche
+    // RIMANDATO su cloud — altrimenti se il cloud era vuoto o incompleto
+    // (es. dati mai sincronizzati prima di un fix), resta vuoto per sempre
+    // e gli altri dispositivi non vedono mai lo storico "ricco" del primo.
+    await fetch("/.netlify/functions/history",{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(merged.slice(-200))
+    }).catch(()=>{}); // se questo fallisce non blocchiamo l'utente, resta comunque salvato in locale
     CLOUD_SYNC_STATUS="sincronizzato";
     const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: sincronizzato ("+merged.length+" titoli)";
     if(el("tabStorico")?.classList.contains("active")) renderHistoryTab();
