@@ -1638,6 +1638,28 @@ function populateSeasonYearChecks(){
       ${y}${isCurrent?' <span style="color:#2563eb;font-weight:700;">●</span>':''}
     </label>`;
   }).join("");
+  updateSeasonAvgButtonsAvailability();
+}
+function updateSeasonAvgButtonsAvailability(){
+  // Disabilita (e deseleziona) le medie che richiedono più storico di
+  // quanto effettivamente caricato — evita che "Ultimi 15" venga
+  // silenziosamente calcolata sugli stessi anni di "Ultimi 10" quando lo
+  // storico caricato ne copre solo 10, creando due linee identiche.
+  const historicalCount=Math.max(0,SEASON_ALL_YEARS.length-1); // esclude l'anno corrente
+  let changed=false;
+  document.querySelectorAll(".seasonAvgBtn").forEach(b=>{
+    const n=parseInt(b.dataset.n);
+    const enough = n>=9999 ? historicalCount>=2 : historicalCount>=n;
+    b.disabled=!enough;
+    b.style.opacity=enough?"1":"0.35";
+    b.style.cursor=enough?"pointer":"not-allowed";
+    b.title=enough?"":`Servono ${n} anni di storico oltre a quello corrente — ne hai caricati ${historicalCount}. Carica più anni dal menù "Ultimi N anni" per sbloccarla.`;
+    if(!enough && SEASON_AVG_NS.has(n)){ SEASON_AVG_NS.delete(n); changed=true; }
+  });
+  if(SEASON_AVG_NS.size===0){ SEASON_AVG_NS.add(historicalCount>=2?9999:SEASON_ALL_YEARS[0]||10); changed=true; }
+  if(changed){
+    document.querySelectorAll(".seasonAvgBtn").forEach(b=>{ b.className="btn "+(SEASON_AVG_NS.has(parseInt(b.dataset.n))?"primary":"ghost")+" seasonAvgBtn"; });
+  }
 }
 window.quickSelectYears=function(n){
   const boxes=document.querySelectorAll(".seasonYearChk");
@@ -1722,10 +1744,17 @@ function renderSeasonalForecastMedia(){
   // Una media indipendente per ciascun N selezionato (es. 3, 7, 10 insieme)
   const avgColors=["#ff9f1c","#c77dff","#00d4b8","#ff3d71","#4fa3ff","#ffd23f"];
   const selectedNs=[...SEASON_AVG_NS].sort((a,b)=>a-b);
+  const seenYearSets=new Set(); // protezione extra: se due N diversi finiscono per usare
   const avgSeries=selectedNs.map((n,i)=>{
     const usedYears = n>=9999 ? historicalYears : historicalYears.slice(0,n);
     return { n, usedYears, color:avgColors[i%avgColors.length] };
-  }).filter(s=>s.usedYears.length>=2);
+  }).filter(s=>{
+    if(s.usedYears.length<2) return false;
+    const key=s.usedYears.slice().sort((a,b)=>a-b).join(","); // gli STESSI anni (es. storico insufficiente), la seconda viene scartata
+    if(seenYearSets.has(key)) return false;
+    seenYearSets.add(key);
+    return true;
+  });
 
   if(avgSeries.length===0){
     if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
