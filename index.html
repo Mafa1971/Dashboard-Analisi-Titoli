@@ -1678,6 +1678,36 @@ window.renderSeasonalForecast=function(){
 // Questa è la "vera" stagionalità: non tante linee sovrapposte, ma un
 // confronto diretto tra l'anno in corso e il comportamento medio storico
 // nello stesso periodo, con una banda che mostra quanto varia normalmente.
+// Riempie i "buchi" (weekend/festività, che cadono su numeri di giorno-anno
+// diversi da un anno all'altro) con interpolazione lineare, trasformando la
+// serie sparsa dei soli giorni di borsa in una curva continua giorno per
+// giorno — necessario PRIMA di fare medie tra anni diversi, altrimenti la
+// media salta in modo innaturale a seconda di quanti anni hanno un dato
+// esatto in quel preciso giorno.
+function fillGapsLinear(arr){
+  const out=arr.slice();
+  const n=out.length;
+  let lastIdx=null;
+  for(let i=0;i<n;i++){
+    if(out[i]!=null){
+      if(lastIdx!=null && i-lastIdx>1){
+        const v0=out[lastIdx], v1=out[i];
+        for(let k=lastIdx+1;k<i;k++){
+          const t=(k-lastIdx)/(i-lastIdx);
+          out[k]=v0+(v1-v0)*t;
+        }
+      }
+      lastIdx=i;
+    }
+  }
+  return out;
+}
+function buildFilledYearArray(byYear,year){
+  const raw=new Array(366).fill(null);
+  (byYear[year]||[]).forEach(pt=>{ raw[pt.doy-1]=pt.cumRet; });
+  return fillGapsLinear(raw);
+}
+
 function renderSeasonalForecastMedia(){
   const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
   const allYears=SEASON_ALL_YEARS;
@@ -1692,9 +1722,16 @@ function renderSeasonalForecastMedia(){
     return;
   }
 
+  // Prima riempiamo ogni anno in una curva continua (interpolando i giorni
+  // non di borsa), POI calcoliamo media/dev.std — così ogni giorno confronta
+  // sempre lo stesso numero di anni, senza salti dovuti a weekend/festività
+  // che cadono su numeri di giorno diversi da un anno all'altro.
+  const filledByYear={};
+  usedYears.forEach(y=>{ filledByYear[y]=buildFilledYearArray(byYear,y); });
+
   const meanData=new Array(366).fill(null), stdUpData=new Array(366).fill(null), stdDownData=new Array(366).fill(null);
   for(let doy=1;doy<=366;doy++){
-    const vals=usedYears.map(y=>{ const pt=byYear[y]?.find(p=>p.doy===doy); return pt?pt.cumRet:null; }).filter(v=>v!=null);
+    const vals=usedYears.map(y=>filledByYear[y][doy-1]).filter(v=>v!=null);
     if(vals.length>=2){
       const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
       const variance=vals.reduce((a,v)=>a+Math.pow(v-mean,2),0)/vals.length;
@@ -1704,6 +1741,8 @@ function renderSeasonalForecastMedia(){
       stdDownData[doy-1]=parseFloat((mean-std).toFixed(2));
     }
   }
+  // L'anno corrente resta con i soli dati REALI (non interpolato oltre
+  // l'ultimo giorno disponibile), per non "inventare" un futuro che non c'è.
   const currentData=new Array(366).fill(null);
   const currentCurve=byYear[currentYear]||[];
   currentCurve.forEach(pt=>{ currentData[pt.doy-1]=parseFloat(pt.cumRet.toFixed(2)); });
