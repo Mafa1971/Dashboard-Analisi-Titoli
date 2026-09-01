@@ -1651,7 +1651,6 @@ window.quickSelectYears=function(n){
 };
 
 let SEASON_VIEW_MODE="media"; // 'media' (nuovo default, vera stagionalità) o 'singoli' (vecchio spaghetti chart)
-let SEASON_AVG_N=10;
 
 window.setSeasonMode=function(mode){
   SEASON_VIEW_MODE=mode;
@@ -1661,9 +1660,15 @@ window.setSeasonMode=function(mode){
   document.getElementById("seasonSingoliControls").style.display=mode==="singoli"?"block":"none";
   renderSeasonalForecast();
 };
+let SEASON_AVG_NS=new Set([10]); // insieme di N selezionati, non più un singolo valore
+
 window.setSeasonAvgN=function(n){
-  SEASON_AVG_N=n;
-  document.querySelectorAll(".seasonAvgBtn").forEach(b=>{ b.className="btn "+(parseInt(b.dataset.n)===n?"primary":"ghost")+" seasonAvgBtn"; });
+  if(SEASON_AVG_NS.has(n)){
+    if(SEASON_AVG_NS.size>1) SEASON_AVG_NS.delete(n); // tieni sempre almeno una media selezionata
+  } else {
+    SEASON_AVG_NS.add(n);
+  }
+  document.querySelectorAll(".seasonAvgBtn").forEach(b=>{ b.className="btn "+(SEASON_AVG_NS.has(parseInt(b.dataset.n))?"primary":"ghost")+" seasonAvgBtn"; });
   renderSeasonalForecast();
 };
 
@@ -1713,9 +1718,16 @@ function renderSeasonalForecastMedia(){
   const allYears=SEASON_ALL_YEARS;
   const currentYear=SEASON_CURRENT_YEAR;
   const historicalYears=allYears.filter(y=>y!==currentYear).sort((a,b)=>b-a); // dal più recente
-  const usedYears = SEASON_AVG_N>=9999 ? historicalYears : historicalYears.slice(0,SEASON_AVG_N);
 
-  if(usedYears.length<2){
+  // Una media indipendente per ciascun N selezionato (es. 3, 7, 10 insieme)
+  const avgColors=["#ff9f1c","#c77dff","#00d4b8","#ff3d71","#4fa3ff","#ffd23f"];
+  const selectedNs=[...SEASON_AVG_NS].sort((a,b)=>a-b);
+  const avgSeries=selectedNs.map((n,i)=>{
+    const usedYears = n>=9999 ? historicalYears : historicalYears.slice(0,n);
+    return { n, usedYears, color:avgColors[i%avgColors.length] };
+  }).filter(s=>s.usedYears.length>=2);
+
+  if(avgSeries.length===0){
     if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
     el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Servono almeno 2 anni storici (esclusi quello corrente) per calcolare una media — prova "Tutti" o carica più storico.</div>`;
     el("seasonForecastNote").textContent="";
@@ -1726,39 +1738,50 @@ function renderSeasonalForecastMedia(){
   // non di borsa), POI calcoliamo media/dev.std — così ogni giorno confronta
   // sempre lo stesso numero di anni, senza salti dovuti a weekend/festività
   // che cadono su numeri di giorno diversi da un anno all'altro.
-  const filledByYear={};
-  usedYears.forEach(y=>{ filledByYear[y]=buildFilledYearArray(byYear,y); });
+  const filledCache={};
+  const getFilled=(y)=>{ if(!filledCache[y]) filledCache[y]=buildFilledYearArray(byYear,y); return filledCache[y]; };
 
-  const meanData=new Array(366).fill(null), stdUpData=new Array(366).fill(null), stdDownData=new Array(366).fill(null);
-  for(let doy=1;doy<=366;doy++){
-    const vals=usedYears.map(y=>filledByYear[y][doy-1]).filter(v=>v!=null);
-    if(vals.length>=2){
-      const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
-      const variance=vals.reduce((a,v)=>a+Math.pow(v-mean,2),0)/vals.length;
-      const std=Math.sqrt(variance);
-      meanData[doy-1]=parseFloat(mean.toFixed(2));
-      stdUpData[doy-1]=parseFloat((mean+std).toFixed(2));
-      stdDownData[doy-1]=parseFloat((mean-std).toFixed(2));
+  avgSeries.forEach(s=>{
+    s.meanData=new Array(366).fill(null); s.stdUpData=new Array(366).fill(null); s.stdDownData=new Array(366).fill(null);
+    for(let doy=1;doy<=366;doy++){
+      const vals=s.usedYears.map(y=>getFilled(y)[doy-1]).filter(v=>v!=null);
+      if(vals.length>=2){
+        const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
+        const variance=vals.reduce((a,v)=>a+Math.pow(v-mean,2),0)/vals.length;
+        const std=Math.sqrt(variance);
+        s.meanData[doy-1]=parseFloat(mean.toFixed(2));
+        s.stdUpData[doy-1]=parseFloat((mean+std).toFixed(2));
+        s.stdDownData[doy-1]=parseFloat((mean-std).toFixed(2));
+      }
     }
-  }
+  });
+
   // L'anno corrente resta con i soli dati REALI (non interpolato oltre
   // l'ultimo giorno disponibile), per non "inventare" un futuro che non c'è.
   const currentData=new Array(366).fill(null);
   const currentCurve=byYear[currentYear]||[];
   currentCurve.forEach(pt=>{ currentData[pt.doy-1]=parseFloat(pt.cumRet.toFixed(2)); });
 
+  const datasets=[];
+  // La banda ±1 dev.std si mostra solo se è selezionata UNA sola media,
+  // altrimenti con più medie insieme diventerebbe illeggibile.
+  if(avgSeries.length===1){
+    const s=avgSeries[0];
+    datasets.push({ label:"_bandUp", data:s.stdUpData, borderWidth:0, pointRadius:0, backgroundColor:s.color+"26", fill:"+1", spanGaps:true, order:5 });
+    datasets.push({ label:"_bandDown", data:s.stdDownData, borderWidth:0, pointRadius:0, fill:false, spanGaps:true, order:5 });
+  }
+  avgSeries.forEach((s,i)=>{
+    datasets.push({ label:`Media Ultimi ${s.usedYears.length} Anni`, data:s.meanData, borderColor:s.color, backgroundColor:s.color,
+      borderWidth:2.5, pointRadius:0, tension:0.05, spanGaps:true, order:2+i });
+  });
+  datasets.push({ label:`Anno Corrente (${currentYear})`, data:currentData, borderColor:"#2563eb", backgroundColor:"#2563eb",
+    borderWidth:3, pointRadius:0, tension:0.05, spanGaps:true, order:0 });
+
   const ctx=el("seasonForecastChart");
   if(seasonForecastChartObj) seasonForecastChartObj.destroy();
   seasonForecastChartObj=new Chart(ctx.getContext("2d"),{
     type:"line",
-    data:{labels:Array.from({length:366},(_,i)=>i+1), datasets:[
-      { label:"_bandUp", data:stdUpData, borderWidth:0, pointRadius:0, backgroundColor:"rgba(125,138,163,0.15)", fill:"+1", spanGaps:true, order:3 },
-      { label:"_bandDown", data:stdDownData, borderWidth:0, pointRadius:0, fill:false, spanGaps:true, order:3 },
-      { label:`Media Ultimi ${usedYears.length} Anni`, data:meanData, borderColor:"#ff9f1c", backgroundColor:"#ff9f1c",
-        borderWidth:2.5, pointRadius:0, tension:0.05, spanGaps:true, order:1 },
-      { label:`Anno Corrente (${currentYear})`, data:currentData, borderColor:"#2563eb", backgroundColor:"#2563eb",
-        borderWidth:3, pointRadius:0, tension:0.05, spanGaps:true, order:0 }
-    ]},
+    data:{labels:Array.from({length:366},(_,i)=>i+1), datasets},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{
         legend:{labels:{color:"#eef1f7",font:{size:10}, filter:item=>!item.text.startsWith("_")}},
@@ -1771,19 +1794,21 @@ function renderSeasonalForecastMedia(){
         y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}},
       interaction:{mode:"index",intersect:false}}
   });
-  el("seasonForecastNote").textContent=`La banda grigia mostra ±1 deviazione standard attorno alla media (l'oscillazione "normale" storica). Media calcolata su ${usedYears.length} anni: ${usedYears.slice().sort((a,b)=>a-b).join(", ")}.`;
+  el("seasonForecastNote").textContent = avgSeries.length===1
+    ? `La banda colorata mostra ±1 deviazione standard attorno alla media (l'oscillazione "normale" storica). Media calcolata su ${avgSeries[0].usedYears.length} anni: ${avgSeries[0].usedYears.slice().sort((a,b)=>a-b).join(", ")}.`
+    : `Confronto tra ${avgSeries.length} medie diverse — la banda di deviazione standard è nascosta quando ne selezioni più di una, per non affollare il grafico.`;
 
-  // Card di confronto: dove siamo OGGI (ultimo giorno disponibile dell'anno corrente) vs media nello stesso periodo
+  // Card di confronto: dove siamo OGGI (ultimo giorno disponibile dell'anno corrente) vs ciascuna media nello stesso periodo
   const lastPt=currentCurve[currentCurve.length-1];
   const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   if(lastPt){
-    const meanAtSameDoy=meanData[lastPt.doy-1];
-    const delta=meanAtSameDoy!=null?lastPt.cumRet-meanAtSameDoy:null;
-    el("correlationCardsWrap").innerHTML=
-      card(`Anno Corrente (${currentYear}, YTD)`, fmtPct(lastPt.cumRet), lastPt.cumRet>=0?"#00d4b8":"#ff6b6b")+
-      card(`Media Storica (stesso periodo)`, meanAtSameDoy!=null?fmtPct(meanAtSameDoy):"N/D", "#ff9f1c")+
-      card("Scostamento dalla Media", delta!=null?(delta>=0?"+":"")+delta.toFixed(1)+" pt":"N/D", delta>0?"#00d4b8":"#ff6b6b")+
-      card("Anni Usati per la Media", usedYears.length, "var(--dim)");
+    let cardsHtml=card(`Anno Corrente (${currentYear}, YTD)`, fmtPct(lastPt.cumRet), lastPt.cumRet>=0?"#00d4b8":"#ff6b6b");
+    avgSeries.forEach(s=>{
+      const meanAtSameDoy=s.meanData[lastPt.doy-1];
+      const delta=meanAtSameDoy!=null?lastPt.cumRet-meanAtSameDoy:null;
+      cardsHtml+=card(`Media ${s.usedYears.length}Y (scost. ${delta!=null?(delta>=0?"+":"")+delta.toFixed(1)+"pt":"N/D"})`, meanAtSameDoy!=null?fmtPct(meanAtSameDoy):"N/D", s.color);
+    });
+    el("correlationCardsWrap").innerHTML=cardsHtml;
   } else {
     el("correlationCardsWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Nessun dato ancora disponibile per l'anno corrente.</div>`;
   }
