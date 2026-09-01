@@ -1,5 +1,18 @@
 const { getStore } = require("@netlify/blobs");
 
+function getHistoryStore(){
+  // Su alcuni siti Netlify (come questo) l'auto-configurazione di Blobs non
+  // funziona da sola — serve passare esplicitamente siteID e un access
+  // token, salvati come variabili d'ambiente (stesso procedimento già fatto
+  // per ALPHA_VANTAGE_KEY e ANTHROPIC_API_KEY).
+  const siteID=process.env.BLOBS_SITE_ID;
+  const token=process.env.BLOBS_TOKEN;
+  if(siteID && token){
+    return getStore({ name:"analyzer-history", siteID, token });
+  }
+  return getStore("analyzer-history"); // tentativo automatico, come fallback
+}
+
 // Storico condiviso tra dispositivi, salvato come UN UNICO file JSON su
 // Netlify Blobs (chiave "history"). Progettato per uso da UN dispositivo
 // alla volta: ogni scrittura sovrascrive l'intero file, quindi se due
@@ -20,7 +33,7 @@ exports.handler = async function (event) {
 
   let store;
   try {
-    store = getStore("analyzer-history");
+    store = getHistoryStore();
   } catch (err) {
     return { statusCode: 500, headers, body: JSON.stringify({ error: "Netlify Blobs non disponibile: " + err.message }) };
   }
