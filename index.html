@@ -586,6 +586,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <button class="btn ghost" style="font-size:10px;" onclick="exportAnalysisHistoryCSV()">💾 Esporta Storico (CSV)</button>
             <button class="btn ghost" style="font-size:10px;" onclick="exportCurrentAnalysisJSON()">📥 Esporta Analisi Corrente (JSON)</button>
             <button class="btn primary" style="font-size:10px;" onclick="generatePdfReport()">📄 Esporta PDF Riassuntivo</button>
+            <button class="btn ghost" style="font-size:10px;" onclick="exportFundamentalsHistoryCSV()">📊 Esporta Bilanci Completi (CSV, anno per anno)</button>
             <button class="btn danger" style="font-size:10px;background:#ff6b6b22;border-color:#ff6b6b44;color:#ff6b6b;" onclick="clearAnalysisHistory()">🗑 Svuota Storico</button>
           </div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni titolo analizzato con ANALIZZA viene salvato automaticamente qui (nel browser). Non è sincronizzato tra dispositivi diversi.</div>
@@ -674,6 +675,7 @@ let STOCK_SECTOR=null;
 let LAST_SECTOR_DATA=null;
 let LAST_FAIR_VALUE=null;
 let LAST_STOCK_SCORE=null;
+let HISTORY_SORT_BY="score"; // default: ordina lo Storico per punteggio, per scegliere subito i migliori
 // Mappa nomi settore (Yahoo/Alpha Vantage usano nomi leggermente diversi) → ETF SPDR di settore
 // Chiavi in MAIUSCOLO per confronto case-insensitive — Yahoo usa "Title Case"
 // (es. "Technology"), Alpha Vantage usa TUTTO MAIUSCOLO (es. "TECHNOLOGY"),
@@ -717,6 +719,46 @@ document.getElementById("btnLogout").addEventListener("click",()=>{
 (function(){ try{ if(localStorage.getItem(AUTH_KEY)==="1") showApp(); }catch(e){} })();
 
 // ── TAB SWITCH ────────────────────────────────────────────────────────
+window.fullReanalyzeFromHistory=async function(ticker){
+  // Rianalisi COMPLETA e automatica: rifà il prezzo, e per ogni area che
+  // era già stata calcolata in passato per questo ticker (Bilancio, Regime,
+  // Monte Carlo, Pattern, Score, e le domande AI già fatte), la rifà da
+  // capo con dati freschi — invece di limitarsi al solo prezzo come prima.
+  // Può richiedere 30-90 secondi se erano state fatte molte analisi AI.
+  const hist=loadAnalysisHistory();
+  const prevEntry=hist.find(h=>h.ticker===ticker);
+  const hadFundamentals = prevEntry?.fundamentalsRows?.length>0;
+  const hadScore = prevEntry?.stockScore!=null;
+  const aiTabsToRedo = prevEntry?.aiTabsAsked || [];
+
+  el("tickerInput").value=ticker;
+  switchTab("Grafico");
+  el("analyzeStatus").textContent="⏳ Rianalisi completa in corso — riprendo tutto quello che avevi già calcolato...";
+  await analyzeTicker();
+  if(!STOCK || STOCK.ticker!==ticker){ return; } // l'analisi base è fallita, ci fermiamo qui
+
+  if(hadFundamentals){
+    el("analyzeStatus").textContent="⏳ Rianalisi completa: aggiorno il Bilancio...";
+    try{ await loadFundamentals(); }catch(e){}
+  }
+  if(hadScore){
+    el("analyzeStatus").textContent="⏳ Rianalisi completa: aggiorno Regime di Mercato...";
+    try{ await calcRegime(); }catch(e){}
+    el("analyzeStatus").textContent="⏳ Rianalisi completa: rifaccio la Simulazione Monte Carlo...";
+    try{ await runMonteCarlo(); }catch(e){}
+    el("analyzeStatus").textContent="⏳ Rianalisi completa: rifaccio la Ricerca Pattern...";
+    try{ await runPatternSearch(); }catch(e){}
+    el("analyzeStatus").textContent="⏳ Rianalisi completa: ricalcolo lo Stock Quant Score...";
+    try{ calcStockScore(); }catch(e){}
+  }
+  for(let i=0;i<aiTabsToRedo.length;i++){
+    el("analyzeStatus").textContent=`⏳ Rianalisi completa: analisi AI (${i+1}/${aiTabsToRedo.length}) — ${aiTabsToRedo[i]}...`;
+    try{ await askAIAboutTab(aiTabsToRedo[i]); }catch(e){}
+  }
+
+  el("analyzeStatus").textContent=`✅ ${ticker}: rianalisi completa terminata (${STOCK.dates.length} sessioni, ${aiTabsToRedo.length} analisi AI aggiornate)`;
+};
+
 window.showHistoryWithoutAnalysis=function(){
   // Permette di consultare lo Storico anche senza aver ancora analizzato un
   // titolo in questa sessione — forza la visibilità dell'area risultati e
@@ -2072,6 +2114,7 @@ window.loadFundamentals=async function(){
     renderValueGeneration(rows);
     renderFairValueSolidity(rows);
     renderPiotroski(rows);
+    saveFundamentalsToHistory(STOCK.ticker, rows); // persiste anno per anno nello Storico, non solo in sessione
     el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker}`;
   }catch(err){
     el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
@@ -2797,7 +2840,10 @@ Questo punteggio composito ha senso? Quali aree pesano di più nel risultato fin
     catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
     const answer=data.text||data.error||"Errore nella risposta.";
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
-    if(data.text) AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:tabName, answer:data.text, timestamp:new Date().toISOString() });
+    if(data.text){
+      AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:tabName, answer:data.text, timestamp:new Date().toISOString() });
+      saveAiTabAsked(STOCK.ticker, tabName);
+    }
   }catch(err){
     box.innerHTML=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
   }
@@ -2918,7 +2964,8 @@ function saveAnalysisToHistory(totalReturn){
     totalReturnPct:parseFloat(totalReturn.toFixed(2)),
     sessions:STOCK.dates.length,
     periodStart:STOCK.dates[0].toISOString().slice(0,10),
-    periodEnd:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)
+    periodEnd:STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10),
+    stockScore:null // si popola quando l'utente calcola lo Stock Quant Score (vedi updateHistoryScore)
   };
   // Deduplica PER TICKER su TUTTO lo storico (non solo l'ultima voce inserita):
   // se il titolo è già presente da qualche parte, rimuovo la vecchia riga e
@@ -2928,14 +2975,62 @@ function saveAnalysisToHistory(totalReturn){
   filtered.push(entry);
   saveHistoryArr(filtered);
 }
+function updateHistoryScore(ticker,score){
+  // Aggiorna il punteggio nella riga storico già esistente per questo ticker,
+  // senza toccare data/prezzo/altri campi — chiamata dopo Calcola Score.
+  const hist=loadAnalysisHistory();
+  const idx=hist.findIndex(h=>h.ticker===ticker);
+  if(idx>=0){ hist[idx].stockScore=score; saveHistoryArr(hist); }
+}
+function saveFundamentalsToHistory(ticker, rows){
+  // Salva l'intero storico multi-anno del bilancio (non solo l'ultimo anno)
+  // dentro la riga Storico di questo ticker, così i dati restano disponibili
+  // anche in sessioni future — non solo mentre il titolo è caricato ora.
+  const hist=loadAnalysisHistory();
+  const idx=hist.findIndex(h=>h.ticker===ticker);
+  if(idx>=0){ hist[idx].fundamentalsRows=rows; saveHistoryArr(hist); }
+}
+function saveAiTabAsked(ticker, tabName){
+  // Ricorda quali tab hanno già avuto una risposta AI per questo ticker,
+  // così "Rianalizza" può richiederle di nuovo automaticamente invece di
+  // dover ricordare manualmente cosa era stato chiesto in passato.
+  const hist=loadAnalysisHistory();
+  const idx=hist.findIndex(h=>h.ticker===ticker);
+  if(idx>=0){
+    if(!hist[idx].aiTabsAsked) hist[idx].aiTabsAsked=[];
+    if(!hist[idx].aiTabsAsked.includes(tabName)) hist[idx].aiTabsAsked.push(tabName);
+    saveHistoryArr(hist);
+  }
+}
 window.renderHistoryTab=function(){
-  const hist=loadAnalysisHistory().slice().reverse();
   const wrap=el("historyTableWrap");
   if(!wrap) return;
+  let hist=loadAnalysisHistory();
   if(hist.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Nessuna analisi salvata — usa ANALIZZA sul tab Grafico</p></div>`; return; }
-  let h=`<table><tr><th>Data Analisi</th><th>Ticker</th><th>Nome</th><th>Prezzo</th><th>Rendimento Periodo</th><th>Sessioni</th><th>Periodo Dati</th><th></th></tr>`;
+
+  // Ordinamento: HISTORY_SORT_BY può essere 'score' (default, per confrontare
+  // e scegliere i migliori) o 'date' (cronologico, più recente in cima).
+  if(HISTORY_SORT_BY==="score"){
+    hist=hist.slice().sort((a,b)=>{
+      if(a.stockScore==null && b.stockScore==null) return new Date(b.analyzedAt)-new Date(a.analyzedAt);
+      if(a.stockScore==null) return 1; // chi non ha ancora uno score va in fondo
+      if(b.stockScore==null) return -1;
+      return b.stockScore-a.stockScore;
+    });
+  } else {
+    hist=hist.slice().reverse();
+  }
+
+  let h=`<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+    <span style="font-size:10px;color:var(--dim);">Ordina per:</span>
+    <button class="btn ${HISTORY_SORT_BY==='score'?'primary':'ghost'}" style="font-size:10px;padding:4px 10px;" onclick="HISTORY_SORT_BY='score';renderHistoryTab();">⭐ Punteggio (migliori in cima)</button>
+    <button class="btn ${HISTORY_SORT_BY==='date'?'primary':'ghost'}" style="font-size:10px;padding:4px 10px;" onclick="HISTORY_SORT_BY='date';renderHistoryTab();">🕐 Data (più recenti in cima)</button>
+  </div>`;
+  h+=`<table><tr><th>Punteggio</th><th>Data Analisi</th><th>Ticker</th><th>Nome</th><th>Prezzo</th><th>Rendimento Periodo</th><th>Sessioni</th><th>Periodo Dati</th><th></th></tr>`;
   hist.forEach((r,i)=>{
+    const scoreCol = r.stockScore==null?"var(--dim)": r.stockScore>=85?"#00d4b8": r.stockScore>=70?"#80ed99": r.stockScore>=50?"#ffd23f": r.stockScore>=30?"#ff9f1c":"#ff6b6b";
     h+=`<tr>
+      <td style="font-weight:800;font-size:14px;color:${scoreCol};">${r.stockScore!=null?r.stockScore:"--"}</td>
       <td style="font-size:10px;color:var(--dim);">${new Date(r.analyzedAt).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</td>
       <td style="font-weight:700;color:#4fa3ff;">${r.ticker}</td>
       <td style="font-size:11px;">${r.name||""}</td>
@@ -2944,13 +3039,14 @@ window.renderHistoryTab=function(){
       <td>${r.sessions}</td>
       <td style="font-size:10px;color:var(--dim);">${r.periodStart} → ${r.periodEnd}</td>
       <td style="white-space:nowrap;">
-        <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${r.ticker}';switchTab('Grafico');analyzeTicker();">↻ Rianalizza</button>
+        <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="fullReanalyzeFromHistory('${r.ticker}')">↻ Rianalizza Tutto</button>
         <button class="icon-btn" style="background:none;border:none;color:#ffd23f;cursor:pointer;font-size:13px;padding:2px 6px;" onclick="generatePdfReport('${r.ticker}')" title="Genera PDF di questo titolo">📄</button>
         <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="deleteHistoryEntry('${r.ticker}')" title="Elimina questa riga">✕</button>
       </td>
     </tr>`;
   });
   h+="</table>";
+  if(hist.some(r=>r.stockScore==null)) h+=`<div style="font-size:10px;color:var(--dim);margin-top:8px;">I titoli senza punteggio (--) non hanno ancora avuto lo Stock Quant Score calcolato — vai sul tab ⭐ Stock Score dopo averli rianalizzati.</div>`;
   wrap.innerHTML=h;
 };
 window.deleteHistoryEntry=function(ticker){
@@ -2967,12 +3063,48 @@ window.clearAnalysisHistory=function(){
 window.exportAnalysisHistoryCSV=function(){
   const hist=loadAnalysisHistory();
   if(hist.length===0){ alert("Nessuna analisi da esportare"); return; }
-  const headers=["analyzedAt","ticker","name","currency","price","totalReturnPct","sessions","periodStart","periodEnd"];
+  // Ordina per punteggio decrescente (i senza punteggio in fondo), così il
+  // CSV è già pronto per il confronto — il migliore in cima.
+  const sorted=hist.slice().sort((a,b)=>{
+    if(a.stockScore==null && b.stockScore==null) return 0;
+    if(a.stockScore==null) return 1;
+    if(b.stockScore==null) return -1;
+    return b.stockScore-a.stockScore;
+  });
+  const headers=["stockScore","ticker","name","analyzedAt","price","totalReturnPct","currency","sessions","periodStart","periodEnd"];
   let csv=headers.join(",")+"\n";
-  hist.forEach(r=>{ csv+=headers.map(h=>`"${(r[h]??"").toString().replace(/"/g,'""')}"`).join(",")+"\n"; });
+  sorted.forEach(r=>{ csv+=headers.map(h=>`"${(r[h]??"").toString().replace(/"/g,'""')}"`).join(",")+"\n"; });
   const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
   const a=document.createElement("a");
   a.href=URL.createObjectURL(blob); a.download="storico_analisi_"+new Date().toISOString().slice(0,10)+".csv";
+  a.click();
+};
+window.exportFundamentalsHistoryCSV=function(){
+  const hist=loadAnalysisHistory();
+  // Solo i titoli per cui hai premuto CARICA DATI nel tab Bilancio in
+  // qualche sessione hanno fundamentalsRows salvato — è normale che alcuni
+  // titoli analizzati solo per il grafico non compaiano qui.
+  const withFund=hist.filter(h=>h.fundamentalsRows && h.fundamentalsRows.length>0);
+  if(withFund.length===0){
+    alert("Nessun bilancio salvato ancora — vai sul tab Bilancio e premi CARICA DATI per almeno un titolo, poi riprova.");
+    return;
+  }
+  // Formato LUNGO: una riga per (titolo, anno) — così il file cresce nel
+  // tempo man mano che carichi bilanci di più titoli, invece di restare
+  // fermo a una riga per titolo come lo storico riassuntivo.
+  const headers=["ticker","name","year","revenue","netIncome","netMargin","ebitda","ebit",
+    "grossProfit","eps","totalAssets","totalEquity","totalLiab","totalCurrentAssets",
+    "totalCurrentLiab","longTermDebt","retainedEarnings","sharesOutstanding","opCF","fcf"];
+  let csv=["ticker","name","anno",...headers.slice(3)].join(",")+"\n";
+  withFund.forEach(h=>{
+    h.fundamentalsRows.forEach(r=>{
+      const row=[h.ticker, h.name||"", r.year?.slice(0,4)||"", ...headers.slice(3).map(k=>r[k]??"")];
+      csv+=row.map(v=>`"${v.toString().replace(/"/g,'""')}"`).join(",")+"\n";
+    });
+  });
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="bilanci_completi_"+new Date().toISOString().slice(0,10)+".csv";
   a.click();
 };
 window.exportCurrentAnalysisJSON=function(){
@@ -3355,15 +3487,16 @@ function percentile(sortedArr,p){
 }
 
 window.runMonteCarlo=function(){
-  if(!STOCK){ el("mcStatus").textContent="Analizza prima un titolo"; return; }
+  if(!STOCK){ el("mcStatus").textContent="Analizza prima un titolo"; return Promise.resolve(); }
   const horizon=parseInt(el("mcHorizon").value);
   const nSims=parseInt(el("mcSims").value);
   el("mcStatus").textContent="⏳ Simulazione in corso...";
   el("mcResultsWrap").style.display="none";
 
+  return new Promise(resolve=>{
   setTimeout(()=>{ // lascia respirare la UI prima del calcolo pesante
     const dailyReturns=calcDailyReturns(STOCK.closes);
-    if(dailyReturns.length<60){ el("mcStatus").textContent="❌ Storico insufficiente per una simulazione affidabile."; return; }
+    if(dailyReturns.length<60){ el("mcStatus").textContent="❌ Storico insufficiente per una simulazione affidabile."; resolve(); return; }
 
     // Bootstrap: per ogni simulazione, pesco casualmente (con reinserimento)
     // 'horizon' rendimenti giornalieri REALI dallo storico, preservando così
@@ -3425,7 +3558,9 @@ window.runMonteCarlo=function(){
     renderMonteCarloResults(p05,p25,p50,p75,p95,horizon);
     el("mcStatus").textContent=`✅ ${nSims.toLocaleString("it-IT")} simulazioni completate su orizzonte di ${horizon} giorni`;
     el("mcResultsWrap").style.display="block";
+    resolve();
   }, 30);
+  });
 };
 
 function renderMonteCarloResults(p05,p25,p50,p75,p95,horizon){
@@ -4180,6 +4315,7 @@ window.calcStockScore=function(){
   }
   const finalScore=Math.round(weightedSum/totalWeight);
   LAST_STOCK_SCORE={ score:finalScore, components, missing, coveragePct:Math.round(totalWeight) };
+  updateHistoryScore(STOCK.ticker, finalScore);
 
   let label,color,emoji;
   if(finalScore>=85){ label="Molto Interessante"; color="#00d4b8"; emoji="🟢🟢"; }
