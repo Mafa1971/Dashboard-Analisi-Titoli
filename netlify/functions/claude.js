@@ -48,7 +48,7 @@ exports.handler = async function (event) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5", // controlla su docs.claude.com/en/docs/about-claude/models se è uscito un modello più recente
-        max_tokens: 900, // ridotto per stare più comodi entro i 10s di timeout delle Netlify Functions gratuite
+        max_tokens: 2200, // il timeout della function è 26s (vedi netlify.toml) — 900 era un limite superato, tagliava risposte lunghe come il "piano operativo" della tab Strategia
         messages: [{ role: "user", content }]
       })
     });
