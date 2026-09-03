@@ -1483,7 +1483,7 @@ function drawICTCanvasOverlay(){
   const dbg=el("ictDebugInfo");
   if(dbg) dbg.textContent=`FVG: ${debugCounts.fvgDrawn}/${debugCounts.fvgFound} visibili · Swing: ${debugCounts.swingDrawn}/${debugCounts.swingFound} · Eventi BOS/CHoCH: ${debugCounts.eventsDrawn}/${debugCounts.eventsFound} · OB: ${debugCounts.obDrawn}`;
 
-  drawStrategyOverlay(ctx,w,ts);
+  drawStrategyOverlay(ctx,w,ts,xForIdx);
 }
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
@@ -3092,15 +3092,30 @@ Questo punteggio composito ha senso? Quali aree pesano di più nel risultato fin
       return;
     }
     const l=LAST_STRATEGY_LONG, s=LAST_STRATEGY_SHORT;
-    prompt=base+`Strategia di ingresso calcolata (orizzonte ${l.horizon==="posizionale"?"posizionale":"swing"}):
+    const vp=computeVolumeProfile(STOCK.closes,STOCK.volumes,24); // POC/Value Area sull'intero storico
+    const price=STOCK.closes[STOCK.closes.length-1];
+    prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
-LONG: score ${l.score!=null?l.score+"/100":"N/D"}, stop invalidazione ${l.stop!=null?fmtPct((l.stop-l.price)/l.price*100):"N/D"} dal prezzo attuale (${l.stopType||"N/D"})
-SHORT: score ${s.score!=null?s.score+"/100":"N/D"}, stop invalidazione ${s.stop!=null?fmtPct((s.stop-s.price)/s.price*100):"N/D"} dal prezzo attuale (${s.stopType||"N/D"})
+DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
+- Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
+- Orizzonte: ${l.horizon==="posizionale"?"posizionale (settimane-mesi)":"swing (giorni-settimane)"}
+- ATR: ${l.atr!=null?l.atr.toFixed(2):"N/D"} (usalo per dimensionare stop/target realistici)
+- POC (Volume Profile, storico completo): ${vp?vp.poc.toFixed(2):"N/D"}
+- Value Area: ${vp?vp.vaLow.toFixed(2)+" - "+vp.vaHigh.toFixed(2):"N/D"}
+- LONG: Entry Score ${l.score!=null?l.score+"/100":"N/D"}, stop Order Block ${l.structuralStop!=null?l.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${l.atrStop!=null?l.atrStop.toFixed(2):"N/D"}, stop scelto ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}
+- SHORT: Entry Score ${s.score!=null?s.score+"/100":"N/D"}, stop Order Block ${s.structuralStop!=null?s.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${s.atrStop!=null?s.atrStop.toFixed(2):"N/D"}, stop scelto ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
+- Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+- Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 
-Dettaglio componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
-Dettaglio componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+STRUTTURA RICHIESTA DELLA RISPOSTA (segui esattamente questo schema, con numeri concreti derivati dai dati sopra — se un dato manca, dillo esplicitamente invece di inventarlo):
 
-Questa combinazione di segnali ha senso per un ingresso reale? Il livello di invalidazione sembra ragionevole (troppo stretto = rischio di essere stoppato dal rumore, troppo largo = rischio/rendimento sbilanciato)? Quale dei due setup (Long/Short) è più solido in questo momento, e perché?`;
+1. Lettura generale in 2-3 frasi (rialzista/ribassista/incerta, e perché)
+2. Scenario migliore (quello con score più alto tra Long/Short): zona di ingresso, condizioni per validarlo (es. "chiusura sopra X con volume sopra media"), Stop Loss, 2-3 Target Price scalati, e il rapporto Rischio/Rendimento calcolato per ciascun target (Target-Entry / Entry-Stop)
+3. Scenario alternativo (l'altra direzione, se ha comunque uno score decente) con la stessa struttura
+4. Scenario di invalidazione: cosa deve succedere perché entrambi i piani sopra vengano annullati, e cosa guarderesti dopo
+5. Il livello di prezzo più importante da tenere d'occhio, e perché
+
+Numeri veri, R/R calcolato esplicitamente, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per una zona specifica, dillo chiaramente invece di inventare un livello.`;
   }
 
   try{
@@ -4811,7 +4826,7 @@ function computeEntryScore(direction,horizon){
   else if(atrStop!=null){ finalStop=atrStop; stopType="ATR (1.5×)"; }
 
   const riskPct = finalStop!=null ? Math.abs((price-finalStop)/price*100) : null;
-  return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight };
+  return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight, atr, structuralStop, atrStop };
 }
 
 let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null;
@@ -4858,7 +4873,7 @@ window.calcStrategy=function(){
 };
 
 // Frecce Entry/Stop sul grafico principale (solo se la checkbox è attiva)
-function drawStrategyOverlay(ctx,w,ts){
+function drawStrategyOverlay(ctx,w,ts,xForIdx){
   if(!el("chkStrategyOverlay")?.checked || !LAST_STRATEGY_LONG) return;
   const n=STOCK.dates.length-1;
   const x=xForIdx(n);
