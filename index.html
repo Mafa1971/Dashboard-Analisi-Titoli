@@ -120,6 +120,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo"><span style="font-size:16px;">🎲</span> Monte Carlo</button>
         <button class="btn tabnav" onclick="switchTab('Regime')" id="tnRegime"><span style="font-size:16px;">🌡️</span> Regime</button>
         <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
+        <button class="btn tabnav" onclick="switchTab('Strategia')" id="tnStrategia"><span style="font-size:16px;">🎯</span> Strategia</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico"><span style="font-size:16px;">📜</span> Storico</button>
       </nav>
 
@@ -597,6 +598,42 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
+      <!-- TAB STRATEGIA (Entry/Invalidazione) -->
+      <div id="tabStrategia" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">🎯 STRATEGIA — INGRESSO E INVALIDAZIONE</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Combina trend, momentum, struttura ICT, Markov, Regime e volume in un punteggio di ingresso 0-100, sia per Long che per Short, con il livello di prezzo a cui l'operazione si considera "rotta". Non è un segnale di trading garantito — è un aiuto a organizzare la decisione, non sostituisce la tua analisi.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Orizzonte:
+              <select id="stratHorizon" onchange="calcStrategy()">
+                <option value="swing" selected>Swing (giorni-settimane)</option>
+                <option value="posizionale">Posizionale (settimane-mesi)</option>
+              </select>
+            </label>
+            <button class="btn primary" onclick="calcStrategy()">🎯 CALCOLA STRATEGIA</button>
+            <label class="chk" style="font-size:10px;"><input type="checkbox" id="chkStrategyOverlay" onchange="drawICTCanvasOverlay()"> Mostra frecce Entry/Stop sul grafico (tab Grafico)</label>
+          </div>
+          <div id="stratStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+        </div>
+
+        <div id="stratResultsWrap" style="display:none;">
+          <div class="panel">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+              <div id="stratLongCard"></div>
+              <div id="stratShortCard"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">📊 DETTAGLIO COMPONENTI</div>
+            <div id="stratBreakdownWrap" style="overflow-x:auto;"></div>
+          </div>
+          <div class="panel">
+            <button class="btn primary" onclick="askAIAboutTab('strategia')">🤖 Chiedi a Warren AI — questa strategia ha senso?</button>
+            <div id="aiTabStrategia" style="margin-top:12px;"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB STORICO ANALISI -->
       <div id="tabStorico" class="tab-content">
         <div class="panel">
@@ -678,6 +715,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
     <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
     <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
+    <button class="tab-btn" onclick="switchTab('Strategia')" id="tabBtnStrategia"><span class="tab-icon">🎯</span><span class="tab-label">Strategia</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
@@ -1444,6 +1482,8 @@ function drawICTCanvasOverlay(){
 
   const dbg=el("ictDebugInfo");
   if(dbg) dbg.textContent=`FVG: ${debugCounts.fvgDrawn}/${debugCounts.fvgFound} visibili · Swing: ${debugCounts.swingDrawn}/${debugCounts.swingFound} · Eventi BOS/CHoCH: ${debugCounts.eventsDrawn}/${debugCounts.eventsFound} · OB: ${debugCounts.obDrawn}`;
+
+  drawStrategyOverlay(ctx,w,ts);
 }
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
@@ -3046,6 +3086,23 @@ ${compLines}
 Questo punteggio composito ha senso? Quali aree pesano di più nel risultato finale, e ci sono contraddizioni tra le diverse aree (es. bilancio forte ma momentum debole) che vale la pena segnalare a chi guarda solo il numero finale?`;
   }
 
+  if(tabName==="strategia"){
+    if(!LAST_STRATEGY_LONG){
+      box.innerHTML=`<div style="color:#ffd23f;font-size:11px;padding:8px;">Prima premi Calcola Strategia, poi richiedi l'analisi.</div>`;
+      return;
+    }
+    const l=LAST_STRATEGY_LONG, s=LAST_STRATEGY_SHORT;
+    prompt=base+`Strategia di ingresso calcolata (orizzonte ${l.horizon==="posizionale"?"posizionale":"swing"}):
+
+LONG: score ${l.score!=null?l.score+"/100":"N/D"}, stop invalidazione ${l.stop!=null?fmtPct((l.stop-l.price)/l.price*100):"N/D"} dal prezzo attuale (${l.stopType||"N/D"})
+SHORT: score ${s.score!=null?s.score+"/100":"N/D"}, stop invalidazione ${s.stop!=null?fmtPct((s.stop-s.price)/s.price*100):"N/D"} dal prezzo attuale (${s.stopType||"N/D"})
+
+Dettaglio componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+Dettaglio componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+
+Questa combinazione di segnali ha senso per un ingresso reale? Il livello di invalidazione sembra ragionevole (troppo stretto = rischio di essere stoppato dal rumore, troppo largo = rischio/rendimento sbilanciato)? Quale dei due setup (Long/Short) è più solido in questo momento, e perché?`;
+  }
+
   try{
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
@@ -4627,6 +4684,205 @@ window.calcStockScore=function(){
   el("scoreAiPanel").style.display="block";
   el("scoreStatus").innerHTML=missing.length?`⚠️ ${missing.length} aree non disponibili (pesi redistribuiti automaticamente tra quelle presenti)`:"✅ Score calcolato su tutte le aree disponibili";
 };
+
+// ── STRATEGIA: ENTRY SCORE + INVALIDAZIONE (Long/Short, Swing/Posizionale) ─
+function calcATR(highs,lows,closes,period){
+  const n=closes.length;
+  const tr=new Array(n).fill(null);
+  for(let i=1;i<n;i++){
+    if(highs[i]==null||lows[i]==null||closes[i-1]==null) continue;
+    tr[i]=Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1]));
+  }
+  const atr=new Array(n).fill(null);
+  for(let i=period;i<n;i++){
+    const slice=tr.slice(i-period+1,i+1).filter(v=>v!=null);
+    if(slice.length===period) atr[i]=slice.reduce((a,b)=>a+b,0)/period;
+  }
+  return atr;
+}
+
+function computeEntryScore(direction,horizon){
+  if(!STOCK) return null;
+  const params = horizon==="posizionale"
+    ? { smaFast:100, smaSlow:200, atrPeriod:50, structureSz:50 }
+    : { smaFast:21, smaSlow:100, atrPeriod:14, structureSz:5 };
+
+  const closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows;
+  const n=closes.length;
+  const price=closes[n-1];
+
+  const smaFast=smaSeriesCalc(closes,params.smaFast)[n-1];
+  const smaSlow=smaSeriesCalc(closes,params.smaSlow)[n-1];
+  const rsi=rsiSeriesCalc(closes,14)[n-1];
+  const atrPeriodSafe=Math.min(params.atrPeriod, Math.max(5,Math.floor(n/3)));
+  const atr=calcATR(highs,lows,closes,atrPeriodSafe)[n-1];
+
+  const components=[];
+
+  // 1) TREND — SMA veloce/lenta allineate nella direzione desiderata (peso 25)
+  let trendScore=null;
+  if(smaFast!=null && smaSlow!=null){
+    const bullAligned=price>smaFast && smaFast>smaSlow, bearAligned=price<smaFast && smaFast<smaSlow;
+    trendScore = direction==="long" ? (bullAligned?100:(price>smaSlow?50:0)) : (bearAligned?100:(price<smaSlow?50:0));
+  }
+  components.push({key:"trend",label:"Trend (SMA allineate)",weight:25,val:trendScore});
+
+  // 2) MOMENTUM — RSI in zona "sana", penalizza gli estremi (peso 15)
+  let momScore=null;
+  if(rsi!=null){
+    if(direction==="long"){
+      if(rsi>=40&&rsi<=65) momScore=100;
+      else if(rsi>65&&rsi<=72) momScore=60;
+      else if(rsi>72) momScore=20;
+      else if(rsi>=30&&rsi<40) momScore=50;
+      else momScore=15;
+    } else {
+      if(rsi<=60&&rsi>=35) momScore=100;
+      else if(rsi<35&&rsi>=28) momScore=60;
+      else if(rsi<28) momScore=20;
+      else if(rsi>60&&rsi<=70) momScore=50;
+      else momScore=15;
+    }
+  }
+  components.push({key:"momentum",label:"Momentum (RSI)",weight:15,val:momScore});
+
+  // 3) STRUTTURA ICT — ultimo evento BOS/CHoCH nella direzione giusta, e
+  // livello dell'Order Block associato come possibile stop strutturale (peso 25)
+  let structScore=null, structuralStop=null;
+  try{
+    const struct=computeSMCStructure(highs,lows,closes,params.structureSz);
+    const lastEvent=struct.events[struct.events.length-1];
+    if(lastEvent){
+      const wantDir=direction==="long"?"up":"down";
+      if(lastEvent.dir===wantDir){
+        structScore = lastEvent.label==="CHoCH" ? 85 : 100; // CHoCH = inversione fresca, BOS = continuazione confermata
+        const ob=findOrderBlockRange(highs,lows,lastEvent.fromIdx,lastEvent.idx,lastEvent.dir);
+        if(ob) structuralStop = direction==="long" ? ob.bottom : ob.top;
+      } else {
+        structScore=10; // ultimo evento è nella direzione OPPOSTA — segnale contrario
+      }
+    }
+  }catch(e){}
+  components.push({key:"struttura",label:"Struttura ICT (BOS/CHoCH)",weight:25,val:structScore});
+
+  // 4) MARKOV — probabilità di continuazione nella direzione desiderata (peso 15)
+  let markovScore=null;
+  try{
+    const series=periodReturnSeries(STOCK.dates,closes,"daily");
+    const states=classifyStates(series,0.5,1.5);
+    const {matrix}=buildTransitionMatrix(states);
+    const cs=states[states.length-1];
+    const row=matrix[cs];
+    if(row){
+      const upProb=(row[3]||0)+(row[4]||0), downProb=(row[0]||0)+(row[1]||0);
+      markovScore = direction==="long" ? Math.max(0,Math.min(100,50+(upProb-downProb)*150)) : Math.max(0,Math.min(100,50+(downProb-upProb)*150));
+    }
+  }catch(e){}
+  components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:15,val:markovScore});
+
+  // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 10)
+  let regimeScore=null;
+  if(LAST_REGIME_RESULT) regimeScore = direction==="long" ? LAST_REGIME_RESULT.score : 100-LAST_REGIME_RESULT.score;
+  components.push({key:"regime",label:"Regime di Mercato",weight:10,val:regimeScore});
+
+  // 6) VOLUME — conferma del movimento, penalizza sia debolezza che esaurimento (peso 10)
+  let volScore=null;
+  const lastVol=STOCK.volumes[n-1], lastVolMA=smaSeriesCalc(STOCK.volumes,20)[n-1];
+  if(lastVol!=null && lastVolMA){
+    const ratio=lastVol/lastVolMA;
+    if(ratio>=1.0&&ratio<=2.5) volScore=100;
+    else if(ratio>2.5&&ratio<=4) volScore=60;
+    else if(ratio>4) volScore=30;
+    else volScore=Math.max(20,ratio*80);
+  }
+  components.push({key:"volume",label:"Volume (conferma)",weight:10,val:volScore});
+
+  let totalWeight=0, weightedSum=0;
+  components.forEach(c=>{ if(c.val!=null){ totalWeight+=c.weight; weightedSum+=c.val*c.weight; } });
+  const finalScore = totalWeight>0 ? Math.round(weightedSum/totalWeight) : null;
+
+  // Invalidazione: il più vicino (conservativo) tra stop strutturale (Order Block) e stop ATR
+  const atrStop = atr!=null ? (direction==="long" ? price-1.5*atr : price+1.5*atr) : null;
+  let finalStop=null, stopType=null;
+  if(structuralStop!=null && atrStop!=null){
+    finalStop = direction==="long" ? Math.max(structuralStop,atrStop) : Math.min(structuralStop,atrStop);
+    stopType = finalStop===structuralStop ? "strutturale (Order Block)" : "ATR (1.5×)";
+  } else if(structuralStop!=null){ finalStop=structuralStop; stopType="strutturale (Order Block)"; }
+  else if(atrStop!=null){ finalStop=atrStop; stopType="ATR (1.5×)"; }
+
+  const riskPct = finalStop!=null ? Math.abs((price-finalStop)/price*100) : null;
+  return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight };
+}
+
+let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null;
+window.calcStrategy=function(){
+  if(!STOCK){ el("stratStatus").textContent="Analizza prima un titolo"; return; }
+  const horizon=el("stratHorizon").value;
+  const long=computeEntryScore("long",horizon);
+  const short=computeEntryScore("short",horizon);
+  LAST_STRATEGY_LONG=long; LAST_STRATEGY_SHORT=short;
+
+  function renderCard(res,dirLabel,color){
+    if(!res||res.score==null) return `<div style="border:2px solid ${color};border-radius:12px;padding:16px;"><div style="color:var(--dim);font-size:11px;">Dati insufficienti per ${dirLabel}</div></div>`;
+    let label,lblColor;
+    if(res.score>=75){label="Setup Forte";lblColor="#00d4b8";}
+    else if(res.score>=55){label="Setup Discreto";lblColor="#80ed99";}
+    else if(res.score>=35){label="Debole";lblColor="#ffd23f";}
+    else {label="Sconsigliato";lblColor="#ff6b6b";}
+    return `<div style="border:2px solid ${color};border-radius:12px;padding:16px;">
+      <div style="font-size:13px;font-weight:800;color:${color};letter-spacing:1px;margin-bottom:6px;">${dirLabel}</div>
+      <div style="font-size:32px;font-weight:800;color:${lblColor};">${res.score}<span style="font-size:14px;color:var(--dim);">/100</span></div>
+      <div style="font-size:12px;color:${lblColor};font-weight:700;margin-bottom:10px;">${label}</div>
+      <div style="font-size:11px;color:var(--dim);">Prezzo attuale: <strong style="color:var(--txt);">${STOCK.currency} ${res.price.toFixed(2)}</strong></div>
+      <div style="font-size:11px;color:var(--dim);">Invalidazione (stop): <strong style="color:#ff6b6b;">${res.stop!=null?STOCK.currency+" "+res.stop.toFixed(2):"N/D"}</strong> ${res.stopType?"("+res.stopType+")":""}</div>
+      <div style="font-size:11px;color:var(--dim);">Rischio dall'attuale: <strong style="color:#ff9f1c;">${res.riskPct!=null?res.riskPct.toFixed(1)+"%":"N/D"}</strong></div>
+    </div>`;
+  }
+  el("stratLongCard").innerHTML=renderCard(long,"📈 LONG","#00d4b8");
+  el("stratShortCard").innerHTML=renderCard(short,"📉 SHORT","#ff6b6b");
+
+  let h=`<table><tr><th>Componente</th><th>Peso</th><th>Long</th><th>Short</th></tr>`;
+  long.components.forEach((c,i)=>{
+    const s=short.components[i];
+    h+=`<tr><td style="font-weight:700;">${c.label}</td><td>${c.weight}%</td>
+      <td style="color:${c.val==null?'var(--dim)':c.val>=70?'#00d4b8':c.val>=40?'#ffd23f':'#ff6b6b'};">${c.val!=null?c.val.toFixed(0):"N/D"}</td>
+      <td style="color:${s.val==null?'var(--dim)':s.val>=70?'#00d4b8':s.val>=40?'#ffd23f':'#ff6b6b'};">${s.val!=null?s.val.toFixed(0):"N/D"}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  el("stratBreakdownWrap").innerHTML=h;
+
+  el("stratResultsWrap").style.display="block";
+  el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
+  drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
+};
+
+// Frecce Entry/Stop sul grafico principale (solo se la checkbox è attiva)
+function drawStrategyOverlay(ctx,w,ts){
+  if(!el("chkStrategyOverlay")?.checked || !LAST_STRATEGY_LONG) return;
+  const n=STOCK.dates.length-1;
+  const x=xForIdx(n);
+  if(x==null) return;
+  [{res:LAST_STRATEGY_LONG,dir:"long",col:"#00d4b8"},{res:LAST_STRATEGY_SHORT,dir:"short",col:"#ff6b6b"}].forEach(({res,col,dir})=>{
+    if(!res||res.score==null||res.score<55) return; // mostra solo setup almeno "discreti"
+    const yPrice=candleSeries.priceToCoordinate(res.price);
+    if(yPrice!=null){
+      ctx.fillStyle=col;
+      ctx.font="bold 11px Manrope, sans-serif"; ctx.textAlign="left";
+      ctx.fillText((dir==="long"?"▲ ENTRY ":"▼ ENTRY ")+res.score, Math.min(x+6,w-90), yPrice+(dir==="long"?-8:16));
+      ctx.textAlign="left";
+    }
+    if(res.stop!=null){
+      const yStop=candleSeries.priceToCoordinate(res.stop);
+      if(yStop!=null){
+        ctx.strokeStyle=col; ctx.lineWidth=1.3; ctx.setLineDash([6,4]);
+        ctx.beginPath(); ctx.moveTo(0,yStop); ctx.lineTo(w,yStop); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle=col; ctx.font="9px JetBrains Mono, monospace";
+        ctx.fillText("STOP "+dir.toUpperCase(), 4, yStop-3);
+      }
+    }
+  });
+}
 </script>
 
 <!-- MODAL GUIDA -->
