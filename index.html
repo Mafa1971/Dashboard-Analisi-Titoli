@@ -3132,6 +3132,7 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - SHORT: Entry Score ${s.score!=null?s.score+"/100":"N/D"}, stop Order Block ${s.structuralStop!=null?s.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${s.atrStop!=null?s.atrStop.toFixed(2):"N/D"}, stop scelto ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati in questa sessione (vai sul tab Bilancio se vuoi che vengano considerati)."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (ultimo anno ${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (crescita YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine Netto ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski F-Score ${piotroski?piotroski.score+"/9":"N/D"} — usa questo per dire se un eventuale breakout tecnico ha un contesto fondamentale che lo rende più o meno "da inseguire".`; })()}
 
 REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti dello stile della risposta):
 1. Ogni Target Price DEVE coincidere ESATTAMENTE con uno dei livelli reali elencati sopra (Swing High/Low, R1/R2/S1/S2, POC, Value Area, Massimo/Minimo 52w, Massimo/Minimo storico). VIETATO calcolare un target come entry ± N×ATR o come multiplo aritmetico del rischio (es. rischio×1, ×2, ×3) — questo NON è un livello reale, è una stima inventata.
@@ -3140,13 +3141,23 @@ REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti d
 
 STRUTTURA RICHIESTA DELLA RISPOSTA (segui esattamente questo schema, con numeri concreti derivati dai dati sopra — se un dato manca, dillo esplicitamente invece di inventarlo):
 
-1. Lettura generale in 2-3 frasi (rialzista/ribassista/incerta, e perché)
-2. Scenario migliore (quello con score più alto tra Long/Short): zona di ingresso, condizioni per validarlo (es. "chiusura sopra X con volume sopra media"), Stop Loss, 2-3 Target Price PRESI DAI LIVELLI REALI sopra, e il rapporto Rischio/Rendimento calcolato per ciascun target (Target-Entry / Entry-Stop)
-3. Scenario alternativo (l'altra direzione, se ha comunque uno score decente) con la stessa struttura
-4. Scenario di invalidazione: cosa deve succedere perché entrambi i piani sopra vengano annullati, e cosa guarderesti dopo
-5. Il livello di prezzo più importante da tenere d'occhio, e perché
+1. Lettura generale in 2-3 frasi (rialzista/ribassista/incerta, e perché — cita anche i fondamentali se disponibili, come contesto che rende un breakout tecnico più o meno "da inseguire").
 
-Numeri veri, R/R calcolato esplicitamente, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per una zona specifica, dillo chiaramente invece di inventare un livello.`;
+2. DIREZIONE PRINCIPALE (quella con score più alto tra Long/Short): NON un solo ingresso, ma FINO A 3 APPROCCI DIVERSI tra loro per rischio/conferma, ciascuno con la sua zona di ingresso, condizioni di validazione, Stop Loss, 2-3 Target Price presi dai livelli reali sopra, e R/R calcolato per ciascun target:
+   - Approccio A (retest/pullback): ingresso su un ritorno verso un livello di supporto/Order Block/FVG vicino, il più conservativo per rischio ma richiede pazienza
+   - Approccio B (breakout confermato): ingresso solo dopo una chiusura oltre una resistenza reale (Swing High, R1/R2, Value Area High) CON volume in aumento — mai sulla prima candela che rompe, meglio dopo un pullback di conferma
+   - Approccio C (breakout esteso/conservativo): un livello di rottura più lontano e più netto, per chi preferisce aspettare una conferma ancora più solida
+   Se per la direzione principale non ci sono abbastanza livelli reali distinti per costruire 3 approcci separati, fanne 2 o anche solo 1, dicendo esplicitamente perché.
+
+3. DIREZIONE ALTERNATIVA (l'altra, anche se lo score è basso): un solo scenario, più sintetico, chiarendo sotto quali condizioni diventerebbe rilevante (es. "solo se rompe X con volume").
+
+4. Cosa NON faresti vs cosa faresti: 2-3 righe di contrasto pratico (es. "❌ comprare solo perché il prezzo sta salendo" vs "✅ aspettare la conferma di volume sulla rottura").
+
+5. Scenario di invalidazione: cosa deve succedere perché tutti i piani sopra vengano annullati, e cosa guarderesti dopo.
+
+6. Il livello di prezzo più importante da tenere d'occhio in assoluto, e perché è quello — è il punto di passaggio tra i due scenari opposti.
+
+Numeri veri, R/R calcolato esplicitamente per OGNI target di OGNI approccio, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo.`;
   }
 
   try{
