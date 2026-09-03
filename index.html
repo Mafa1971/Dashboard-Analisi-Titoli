@@ -3093,24 +3093,55 @@ Questo punteggio composito ha senso? Quali aree pesano di più nel risultato fin
     }
     const l=LAST_STRATEGY_LONG, s=LAST_STRATEGY_SHORT;
     const vp=computeVolumeProfile(STOCK.closes,STOCK.volumes,24); // POC/Value Area sull'intero storico
+    // POC anche su un periodo RECENTE (250gg): su titoli con anni di storia e
+    // un trend enorme, il POC dell'intero storico può essere lontanissimo e
+    // quasi irrilevante — quello recente è molto più utile per l'operatività.
+    const recentN=Math.min(250,STOCK.closes.length-1);
+    const vpRecent=computeVolumeProfile(STOCK.closes.slice(-recentN),STOCK.volumes.slice(-recentN),24);
     const price=STOCK.closes[STOCK.closes.length-1];
+    const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
+    const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    const swingHighsAbove=sw.highs.filter(p=>p.price>price).map(p=>p.price.toFixed(2));
+    const swingLowsBelow=sw.lows.filter(p=>p.price<price).map(p=>p.price.toFixed(2));
+    const swingLowsAbove=sw.lows.filter(p=>p.price>price).map(p=>p.price.toFixed(2)); // utili come stop per lo short
+    const swingHighsBelow=sw.highs.filter(p=>p.price<price).map(p=>p.price.toFixed(2)); // utili come target per lo short
+    // Massimo/minimo a 52 settimane (~252 sessioni) e su tutto lo storico caricato —
+    // livelli reali aggiuntivi per quando i titoli in forte trend non hanno
+    // abbastanza Swing High/Low sopra/sotto il prezzo negli ultimi rilevati.
+    const high52w=Math.max(...STOCK.highs.slice(-252).filter(v=>v!=null));
+    const low52w=Math.min(...STOCK.lows.slice(-252).filter(v=>v!=null));
+    const highAllTime=Math.max(...STOCK.highs.filter(v=>v!=null));
+    const lowAllTime=Math.min(...STOCK.lows.filter(v=>v!=null));
     prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
 DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
 - Orizzonte: ${l.horizon==="posizionale"?"posizionale (settimane-mesi)":"swing (giorni-settimane)"}
-- ATR: ${l.atr!=null?l.atr.toFixed(2):"N/D"} (usalo per dimensionare stop/target realistici)
-- POC (Volume Profile, storico completo): ${vp?vp.poc.toFixed(2):"N/D"}
+- ATR: ${l.atr!=null?l.atr.toFixed(2):"N/D"} (usalo SOLO per lo Stop Loss, mai per i target — vedi regola sotto)
+- POC (Volume Profile, storico completo): ${vp?vp.poc.toFixed(2):"N/D"} — livello a lungo termine, può essere lontano dal prezzo su titoli con anni di trend
+- POC (Volume Profile, ultimi ${recentN}gg — PIÙ RILEVANTE per l'operatività): ${vpRecent?vpRecent.poc.toFixed(2):"N/D"}, Value Area recente: ${vpRecent?vpRecent.vaLow.toFixed(2)+" - "+vpRecent.vaHigh.toFixed(2):"N/D"}
 - Value Area: ${vp?vp.vaLow.toFixed(2)+" - "+vp.vaHigh.toFixed(2):"N/D"}
+- Pivot Points (ultimi 60gg): Pivot ${piv?piv.pivot.toFixed(2):"N/D"}, R1 ${piv?piv.r1.toFixed(2):"N/D"}, R2 ${piv?piv.r2.toFixed(2):"N/D"}, S1 ${piv?piv.s1.toFixed(2):"N/D"}, S2 ${piv?piv.s2.toFixed(2):"N/D"}
+- Massimo 52 settimane: ${high52w.toFixed(2)} | Minimo 52 settimane: ${low52w.toFixed(2)}
+- Massimo storico (intero periodo caricato): ${highAllTime.toFixed(2)} | Minimo storico: ${lowAllTime.toFixed(2)}
+- Swing High sopra il prezzo attuale (possibili TARGET per Long, o STOP per Short): ${swingHighsAbove.length?swingHighsAbove.join(", "):"nessuno rilevato"}
+- Swing Low sotto il prezzo attuale (possibili TARGET per Short, o STOP per Long): ${swingLowsBelow.length?swingLowsBelow.join(", "):"nessuno rilevato"}
+- Swing Low sopra il prezzo attuale (possibile STOP alternativo per Short): ${swingLowsAbove.length?swingLowsAbove.join(", "):"nessuno rilevato"}
+- Swing High sotto il prezzo attuale (possibile TARGET alternativo per Short): ${swingHighsBelow.length?swingHighsBelow.join(", "):"nessuno rilevato"}
 - LONG: Entry Score ${l.score!=null?l.score+"/100":"N/D"}, stop Order Block ${l.structuralStop!=null?l.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${l.atrStop!=null?l.atrStop.toFixed(2):"N/D"}, stop scelto ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}
 - SHORT: Entry Score ${s.score!=null?s.score+"/100":"N/D"}, stop Order Block ${s.structuralStop!=null?s.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${s.atrStop!=null?s.atrStop.toFixed(2):"N/D"}, stop scelto ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 
+REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti dello stile della risposta):
+1. Ogni Target Price DEVE coincidere ESATTAMENTE con uno dei livelli reali elencati sopra (Swing High/Low, R1/R2/S1/S2, POC, Value Area, Massimo/Minimo 52w, Massimo/Minimo storico). VIETATO calcolare un target come entry ± N×ATR o come multiplo aritmetico del rischio (es. rischio×1, ×2, ×3) — questo NON è un livello reale, è una stima inventata.
+2. Se dopo aver controllato TUTTI i livelli sopra non ce ne sono abbastanza per costruire 2-3 target scalati in una direzione, dillo esplicitamente ("dati insufficienti per target multipli oltre X, l'unico livello reale disponibile è Y") — non riempire il vuoto con un numero stimato.
+3. PRIMA di scrivere la risposta finale, verifica tu stesso ogni riga: (a) il Target è diverso dall'Entry (altrimenti il R/R è per definizione 0, non un numero positivo); (b) il rapporto R/R scritto corrisponde davvero a (Target−Entry)/(Entry−Stop) per i Long, o (Entry−Target)/(Stop−Entry) per gli Short; (c) i target sono in ordine logico crescente di distanza dall'entry (T1 il più vicino, T3 il più lontano).
+
 STRUTTURA RICHIESTA DELLA RISPOSTA (segui esattamente questo schema, con numeri concreti derivati dai dati sopra — se un dato manca, dillo esplicitamente invece di inventarlo):
 
 1. Lettura generale in 2-3 frasi (rialzista/ribassista/incerta, e perché)
-2. Scenario migliore (quello con score più alto tra Long/Short): zona di ingresso, condizioni per validarlo (es. "chiusura sopra X con volume sopra media"), Stop Loss, 2-3 Target Price scalati, e il rapporto Rischio/Rendimento calcolato per ciascun target (Target-Entry / Entry-Stop)
+2. Scenario migliore (quello con score più alto tra Long/Short): zona di ingresso, condizioni per validarlo (es. "chiusura sopra X con volume sopra media"), Stop Loss, 2-3 Target Price PRESI DAI LIVELLI REALI sopra, e il rapporto Rischio/Rendimento calcolato per ciascun target (Target-Entry / Entry-Stop)
 3. Scenario alternativo (l'altra direzione, se ha comunque uno score decente) con la stessa struttura
 4. Scenario di invalidazione: cosa deve succedere perché entrambi i piani sopra vengano annullati, e cosa guarderesti dopo
 5. Il livello di prezzo più importante da tenere d'occhio, e perché
@@ -4884,16 +4915,20 @@ function drawStrategyOverlay(ctx,w,ts,xForIdx){
     if(yPrice!=null){
       ctx.fillStyle=col;
       ctx.font="bold 11px Manrope, sans-serif"; ctx.textAlign="left";
-      ctx.fillText((dir==="long"?"▲ ENTRY ":"▼ ENTRY ")+res.score, Math.min(x+6,w-90), yPrice+(dir==="long"?-8:16));
+      ctx.fillText((dir==="long"?"▲ ENTRY ":"▼ ENTRY ")+res.price.toFixed(2)+" (Score "+res.score+")", Math.min(x+6,w-170), yPrice+(dir==="long"?-8:16));
       ctx.textAlign="left";
     }
     if(res.stop!=null){
       const yStop=candleSeries.priceToCoordinate(res.stop);
       if(yStop!=null){
-        ctx.strokeStyle=col; ctx.lineWidth=1.3; ctx.setLineDash([6,4]);
-        ctx.beginPath(); ctx.moveTo(0,yStop); ctx.lineTo(w,yStop); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle=col; ctx.font="9px JetBrains Mono, monospace";
-        ctx.fillText("STOP "+dir.toUpperCase(), 4, yStop-3);
+        // Linea più spessa e SOLO dal punto attuale in poi (non su tutto lo
+        // storico, dove si perdeva tra le etichette storiche a sinistra) —
+        // così resta chiaramente visibile vicino al prezzo di oggi.
+        ctx.strokeStyle=col; ctx.lineWidth=2.2; ctx.setLineDash([7,4]);
+        ctx.beginPath(); ctx.moveTo(Math.max(0,x-60),yStop); ctx.lineTo(w,yStop); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle=col; ctx.font="bold 10px JetBrains Mono, monospace"; ctx.textAlign="left";
+        ctx.fillText("STOP "+dir.toUpperCase()+" "+res.stop.toFixed(2), Math.min(x+6,w-110), yStop+(dir==="long"?14:-6));
+        ctx.textAlign="left";
       }
     }
   });
