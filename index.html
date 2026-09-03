@@ -141,12 +141,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkPOC" checked onchange="renderICTOverlays()"> <span style="color:#ff3d71;">■</span> POC</label>
             <label class="chk"><input type="checkbox" id="chkSwingStruct" checked onchange="renderICTOverlays()"> <span style="color:#089981;">■</span> Struttura Swing (BOS/CHoCH)</label>
             <label class="chk"><input type="checkbox" id="chkInternalStruct" onchange="renderICTOverlays()"> <span style="color:#3179f5;">■</span> Struttura Internal (BOS/CHoCH)</label>
+            <label class="chk"><input type="checkbox" id="chkTrendline" checked onchange="renderICTOverlays()"> <span style="color:#f9c74f;">■</span> Trendline</label>
+            <label class="chk"><input type="checkbox" id="chkPattern" checked onchange="renderICTOverlays()"> <span style="color:#f94144;">■</span> Triangoli/Cunei/Flag</label>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
             <label style="font-size:10px;color:var(--dim);">Lunghezza Swing <input type="number" id="swingLen" value="50" min="10" max="200" style="width:55px;" onchange="renderICTOverlays()"></label>
             <label style="font-size:10px;color:var(--dim);">Lunghezza Internal <input type="number" id="internalLen" value="5" min="2" max="30" style="width:55px;" onchange="renderICTOverlays()"></label>
           </div>
-          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH/SL = Swing High/Low · FVG = Fair Value Gap · POC = livello a più volume · BOS = Break of Structure (continuazione trend) · CHoCH = Change of Character (possibile inversione) · Le zone colorate sui punti di svolta sono gli Order Block</div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH/SL = Swing High/Low (cerchio rosso = confermato da volume/volatilità anomali) · FVG = Fair Value Gap · POC = livello a più volume · BOS = Break of Structure (continuazione trend) · CHoCH = Change of Character (possibile inversione) · Le zone colorate sui punti di svolta sono gli Order Block</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <div id="ictDebugInfo" style="font-size:9px;color:var(--dim);"></div>
             <button class="btn ghost" style="font-size:9px;padding:3px 10px;" onclick="chart.timeScale().fitContent()">↔ Adatta al grafico</button>
@@ -1399,12 +1401,15 @@ function drawICTCanvasOverlay(){
 
   if(el("chkSwing").checked){
     const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    const sigSw=calcSignificantSwings(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,STOCK.dates,5);
     debugCounts.swingFound=sw.highs.length+sw.lows.length;
     sw.highs.forEach(p=>{
       const x=xForIdx(p.idx);
       const y=candleSeries.priceToCoordinate(p.price);
       if(x==null||y==null||x<0||x>w) return;
       debugCounts.swingDrawn++;
+      const isSig=sigSw.highs.find(sp=>sp.idx===p.idx)?.significant;
+      if(isSig){ ctx.strokeStyle="#ff3d71"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,y-11,9,0,2*Math.PI); ctx.stroke(); }
       ctx.fillStyle="#ffd23f";
       ctx.beginPath(); ctx.moveTo(x,y-16); ctx.lineTo(x-6,y-6); ctx.lineTo(x+6,y-6); ctx.closePath(); ctx.fill();
       ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
@@ -1416,6 +1421,8 @@ function drawICTCanvasOverlay(){
       const y=candleSeries.priceToCoordinate(p.price);
       if(x==null||y==null||x<0||x>w) return;
       debugCounts.swingDrawn++;
+      const isSig=sigSw.lows.find(sp=>sp.idx===p.idx)?.significant;
+      if(isSig){ ctx.strokeStyle="#ff3d71"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,y+11,9,0,2*Math.PI); ctx.stroke(); }
       ctx.fillStyle="#ffd23f";
       ctx.beginPath(); ctx.moveTo(x,y+16); ctx.lineTo(x-6,y+6); ctx.lineTo(x+6,y+6); ctx.closePath(); ctx.fill();
       ctx.font="bold 10px Manrope, sans-serif"; ctx.textAlign="center";
@@ -1483,6 +1490,7 @@ function drawICTCanvasOverlay(){
   const dbg=el("ictDebugInfo");
   if(dbg) dbg.textContent=`FVG: ${debugCounts.fvgDrawn}/${debugCounts.fvgFound} visibili · Swing: ${debugCounts.swingDrawn}/${debugCounts.swingFound} · Eventi BOS/CHoCH: ${debugCounts.eventsDrawn}/${debugCounts.eventsFound} · OB: ${debugCounts.obDrawn}`;
 
+  drawTrendlineAndPatternOverlay(ctx,w,xForIdx);
   drawStrategyOverlay(ctx,w,ts,xForIdx);
 }
 
@@ -3133,9 +3141,28 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 ${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati in questa sessione (vai sul tab Bilancio se vuoi che vengano considerati)."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (ultimo anno ${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (crescita YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine Netto ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski F-Score ${piotroski?piotroski.score+"/9":"N/D"} — usa questo per dire se un eventuale breakout tecnico ha un contesto fondamentale che lo rende più o meno "da inseguire".`; })()}
+${(()=>{
+  const n=STOCK.closes.length;
+  const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+  const supportLine=detectTrendline(sw.lows), resistanceLine=detectTrendline(sw.highs);
+  const lines=[];
+  if(supportLine) lines.push(`- Trendline di Supporto (rialzista, ${supportLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(supportLine,n-1).toFixed(2)}`);
+  if(resistanceLine) lines.push(`- Trendline di Resistenza (ribassista, ${resistanceLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(resistanceLine,n-1).toFixed(2)}`);
+  const triangle=detectTrianglePattern(supportLine,resistanceLine,n-1);
+  if(triangle) lines.push(`- Pattern rilevato: ${triangle.type} (supporto ≈${triangle.supportNow.toFixed(2)}, resistenza ≈${triangle.resistanceNow.toFixed(2)})`);
+  const atrArr=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14);
+  const flag=detectFlagPattern(STOCK.closes,atrArr);
+  if(flag) lines.push(`- Flag/Pennant rilevato: consolidamento dopo movimento ${flag.direction} del ${flag.impulsePct.toFixed(1)}% — spesso precede una continuazione nella stessa direzione se rotto con volume`);
+  const sigSw=calcSignificantSwings(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,STOCK.dates,5);
+  const sigHighs=sigSw.highs.filter(p=>p.significant).map(p=>p.price.toFixed(2));
+  const sigLows=sigSw.lows.filter(p=>p.significant).map(p=>p.price.toFixed(2));
+  if(sigHighs.length) lines.push(`- Swing High "significativi" (rottura confermata da volume/volatilità anomali — livelli PIÙ affidabili degli altri Swing High): ${sigHighs.join(", ")}`);
+  if(sigLows.length) lines.push(`- Swing Low "significativi" (stesso criterio, livelli PIÙ affidabili): ${sigLows.join(", ")}`);
+  return lines.length ? lines.join("\n") : "- Trendline/Pattern: nessuno rilevato con sufficiente affidabilità sui dati disponibili.";
+})()}
 
 REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti dello stile della risposta):
-1. Ogni Target Price DEVE coincidere ESATTAMENTE con uno dei livelli reali elencati sopra (Swing High/Low, R1/R2/S1/S2, POC, Value Area, Massimo/Minimo 52w, Massimo/Minimo storico). VIETATO calcolare un target come entry ± N×ATR o come multiplo aritmetico del rischio (es. rischio×1, ×2, ×3) — questo NON è un livello reale, è una stima inventata.
+1. Ogni Target Price DEVE coincidere ESATTAMENTE con uno dei livelli reali elencati sopra (Swing High/Low — preferisci quelli "significativi" se disponibili, R1/R2/S1/S2, POC, Value Area, Massimo/Minimo 52w, Massimo/Minimo storico, Trendline). VIETATO calcolare un target come entry ± N×ATR o come multiplo aritmetico del rischio (es. rischio×1, ×2, ×3) — questo NON è un livello reale, è una stima inventata.
 2. Se dopo aver controllato TUTTI i livelli sopra non ce ne sono abbastanza per costruire 2-3 target scalati in una direzione, dillo esplicitamente ("dati insufficienti per target multipli oltre X, l'unico livello reale disponibile è Y") — non riempire il vuoto con un numero stimato.
 3. PRIMA di scrivere la risposta finale, verifica tu stesso ogni riga: (a) il Target è diverso dall'Entry (altrimenti il R/R è per definizione 0, non un numero positivo); (b) il rapporto R/R scritto corrisponde davvero a (Target−Entry)/(Entry−Stop) per i Long, o (Entry−Target)/(Stop−Entry) per gli Short; (c) i target sono in ordine logico crescente di distanza dall'entry (T1 il più vicino, T3 il più lontano).
 
@@ -4756,6 +4783,157 @@ function calcATR(highs,lows,closes,period){
     if(slice.length===period) atr[i]=slice.reduce((a,b)=>a+b,0)/period;
   }
   return atr;
+}
+
+// ── TRENDLINE (massimi decrescenti / minimi crescenti) ─────────────────
+// Prova ogni coppia di pivot (Swing High per resistenza, Swing Low per
+// supporto), traccia la retta che li unisce, e conta quanti ALTRI pivot
+// "toccano" quella retta entro una tolleranza — la retta con più tocchi
+// (minimo 3, cioè almeno un terzo punto di conferma oltre ai 2 di partenza)
+// è la trendline valida. Nessuna soggettività: pura geometria sui dati.
+function detectTrendline(pivots,tolerancePct=1.5){
+  if(!pivots||pivots.length<3) return null;
+  let best=null;
+  for(let i=0;i<pivots.length-1;i++){
+    for(let j=i+1;j<pivots.length;j++){
+      const p1=pivots[i], p2=pivots[j];
+      if(p2.idx===p1.idx) continue;
+      const slope=(p2.price-p1.price)/(p2.idx-p1.idx);
+      const intercept=p1.price-slope*p1.idx;
+      let touches=0;
+      pivots.forEach(p=>{
+        const lineVal=slope*p.idx+intercept;
+        if(Math.abs(p.price-lineVal)<=lineVal*(tolerancePct/100)) touches++;
+      });
+      if(touches>=3 && (!best||touches>best.touches)) best={slope,intercept,touches,fromIdx:p1.idx,toIdx:p2.idx};
+    }
+  }
+  return best;
+}
+function trendlineValueAt(line,idx){ return line ? line.slope*idx+line.intercept : null; }
+
+// ── TRIANGOLI / CUNEI (due trendline convergenti) ───────────────────────
+function detectTrianglePattern(supportLine,resistanceLine,currentIdx){
+  if(!supportLine||!resistanceLine) return null;
+  const startIdx=Math.min(supportLine.fromIdx,resistanceLine.fromIdx);
+  const rangeStart=trendlineValueAt(resistanceLine,startIdx)-trendlineValueAt(supportLine,startIdx);
+  const rangeNow=trendlineValueAt(resistanceLine,currentIdx)-trendlineValueAt(supportLine,currentIdx);
+  if(rangeStart<=0||rangeNow<=0) return null; // le rette si sono già incrociate, non è più un triangolo valido
+  if(rangeNow>=rangeStart*0.85) return null; // non converge abbastanza da essere un vero triangolo
+  const supRising=supportLine.slope>0.0005, supFlat=Math.abs(supportLine.slope)<=0.0005;
+  const resFalling=resistanceLine.slope<-0.0005, resFlat=Math.abs(resistanceLine.slope)<=0.0005;
+  let type;
+  if(supFlat&&resFalling) type="Triangolo Discendente";
+  else if(supRising&&resFlat) type="Triangolo Ascendente";
+  else if(supRising&&resFalling) type="Triangolo Simmetrico";
+  else if(supRising&&resistanceLine.slope>0) type="Cuneo Ascendente (rialzo che rallenta)";
+  else if(!supRising&&resFalling) type="Cuneo Discendente (ribasso che rallenta)";
+  else type="Convergenza (tipo non classificabile)";
+  return { type, supportNow:trendlineValueAt(supportLine,currentIdx), resistanceNow:trendlineValueAt(resistanceLine,currentIdx) };
+}
+
+// ── FLAG/PENNANT (movimento impulsivo + consolidamento stretto) ────────
+function detectFlagPattern(closes,atr,consolWindow=8,impulseWindow=15,minImpulsePct=8){
+  const n=closes.length;
+  if(n<consolWindow+impulseWindow+1) return null;
+  const consolSlice=closes.slice(-consolWindow);
+  const consolRange=Math.max(...consolSlice)-Math.min(...consolSlice);
+  const avgAtr=atr[n-1];
+  if(avgAtr==null) return null;
+  if(consolRange>=avgAtr*2.5) return null; // consolidamento non abbastanza stretto
+  const preConsolIdx=n-consolWindow-1;
+  const impulseStartIdx=Math.max(0,n-consolWindow-impulseWindow);
+  const priorMove=closes[preConsolIdx]-closes[impulseStartIdx];
+  const priorMovePct=Math.abs(priorMove/closes[impulseStartIdx]*100);
+  if(priorMovePct<minImpulsePct) return null; // nessun vero movimento impulsivo prima
+  return { direction: priorMove>0?"rialzista":"ribassista", impulsePct:priorMovePct, consolRangePct:consolRange/closes[n-1]*100 };
+}
+
+// ── S/R SIGNIFICATIVI (Swing confermati da volume + volatilità) ────────
+// Non tutti gli Swing High/Low sono uguali: quelli generati da una candela
+// con volume anomalo E/O range anomalo (rispetto ad ATR) rappresentano
+// rotture "vere", con più partecipazione — li marchiamo come "significativi"
+// invece di trattare ogni pivot allo stesso modo.
+function calcSignificantSwings(highs,lows,closes,volumes,dates,lookback=5){
+  const sw=calcSwingsICT(highs,lows,dates,lookback);
+  const volMA20=smaSeriesCalc(volumes,20);
+  const atr=calcATR(highs,lows,closes,14);
+  function tag(p){
+    const volRatio = volumes[p.idx]!=null && volMA20[p.idx] ? volumes[p.idx]/volMA20[p.idx] : null;
+    const range = highs[p.idx]!=null && lows[p.idx]!=null ? highs[p.idx]-lows[p.idx] : null;
+    const atrVal=atr[p.idx];
+    const volSig = volRatio!=null && volRatio>1.5;
+    const volaSig = range!=null && atrVal!=null && range>atrVal*1.5;
+    return { ...p, significant: volSig||volaSig, volRatio, volaSig };
+  }
+  return { highs: sw.highs.map(tag), lows: sw.lows.map(tag) };
+}
+
+// Salviamo l'ultimo rilevamento per riuso nel prompt Strategia (evita di
+// ricalcolare due volte la stessa cosa)
+let LAST_TRENDLINES=null, LAST_PATTERN=null, LAST_FLAG=null, LAST_SIGNIFICANT_SWINGS=null;
+
+function drawTrendlineAndPatternOverlay(ctx,w,xForIdx){
+  if(!STOCK||!candleSeries) return;
+  const showTrend=el("chkTrendline")?.checked, showPattern=el("chkPattern")?.checked;
+  if(!showTrend && !showPattern) return;
+
+  const highs=STOCK.highs, lows=STOCK.lows, closes=STOCK.closes;
+  const n=closes.length;
+  // Usiamo gli Swing "Internal" (lookback corto) per avere più punti recenti
+  // su cui tracciare trendline sensate nella finestra visibile.
+  const sw=calcSwingsICT(highs,lows,STOCK.dates,5);
+  const supportLine=detectTrendline(sw.lows);
+  const resistanceLine=detectTrendline(sw.highs);
+  LAST_TRENDLINES={supportLine,resistanceLine};
+
+  function drawLine(line,color,label){
+    if(!line) return;
+    const x0=xForIdx(line.fromIdx), x1=xForIdx(n-1); // estesa fino ad oggi
+    if(x0==null||x1==null) return;
+    const y0=candleSeries.priceToCoordinate(trendlineValueAt(line,line.fromIdx));
+    const y1=candleSeries.priceToCoordinate(trendlineValueAt(line,n-1));
+    if(y0==null||y1==null) return;
+    ctx.strokeStyle=color; ctx.lineWidth=1.6; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+    ctx.fillStyle=color; ctx.font="bold 9px JetBrains Mono, monospace";
+    ctx.fillText(label,Math.max(4,x1-70),y1-4);
+  }
+
+  if(showTrend){
+    drawLine(supportLine,"#00d4b8","Trendline Supporto");
+    drawLine(resistanceLine,"#ff6b6b","Trendline Resistenza");
+  }
+
+  if(showPattern){
+    const triangle=detectTrianglePattern(supportLine,resistanceLine,n-1);
+    LAST_PATTERN=triangle;
+    if(triangle){
+      const xStart=xForIdx(Math.min(supportLine.fromIdx,resistanceLine.fromIdx));
+      const xEnd=xForIdx(n-1);
+      if(xStart!=null&&xEnd!=null){
+        ctx.fillStyle="#f9c74f"; ctx.font="bold 11px Manrope, sans-serif"; ctx.textAlign="center";
+        ctx.fillText(triangle.type,(xStart+xEnd)/2,30);
+        ctx.textAlign="left";
+      }
+    }
+    const atrArr=calcATR(highs,lows,closes,14);
+    const flag=detectFlagPattern(closes,atrArr);
+    LAST_FLAG=flag;
+    if(flag){
+      const xFlagStart=xForIdx(Math.max(0,n-8)), xFlagEnd=xForIdx(n-1);
+      const yTop=candleSeries.priceToCoordinate(Math.max(...closes.slice(-8)));
+      const yBottom=candleSeries.priceToCoordinate(Math.min(...closes.slice(-8)));
+      if(xFlagStart!=null&&xFlagEnd!=null&&yTop!=null&&yBottom!=null){
+        ctx.fillStyle="rgba(249,199,79,0.15)"; ctx.strokeStyle="#f9c74f"; ctx.lineWidth=1;
+        ctx.fillRect(xFlagStart,yTop,xFlagEnd-xFlagStart,yBottom-yTop);
+        ctx.strokeRect(xFlagStart,yTop,xFlagEnd-xFlagStart,yBottom-yTop);
+        ctx.fillStyle="#f9c74f"; ctx.font="9px JetBrains Mono, monospace";
+        ctx.fillText("Flag "+flag.direction,xFlagStart+2,yTop-4);
+      }
+    }
+  }
+  LAST_SIGNIFICANT_SWINGS=calcSignificantSwings(highs,lows,closes,STOCK.volumes,STOCK.dates,5);
 }
 
 function computeEntryScore(direction,horizon){
