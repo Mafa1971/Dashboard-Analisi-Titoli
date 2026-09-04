@@ -3259,6 +3259,8 @@ window.askClaudeAI=async function(){
   const lastSwingLow=swICT.lows.length?swICT.lows[swICT.lows.length-1].price:null;
   const fvgICT=calcFVGICT(STOCK.opens,STOCK.highs,STOCK.lows,STOCK.closes);
   const pocICT=calcPOCSimple(STOCK.closes,STOCK.volumes);
+  const recentNGeneral=Math.min(250,STOCK.closes.length-1);
+  const pocRecentICT=calcPOCSimple(STOCK.closes.slice(-recentNGeneral),STOCK.volumes.slice(-recentNGeneral));
   const structICT=computeSMCStructure(STOCK.highs,STOCK.lows,STOCK.closes,parseInt(el("swingLen")?.value)||50);
   const lastEventICT=structICT.events[structICT.events.length-1];
 
@@ -3273,7 +3275,18 @@ window.askClaudeAI=async function(){
     }catch(e){}
   }
 
-  const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, conciso (max 200 parole), con emoji per chiarezza. Usa **grassetto** con parsimonia, evita titoli con ## e liste eccessive — scrivi a paragrafi brevi. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
+  const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, con emoji per chiarezza. Usa **grassetto** con parsimonia, evita titoli con ## eccessivi e liste puntate eccessive — scrivi a paragrafi brevi. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
+
+Se la domanda chiede un'analisi completa/operativa (fondamentali + tecnica + livelli + strategia d'ingresso, o simili), struttura la risposta ESATTAMENTE con queste 6 sezioni, in quest'ordine, con questi titoli ed emoji esatti — sii conciso in ognuna ma completo sui numeri:
+
+📊 Analisi Tecnica — trend (SMA), momentum (RSI), contesto generale, fondamentali in una frase se rilevanti
+🎯 Supporti/Resistenze — livelli reali sopra/sotto il prezzo attuale presi dai dati sotto (Swing, Pivot, POC, FVG) — non inventarne altri
+⏱ Entry Point — zona/e di ingresso concrete con condizione di validazione, e se la domanda lo chiede una strategia di ingresso scalato (es. su più tranche/acquisti) con importi e livelli reali
+⚠️ Rischio — Stop Loss, livello di invalidazione, R/R se calcolabile
+🔗 Markov — cosa suggerisce lo stato Markov per la continuazione a breve, se è in linea o contraddice il resto
+🏆 Giudizio — sintesi finale in 1-2 frasi, con il livello di prezzo più importante da tenere d'occhio
+
+Per domande più semplici o mirate (es. "cos'è l'RSI", "come sta andando stagionalmente"), rispondi liberamente e in modo diretto SENZA questa struttura a 6 sezioni — usala solo per richieste di analisi complete.
 
 Titolo: ${STOCK.ticker} — ${STOCK.name} (${STOCK.currency})
 Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
@@ -3290,7 +3303,7 @@ ${sr?`- Pivot: ${sr.pivot.toFixed(2)} | R1: ${sr.r1.toFixed(2)} | R2: ${sr.r2.to
 
 Dati ICT (Smart Money Concepts):
 - Ultimo Swing High: ${lastSwingHigh?lastSwingHigh.toFixed(2):"N/D"} | Ultimo Swing Low: ${lastSwingLow?lastSwingLow.toFixed(2):"N/D"}
-- POC (livello a più volume): ${pocICT?pocICT.toFixed(2):"N/D"}
+- POC storico completo: ${pocICT?pocICT.toFixed(2):"N/D"} | POC recente (ultimi ${recentNGeneral}gg, più rilevante per l'operatività): ${pocRecentICT?pocRecentICT.toFixed(2):"N/D"}
 - FVG aperti recenti: ${fvgICT.length?fvgICT.map(f=>`${f.type==="bullish"?"🟢":"🔴"} ${f.bottom.toFixed(2)}-${f.top.toFixed(2)}`).join(", "):"nessuno rilevato"}
 - Struttura di mercato: trend ${structICT.trend==="up"?"rialzista":structICT.trend==="down"?"ribassista":"N/D"}, ultimo evento: ${lastEventICT?lastEventICT.label+" a "+lastEventICT.price.toFixed(2):"N/D"}
 
