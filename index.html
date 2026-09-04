@@ -626,6 +626,28 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
           </div>
           <div class="panel">
+            <div class="panel-title">💰 POSITION SIZING — 3 TRANCHE SU BUDGET TOTALE</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Divide il budget su 3 punti d'ingresso (Entry attuale, Zona A retest, Zona B breakout) usando i livelli reali già calcolati sopra — calcola quante azioni comprare a ciascun prezzo e il prezzo medio di carico finale.</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+              <label style="font-size:11px;color:var(--dim);">Direzione:
+                <select id="sizingDirection" onchange="calcPositionSizing()">
+                  <option value="long" selected>Long</option>
+                  <option value="short">Short</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Budget totale (USD/EUR):
+                <input type="number" id="sizingBudget" value="1000" min="0" step="50" style="width:100px;" onchange="calcPositionSizing()">
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Split (%):
+                <input type="number" id="sizingSplit1" value="35" min="0" max="100" style="width:55px;" onchange="calcPositionSizing()">/
+                <input type="number" id="sizingSplit2" value="35" min="0" max="100" style="width:55px;" onchange="calcPositionSizing()">/
+                <input type="number" id="sizingSplit3" value="30" min="0" max="100" style="width:55px;" onchange="calcPositionSizing()">
+              </label>
+              <button class="btn primary" onclick="calcPositionSizing()">↻ Calcola</button>
+            </div>
+            <div id="sizingWrap" style="overflow-x:auto;"></div>
+          </div>
+          <div class="panel">
             <div class="panel-title">📊 DETTAGLIO COMPONENTI</div>
             <div id="stratBreakdownWrap" style="overflow-x:auto;"></div>
           </div>
@@ -3166,24 +3188,27 @@ REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti d
 2. Se dopo aver controllato TUTTI i livelli sopra non ce ne sono abbastanza per costruire 2-3 target scalati in una direzione, dillo esplicitamente ("dati insufficienti per target multipli oltre X, l'unico livello reale disponibile è Y") — non riempire il vuoto con un numero stimato.
 3. PRIMA di scrivere la risposta finale, verifica tu stesso ogni riga: (a) il Target è diverso dall'Entry (altrimenti il R/R è per definizione 0, non un numero positivo); (b) il rapporto R/R scritto corrisponde davvero a (Target−Entry)/(Entry−Stop) per i Long, o (Entry−Target)/(Stop−Entry) per gli Short; (c) i target sono in ordine logico crescente di distanza dall'entry (T1 il più vicino, T3 il più lontano).
 
-STRUTTURA RICHIESTA DELLA RISPOSTA (segui esattamente questo schema, con numeri concreti derivati dai dati sopra — se un dato manca, dillo esplicitamente invece di inventarlo):
+STRUTTURA RICHIESTA DELLA RISPOSTA — usa ESATTAMENTE queste 6 sezioni con questi titoli ed emoji, in quest'ordine, con numeri concreti derivati dai dati sopra (se un dato manca, dillo esplicitamente invece di inventarlo). Sii conciso in ognuna, frasi brevi, vai dritto ai numeri:
 
-1. Lettura generale in 1-2 frasi (rialzista/ribassista/incerta, e perché — cita anche i fondamentali se disponibili, in una frase). Cita SEMPRE esplicitamente anche il valore del POC recente (e se utile quello storico) come riferimento di equilibrio del mercato, anche se poi non lo usi come target diretto — è un dato richiesto esplicitamente, non ometterlo.
+📊 Analisi Tecnica
+2-3 frasi: trend (SMA), momentum (RSI), e contesto generale (rialzista/ribassista/incerto). Cita anche i fondamentali in una frase se disponibili.
 
-2. DIREZIONE PRINCIPALE (quella con score più alto tra Long/Short): FINO A 2 APPROCCI DIVERSI tra loro per rischio/conferma (non 3, sii conciso), ciascuno con zona di ingresso, condizione di validazione in una riga, Stop Loss, MASSIMO 2 Target Price presi dai livelli reali sopra, e R/R calcolato:
-   - Approccio A (retest/pullback): ingresso su un ritorno verso un livello di supporto/Order Block/FVG vicino
-   - Approccio B (breakout confermato): ingresso dopo chiusura oltre una resistenza reale (Swing High, R1/R2, Value Area High) con volume in aumento
-   Se manca un livello reale per uno dei due approcci, salta quell'approccio invece di inventare un numero.
+🎯 Supporti/Resistenze
+Elenca i livelli reali più rilevanti sopra e sotto il prezzo attuale (Swing High/Low — preferisci i "significativi", Pivot R1/R2/S1/S2, POC recente E storico — cita SEMPRE entrambi, Value Area, Trendline, Massimo/Minimo 52w). Non inventare livelli non in lista.
 
-3. DIREZIONE ALTERNATIVA (l'altra, anche se lo score è basso): un solo scenario sintetico in poche righe, con la condizione che la renderebbe rilevante.
+⏱ Entry Point
+Per la direzione principale (score più alto): FINO A 2 approcci — Approccio A (retest/pullback su un livello reale vicino) e Approccio B (breakout confermato da volume oltre una resistenza/supporto reale) — ciascuno con zona di ingresso, condizione di validazione in una riga, e MASSIMO 2 Target Price presi dai livelli reali con R/R calcolato esplicitamente. Poi la direzione alternativa in 1-2 righe sintetiche, con la condizione che la renderebbe rilevante.
 
-4. Cosa NON faresti vs cosa faresti: 1-2 righe di contrasto pratico.
+⚠️ Rischio
+Stop Loss per ciascun approccio sopra, il livello di invalidazione più importante in assoluto, e cosa NON faresti vs cosa faresti (1-2 righe di contrasto pratico).
 
-5. Invalidazione e livello chiave: 2-3 righe totali, uniti in un solo paragrafo.
+🔗 Markov
+1-2 frasi su cosa suggerisce lo stato/probabilità Markov per la continuazione a breve — se è in linea o in contraddizione con lo score tecnico complessivo, dillo esplicitamente.
 
-Sii CONCISO in ogni sezione — frasi brevi, niente ripetizioni, vai dritto ai numeri.
+🏆 Giudizio
+1-2 frasi di sintesi finale: qual è il piano più solido in questo momento e perché, con il livello di prezzo più importante da tenere d'occhio.
 
-Numeri veri, R/R calcolato esplicitamente per OGNI target di OGNI approccio, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo.`;
+Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo.`;
   }
 
   try{
@@ -5052,7 +5077,7 @@ function computeEntryScore(direction,horizon){
 // usando gli stessi livelli reali del prompt AI (Swing, Pivot, Trendline) —
 // necessario per poterle disegnare sul grafico, non solo scriverle nel testo.
 function computeApproachZones(direction){
-  if(!STOCK) return {zoneA:null,zoneB:null};
+  if(!STOCK) return {zoneA:null,zoneB:null,zoneC:null};
   const price=STOCK.closes[STOCK.closes.length-1];
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
@@ -5062,13 +5087,15 @@ function computeApproachZones(direction){
   const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
 
   if(direction==="long"){
-    const belowCandidates=[piv?.pivot,piv?.s1,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
+    const belowCandidates=[piv?.pivot,piv?.s1,piv?.s2,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
     const aboveCandidates=[piv?.r1,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
-    return { zoneA: belowCandidates.length?Math.max(...belowCandidates):null, zoneB: aboveCandidates.length?Math.min(...aboveCandidates):null };
+    const belowSorted=[...new Set(belowCandidates)].sort((a,b)=>b-a); // dal più vicino al prezzo al più lontano
+    return { zoneA: belowSorted[0]??null, zoneB: aboveCandidates.length?Math.min(...aboveCandidates):null, zoneC: belowSorted[1]??null };
   } else {
-    const aboveCandidates=[piv?.pivot,piv?.r1,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
+    const aboveCandidates=[piv?.pivot,piv?.r1,piv?.r2,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
     const belowCandidates=[piv?.s1,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
-    return { zoneA: aboveCandidates.length?Math.min(...aboveCandidates):null, zoneB: belowCandidates.length?Math.max(...belowCandidates):null };
+    const aboveSorted=[...new Set(aboveCandidates)].sort((a,b)=>a-b); // dal più vicino al prezzo al più lontano
+    return { zoneA: aboveSorted[0]??null, zoneB: belowCandidates.length?Math.max(...belowCandidates):null, zoneC: aboveSorted[1]??null };
   }
 }
 
@@ -5117,6 +5144,60 @@ window.calcStrategy=function(){
   el("stratResultsWrap").style.display="block";
   el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
   drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
+  calcPositionSizing(); // aggiorna anche il position sizing con i nuovi livelli
+};
+
+window.calcPositionSizing=function(){
+  if(!LAST_STRATEGY_LONG||!STOCK) return;
+  const dir=el("sizingDirection").value;
+  const res = dir==="long" ? LAST_STRATEGY_LONG : LAST_STRATEGY_SHORT;
+  const budget=parseFloat(el("sizingBudget").value)||0;
+  const s1=parseFloat(el("sizingSplit1").value)||0, s2=parseFloat(el("sizingSplit2").value)||0, s3=parseFloat(el("sizingSplit3").value)||0;
+  const splitSum=s1+s2+s3;
+
+  const tranches=[
+    { label:"Tranche 1 — Ora (prezzo attuale)", price:res.price, pct:s1 },
+    { label:"Tranche 2 — Zona A (livello reale più vicino)", price:res.zoneA, pct:s2 },
+    { label:"Tranche 3 — Zona C (livello reale più lontano)", price:res.zoneC, pct:s3 }
+  ];
+
+  if(splitSum<=0||budget<=0){
+    el("sizingWrap").innerHTML=`<div style="color:var(--dim);font-size:11px;">Imposta un budget e degli split percentuali validi (somma > 0).</div>`;
+    return;
+  }
+  if(Math.abs(splitSum-100)>0.5){
+    el("sizingWrap").innerHTML=`<div style="color:#ffd23f;font-size:11px;margin-bottom:8px;">⚠️ Gli split sommano a ${splitSum}%, non 100% — li normalizzo automaticamente proporzionalmente.</div>`;
+  } else {
+    el("sizingWrap").innerHTML="";
+  }
+
+  let totalShares=0, totalSpent=0;
+  let h=`<table><tr><th>Tranche</th><th>Prezzo</th><th>Budget</th><th>Azioni Acquistate</th></tr>`;
+  tranches.forEach(t=>{
+    const normPct=t.pct/splitSum*100; // normalizza sempre a 100%, anche se l'utente ha messo somma diversa
+    const dollars=budget*normPct/100;
+    if(t.price==null){
+      h+=`<tr><td>${t.label}</td><td style="color:var(--dim);">nessun livello reale trovato</td><td>${STOCK.currency} ${dollars.toFixed(0)}</td><td style="color:var(--dim);">non allocabile</td></tr>`;
+      return;
+    }
+    const shares=dollars/t.price;
+    totalShares+=shares; totalSpent+=dollars;
+    h+=`<tr><td>${t.label} (${normPct.toFixed(0)}%)</td><td>${STOCK.currency} ${t.price.toFixed(2)}</td><td>${STOCK.currency} ${dollars.toFixed(0)}</td><td>${shares.toFixed(3)}</td></tr>`;
+  });
+  h+="</table>";
+
+  if(totalShares>0){
+    const avgCost=totalSpent/totalShares;
+    const deltaFromCurrent=((res.price-avgCost)/avgCost*100);
+    h+=`<div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:14px;">
+      <div class="card"><div class="v" style="color:#4fa3ff;">${totalShares.toFixed(3)}</div><div class="l">Azioni Totali (se tutte le tranche si riempiono)</div></div>
+      <div class="card"><div class="v" style="color:#ffd23f;">${STOCK.currency} ${avgCost.toFixed(2)}</div><div class="l">Prezzo Medio di Carico</div></div>
+      <div class="card"><div class="v" style="color:${deltaFromCurrent>=0?'#00d4b8':'#ff6b6b'};">${deltaFromCurrent>=0?"+":""}${deltaFromCurrent.toFixed(1)}%</div><div class="l">Prezzo Attuale vs Media (se solo Tranche 1 si riempie oggi)</div></div>
+      <div class="card"><div class="v" style="color:var(--txt);">${STOCK.currency} ${totalSpent.toFixed(0)}</div><div class="l">Capitale Totale Impiegato</div></div>
+    </div>
+    <div style="font-size:10px;color:var(--dim);margin-top:10px;">Le Tranche 2 e 3 si attivano solo SE il prezzo scende (Long) o sale (Short) fino a quel livello — non è garantito che vengano eseguite. Se il prezzo va dritto verso il target senza mai toccarle, resti con solo la Tranche 1 investita.</div>`;
+  }
+  el("sizingWrap").innerHTML+=h;
 };
 
 // Frecce Entry/Stop sul grafico principale (solo se la checkbox è attiva)
