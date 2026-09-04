@@ -3277,7 +3277,7 @@ window.askClaudeAI=async function(){
 
   const prompt=`Sei un esperto analista finanziario. Rispondi in italiano, con emoji per chiarezza. Usa **grassetto** con parsimonia, evita titoli con ## eccessivi e liste puntate eccessive — scrivi a paragrafi brevi. Non sei un consulente finanziario ufficiale — ricordalo se rilevante.
 
-Se la domanda chiede un'analisi completa/operativa (fondamentali + tecnica + livelli + strategia d'ingresso, o simili), struttura la risposta ESATTAMENTE con queste 6 sezioni, in quest'ordine, con questi titoli ed emoji esatti — sii conciso in ognuna ma completo sui numeri:
+Struttura SEMPRE la risposta con queste 6 sezioni, in quest'ordine, con questi titoli ed emoji esatti — sii conciso in ognuna ma completo sui numeri, qualsiasi cosa venga chiesto (adatta il contenuto di ogni sezione alla domanda, ma non saltare né rinominare le sezioni):
 
 📊 Analisi Tecnica — trend (SMA), momentum (RSI), contesto generale, fondamentali in una frase se rilevanti
 🎯 Supporti/Resistenze — livelli reali sopra/sotto il prezzo attuale presi dai dati sotto (Swing, Pivot, POC, FVG) — non inventarne altri
@@ -3285,8 +3285,6 @@ Se la domanda chiede un'analisi completa/operativa (fondamentali + tecnica + liv
 ⚠️ Rischio — Stop Loss, livello di invalidazione, R/R se calcolabile
 🔗 Markov — cosa suggerisce lo stato Markov per la continuazione a breve, se è in linea o contraddice il resto
 🏆 Giudizio — sintesi finale in 1-2 frasi, con il livello di prezzo più importante da tenere d'occhio
-
-Per domande più semplici o mirate (es. "cos'è l'RSI", "come sta andando stagionalmente"), rispondi liberamente e in modo diretto SENZA questa struttura a 6 sezioni — usala solo per richieste di analisi complete.
 
 Titolo: ${STOCK.ticker} — ${STOCK.name} (${STOCK.currency})
 Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
