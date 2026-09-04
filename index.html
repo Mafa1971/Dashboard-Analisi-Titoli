@@ -2927,7 +2927,32 @@ function calcSupportResistancePivot(closes,highs,lows,lookback=60){
 }
 
 function mdToHtml(text){
-  return text
+  // Prima gestiamo le eventuali tabelle Markdown (| col | col |) — senza
+  // questo passaggio apparirebbero come testo grezzo pieno di simboli "|".
+  const lines=text.split("\n");
+  const outLines=[];
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    const isTableRow=/^\s*\|.*\|\s*$/.test(line);
+    const nextIsSeparator = i+1<lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i+1]) && lines[i+1].includes("-");
+    if(isTableRow && nextIsSeparator){
+      const splitCells=(l)=>l.split("|").map(c=>c.trim()).filter((c,idx,arr)=>!(idx===0&&c==="")&&!(idx===arr.length-1&&c===""));
+      let tableHtml=`<table><tr>${splitCells(line).map(c=>`<th>${c}</th>`).join("")}</tr>`;
+      let j=i+2;
+      while(j<lines.length && /^\s*\|.*\|\s*$/.test(lines[j])){
+        tableHtml+=`<tr>${splitCells(lines[j]).map(c=>`<td>${c}</td>`).join("")}</tr>`;
+        j++;
+      }
+      tableHtml+="</table>";
+      outLines.push(tableHtml);
+      i=j;
+    } else {
+      outLines.push(line);
+      i++;
+    }
+  }
+  return outLines.join("\n")
     .replace(/^### (.*)$/gm,"<strong style='font-size:13px;'>$1</strong>")
     .replace(/^## (.*)$/gm,"<div style='margin-top:10px;font-weight:800;color:var(--gold);'>$1</div>")
     .replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>")
@@ -3118,10 +3143,42 @@ Cosa implica questo regime di mercato per chi possiede o valuta questo titolo? C
     }
     const s=LAST_STOCK_SCORE;
     const compLines=Object.entries(s.components).map(([k,v])=>`- ${SCORE_LABELS[k]}: ${v!=null?v.toFixed(0)+"/100":"N/D"}`).join("\n");
-    prompt=base+`Stock Quant Score aggregato: ${s.score}/100 (basato su ${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili, copertura ${s.coveragePct}% del peso totale):
-${compLines}
+    const price=STOCK.closes[STOCK.closes.length-1];
+    const rsi=rsiSeriesCalc(STOCK.closes,14).slice(-1)[0];
+    const threshold=parseFloat(el("zigzagThreshold")?.value)||10;
+    const cycles=LAST_CYCLES||computeCycles(STOCK.dates,STOCK.closes,threshold);
+    const vpFull=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+    let markovTxt="N/D";
+    try{
+      const series=periodReturnSeries(STOCK.dates,STOCK.closes,"daily");
+      const states=classifyStates(series,0.5,1.5);
+      const {matrix}=buildTransitionMatrix(states);
+      const cs=states[states.length-1];
+      const row=matrix[cs];
+      if(row) markovTxt=`Stato attuale: ${STATE_NAMES[cs]} — probabilità domani: ${STATE_NAMES.map((n,i)=>`${n} ${row[i]!=null?(row[i]*100).toFixed(0)+"%":"N/D"}`).join(", ")}`;
+    }catch(e){}
+    const verdict=computeVerdict();
 
-Questo punteggio composito ha senso? Quali aree pesano di più nel risultato finale, e ci sono contraddizioni tra le diverse aree (es. bilancio forte ma momentum debole) che vale la pena segnalare a chi guarda solo il numero finale?`;
+    prompt=base+`Costruisci un REPORT COMPLETO su ${STOCK.ticker} nello stesso stile di un report professionale sintetico, usando SOLO i dati sotto (non inventare numeri):
+
+Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)} | RSI(14): ${rsi?.toFixed(0)||"N/D"}
+Stock Quant Score: ${s.score}/100 (${Object.keys(SCORE_WEIGHTS).length-s.missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree disponibili)
+${compLines}
+${LAST_REGIME_RESULT?`Regime di Mercato: ${LAST_REGIME_RESULT.regime} (${LAST_REGIME_RESULT.score}/100), benchmark ${LAST_REGIME_RESULT.benchTicker}, volatilità mercato 21gg ${LAST_REGIME_RESULT.benchVol?.toFixed(1)}%`:"Regime di Mercato: non calcolato in questa sessione"}
+${cycles.current?`Ciclo attuale: ${cycles.current.type==="up"?"rialzista":"ribassista"} da ${cycles.current.days} giorni, ${fmtPct(cycles.current.retPct)} — ciclo medio storico rialzista: ${cycles.up.avgDays!=null?Math.round(cycles.up.avgDays)+"gg, "+fmtPct(cycles.up.avgReturn):"N/D"}`:""}
+${vpFull?`Volume Profile: POC ${vpFull.poc.toFixed(2)}, Value Area ${vpFull.vaLow.toFixed(2)}-${vpFull.vaHigh.toFixed(2)} (prezzo attuale ${price>vpFull.vaHigh?"SOPRA":price<vpFull.vaLow?"SOTTO":"DENTRO"} la Value Area)`:""}
+Markov: ${markovTxt}
+${verdict?`Verdetto Operativo già calcolato dal sistema — USA ESATTAMENTE questi valori nella sezione finale, non inventarne di tuoi: Regime=${verdict.regime||"N/D"}, Direzione=${verdict.direzione}, Timing=${verdict.timing}, Rischio=${verdict.rischio}`:"Verdetto Operativo: non ancora calcolato (serve aver fatto anche Regime e Strategia)"}
+
+(Il limite di 200 parole indicato sopra NON si applica qui — questo report ha bisogno di più spazio per tabella, sezioni e semaforo, resta comunque diretto senza ripetizioni.)
+
+STRUTTURA RICHIESTA:
+1. Una tabella riassuntiva Indicatore | Lettura | Valutazione (emoji 🟢🟡🔴) con le voci principali sopra.
+2. 3-4 sezioni numerate, ciascuna con un titolo breve, che approfondiscono: (a) trend/momentum, (b) maturità del ciclo attuale vs media storica, (c) posizione rispetto a POC/Value Area, (d) Markov a breve termine. Usa SOLO i numeri forniti.
+3. Un "semaforo" finale a righe (🟢🟡🔴 per Trend/Momentum/Breve Termine/Rischio ecc.).
+4. Una sezione finale con il Verdetto Operativo — se sopra è stato fornito già calcolato, USA QUEI VALORI ESATTI (Regime/Direzione/Timing/Rischio), non ricalcolarli né inventarne di diversi; aggiungi solo 1-2 frasi di commento.
+
+Sii diretto, numeri concreti, evita frasi vaghe.`;
   }
 
   if(tabName==="strategia"){
