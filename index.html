@@ -5048,12 +5048,38 @@ function computeEntryScore(direction,horizon){
   return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight, atr, structuralStop, atrStop };
 }
 
+// Calcola le zone A (retest/pullback) e B (breakout) come DATI concreti,
+// usando gli stessi livelli reali del prompt AI (Swing, Pivot, Trendline) —
+// necessario per poterle disegnare sul grafico, non solo scriverle nel testo.
+function computeApproachZones(direction){
+  if(!STOCK) return {zoneA:null,zoneB:null};
+  const price=STOCK.closes[STOCK.closes.length-1];
+  const n=STOCK.closes.length;
+  const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+  const supportLine=detectTrendline(sw.lows), resistanceLine=detectTrendline(sw.highs);
+  const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
+  const supportLineVal=supportLine?trendlineValueAt(supportLine,n-1):null;
+  const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
+
+  if(direction==="long"){
+    const belowCandidates=[piv?.pivot,piv?.s1,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
+    const aboveCandidates=[piv?.r1,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
+    return { zoneA: belowCandidates.length?Math.max(...belowCandidates):null, zoneB: aboveCandidates.length?Math.min(...aboveCandidates):null };
+  } else {
+    const aboveCandidates=[piv?.pivot,piv?.r1,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
+    const belowCandidates=[piv?.s1,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
+    return { zoneA: aboveCandidates.length?Math.min(...aboveCandidates):null, zoneB: belowCandidates.length?Math.max(...belowCandidates):null };
+  }
+}
+
 let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null;
 window.calcStrategy=function(){
   if(!STOCK){ el("stratStatus").textContent="Analizza prima un titolo"; return; }
   const horizon=el("stratHorizon").value;
   const long=computeEntryScore("long",horizon);
   const short=computeEntryScore("short",horizon);
+  Object.assign(long, computeApproachZones("long"));
+  Object.assign(short, computeApproachZones("short"));
   LAST_STRATEGY_LONG=long; LAST_STRATEGY_SHORT=short;
 
   function renderCard(res,dirLabel,color){
@@ -5070,6 +5096,8 @@ window.calcStrategy=function(){
       <div style="font-size:11px;color:var(--dim);">Prezzo attuale: <strong style="color:var(--txt);">${STOCK.currency} ${res.price.toFixed(2)}</strong></div>
       <div style="font-size:11px;color:var(--dim);">Invalidazione (stop): <strong style="color:#ff6b6b;">${res.stop!=null?STOCK.currency+" "+res.stop.toFixed(2):"N/D"}</strong> ${res.stopType?"("+res.stopType+")":""}</div>
       <div style="font-size:11px;color:var(--dim);">Rischio dall'attuale: <strong style="color:#ff9f1c;">${res.riskPct!=null?res.riskPct.toFixed(1)+"%":"N/D"}</strong></div>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">Zona A (retest/pullback): <strong style="color:#c77dff;">${res.zoneA!=null?STOCK.currency+" "+res.zoneA.toFixed(2):"nessun livello reale trovato"}</strong></div>
+      <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong></div>
     </div>`;
   }
   el("stratLongCard").innerHTML=renderCard(long,"📈 LONG","#00d4b8");
@@ -5119,6 +5147,18 @@ function drawStrategyOverlay(ctx,w,ts,xForIdx){
         ctx.textAlign="left";
       }
     }
+    // Zona A (retest/pullback) e Zona B (breakout) — livelli reali distinti
+    // dall'entry "a mercato" sopra, sottili per non confonderle con lo stop.
+    [{val:res.zoneA,label:"A (retest)",col2:"#c77dff"},{val:res.zoneB,label:"B (breakout)",col2:"#4fa3ff"}].forEach(({val,label,col2})=>{
+      if(val==null) return;
+      const yZone=candleSeries.priceToCoordinate(val);
+      if(yZone==null) return;
+      ctx.strokeStyle=col2; ctx.lineWidth=1.2; ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(Math.max(0,x-40),yZone); ctx.lineTo(w,yZone); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=col2; ctx.font="9px JetBrains Mono, monospace"; ctx.textAlign="left";
+      ctx.fillText(dir.toUpperCase()+" "+label+" "+val.toFixed(2), Math.min(x+6,w-140), yZone-4);
+      ctx.textAlign="left";
+    });
   });
 }
 </script>
