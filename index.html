@@ -4569,17 +4569,25 @@ async function renderSectorComparison(){
   // Se il settore non è stato rilevato da Yahoo (loadQuickRatios), proviamo
   // un'ultima chiamata dedicata ad Alpha Vantage OVERVIEW prima di arrenderci
   // — invece di nascondere il pannello in silenzio senza spiegare perché.
+  let avRateLimitMsg=null;
   if(!STOCK_SECTOR){
     el("regimeSectorInfo").textContent="⏳ Settore non rilevato da Yahoo, provo Alpha Vantage...";
     try{
       const res=await fetch(`/.netlify/functions/fundamentals?ticker=${encodeURIComponent(STOCK.ticker)}&statement=overview`);
       const json=await res.json();
       if(json?.Sector) STOCK_SECTOR=json.Sector;
-    }catch(e){ /* silenzioso, gestiamo sotto */ }
+      // Alpha Vantage risponde SEMPRE con "200 OK" anche quando ha finito le
+      // richieste giornaliere (25/giorno gratis) — il messaggio vero è dentro
+      // il corpo, in "Note" o "Information". Lo intercettiamo qui invece di
+      // interpretarlo silenziosamente come "settore non trovato".
+      if(!STOCK_SECTOR && (json?.Note || json?.Information)) avRateLimitMsg=json.Note||json.Information;
+    }catch(e){ avRateLimitMsg="Errore di rete verso Alpha Vantage: "+e.message; }
   }
 
   if(!STOCK_SECTOR){
-    el("regimeSectorInfo").innerHTML=`❌ Settore non disponibile per <strong>${STOCK.ticker}</strong> né da Yahoo né da Alpha Vantage — capita più spesso su titoli non statunitensi o meno coperti.`;
+    el("regimeSectorInfo").innerHTML = avRateLimitMsg
+      ? `❌ Alpha Vantage non ha restituito il settore per <strong>${STOCK.ticker}</strong> — risposta ricevuta: <em>"${avRateLimitMsg}"</em> (spesso significa limite di 25 richieste/giorno raggiunto, riprova domani o aspetta qualche minuto).`
+      : `❌ Settore non disponibile per <strong>${STOCK.ticker}</strong> né da Yahoo né da Alpha Vantage — capita più spesso su titoli non statunitensi o meno coperti.`;
     el("regimeSectorChart").style.display="none";
     return;
   }
