@@ -589,6 +589,12 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="scoreMainWrap"></div>
         </div>
 
+        <div class="panel" id="verdictPanel" style="display:none;">
+          <div class="panel-title">🎯 VERDETTO OPERATIVO</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il punteggio 0-100 sopra dice "quanto è solido il titolo", non "compra ora". Questo pannello separa il contesto (Regime) dalla direzione (Long/Short), dal TIMING (sei in una buona zona di ingresso o stai inseguendo il prezzo?), e dal rischio corrente — richiede di aver calcolato anche Regime e Strategia per essere completo.</div>
+          <div id="verdictWrap"></div>
+        </div>
+
         <div class="panel" id="scoreBreakdownPanel" style="display:none;">
           <div class="panel-title">📊 DETTAGLIO PER AREA</div>
           <div id="scoreBreakdownWrap" style="overflow-x:auto;"></div>
@@ -4802,6 +4808,82 @@ window.calcStockScore=function(){
   el("scoreBreakdownPanel").style.display="block";
   el("scoreAiPanel").style.display="block";
   el("scoreStatus").innerHTML=missing.length?`⚠️ ${missing.length} aree non disponibili (pesi redistribuiti automaticamente tra quelle presenti)`:"✅ Score calcolato su tutte le aree disponibili";
+  renderVerdict();
+};
+
+// ── VERDETTO OPERATIVO: separa Regime / Direzione / Timing / Rischio /
+// Strategia invece di un singolo numero — un punteggio alto non dice se è
+// il momento giusto per comprare, solo se il titolo è "solido". Riusa dati
+// già calcolati in Regime e Strategia (se disponibili).
+function computeVerdict(){
+  if(!STOCK) return null;
+
+  const regime = LAST_REGIME_RESULT?.regime ?? null;
+  const regimeColor = LAST_REGIME_RESULT ? (LAST_REGIME_RESULT.score>=60?"#00d4b8":LAST_REGIME_RESULT.score>=40?"#ffd23f":"#ff6b6b") : "var(--dim)";
+
+  const longScore=LAST_STRATEGY_LONG?.score, shortScore=LAST_STRATEGY_SHORT?.score;
+  let direzione="N/D", direzioneCol="var(--dim)";
+  if(longScore!=null && shortScore!=null){
+    const diff=longScore-shortScore;
+    if(diff>=15 && longScore>=50){ direzione="LONG"; direzioneCol="#00d4b8"; }
+    else if(diff<=-15 && shortScore>=50){ direzione="SHORT"; direzioneCol="#ff6b6b"; }
+    else { direzione="NEUTRO"; direzioneCol="#ffd23f"; }
+  }
+
+  // TIMING: quanto il prezzo attuale è distante (in multipli di ATR) dalla
+  // Zona A (retest) nella direzione scelta — vicino = buon punto d'ingresso,
+  // lontano = si starebbe "inseguendo" il prezzo.
+  let timing="N/D", timingCol="var(--dim)";
+  const relevantRes = direzione==="SHORT" ? LAST_STRATEGY_SHORT : LAST_STRATEGY_LONG;
+  if(relevantRes && relevantRes.zoneA!=null && relevantRes.atr){
+    const dist=Math.abs(relevantRes.price-relevantRes.zoneA)/relevantRes.atr;
+    if(dist<=1.2){ timing="ORA / VICINO A ZONA"; timingCol="#00d4b8"; }
+    else if(dist<=2.5){ timing="ATTENDERE CONFERMA"; timingCol="#ffd23f"; }
+    else { timing="ASPETTARE PULLBACK"; timingCol="#ff9f1c"; }
+  }
+
+  // RISCHIO: RSI esteso (ipercomprato/ipervenduto) + ATR in aumento negli
+  // ultimi ~10gg rispetto a prima = rischio che sta salendo, non solo un
+  // livello statico.
+  let rischio="MODERATO", rischioCol="#ffd23f";
+  const rsi=rsiSeriesCalc(STOCK.closes,14).slice(-1)[0];
+  const atrArr=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14);
+  const atrNow=atrArr[atrArr.length-1], atrPrev=atrArr[Math.max(0,atrArr.length-11)];
+  const atrRising = atrNow!=null && atrPrev!=null && atrNow>atrPrev*1.1;
+  const rsiExtended = rsi!=null && (rsi>72 || rsi<28);
+  if(rsiExtended && atrRising){ rischio="IN AUMENTO"; rischioCol="#ff6b6b"; }
+  else if(!rsiExtended && !atrRising){ rischio="SOTTO CONTROLLO"; rischioCol="#00d4b8"; }
+
+  let strategiaText="Dati insufficienti per un suggerimento operativo — calcola anche Regime e Strategia.";
+  if(direzione==="LONG"){
+    strategiaText = timing.startsWith("ORA")
+      ? "Zona di ingresso vicina — valutare apertura o incremento posizione, con stop dalla Strategia."
+      : "Trend favorevole ma prezzo esteso — meglio attendere un ritorno verso la zona di supporto prima di nuovi ingressi.";
+  } else if(direzione==="SHORT"){
+    strategiaText = timing.startsWith("ORA")
+      ? "Zona di ingresso short vicina — valutare apertura posizione ribassista, con stop dalla Strategia."
+      : "Bias ribassista ma prezzo non ancora in zona utile — attendere conferma prima di agire.";
+  } else if(direzione==="NEUTRO"){
+    strategiaText="Nessun bias direzionale chiaro tra Long e Short — meglio attendere maggiore chiarezza prima di aprire una posizione.";
+  }
+
+  return { regime, regimeColor, direzione, direzioneCol, timing, timingCol, rischio, rischioCol, strategiaText };
+}
+
+window.renderVerdict=function(){
+  const v=computeVerdict();
+  if(!v){ el("verdictPanel").style.display="none"; return; }
+  const row=(label,val,col)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">
+    <span style="font-size:11px;color:var(--dim);font-weight:700;letter-spacing:0.5px;">${label}</span>
+    <span style="font-size:13px;font-weight:800;color:${col};">${val}</span>
+  </div>`;
+  let h=row("REGIME",v.regime??"N/D — calcola il Regime",v.regimeColor);
+  h+=row("DIREZIONE",v.direzione,v.direzioneCol);
+  h+=row("TIMING",v.timing,v.timingCol);
+  h+=row("RISCHIO",v.rischio,v.rischioCol);
+  h+=`<div style="margin-top:10px;padding:10px;background:var(--panel2);border-radius:8px;font-size:12px;color:var(--txt);"><strong style="color:var(--dim);font-size:10px;letter-spacing:0.5px;">STRATEGIA — </strong>${v.strategiaText}</div>`;
+  el("verdictWrap").innerHTML=h;
+  el("verdictPanel").style.display="block";
 };
 
 // ── STRATEGIA: ENTRY SCORE + INVALIDAZIONE (Long/Short, Swing/Posizionale) ─
@@ -5156,6 +5238,7 @@ window.calcStrategy=function(){
   el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
   drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
   calcPositionSizing(); // aggiorna anche il position sizing con i nuovi livelli
+  if(LAST_STOCK_SCORE) renderVerdict(); // aggiorna il verdetto se lo Score era già stato calcolato prima
 };
 
 window.calcPositionSizing=function(){
