@@ -7,6 +7,7 @@
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -670,6 +671,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">📜 STORICO ANALISI
             <button class="btn ghost" style="font-size:10px;" onclick="exportAnalysisHistoryCSV()">💾 Esporta Storico (CSV)</button>
             <button class="btn ghost" style="font-size:10px;" onclick="exportCurrentAnalysisJSON()">📥 Esporta Analisi Corrente (JSON)</button>
+            <button class="btn primary" style="font-size:10px;" onclick="exportAllToExcel()">📊 Esporta Tutto (Excel)</button>
             <button class="btn primary" style="font-size:10px;" onclick="generatePdfReport()">📄 Esporta PDF Riassuntivo</button>
             <button class="btn ghost" style="font-size:10px;" onclick="exportFundamentalsHistoryCSV()">📊 Esporta Bilanci Completi (CSV, anno per anno)</button>
             <button class="btn danger" style="font-size:10px;background:#ff6b6b22;border-color:#ff6b6b44;color:#ff6b6b;" onclick="clearAnalysisHistory()">🗑 Svuota Storico</button>
@@ -3561,6 +3563,122 @@ window.exportFundamentalsHistoryCSV=function(){
   a.href=URL.createObjectURL(blob); a.download="bilanci_completi_"+new Date().toISOString().slice(0,10)+".csv";
   a.click();
 };
+window.exportAllToExcel=function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  const wb=XLSX.utils.book_new();
+  const addSheet=(rows,name)=>{
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31)); // Excel limita i nomi foglio a 31 caratteri
+  };
+
+  // ── RIEPILOGO ──────────────────────────────────────────────────────
+  const price=STOCK.closes[STOCK.closes.length-1];
+  const totalReturn=((price-STOCK.closes[0])/STOCK.closes[0]*100);
+  const riepilogo=[
+    ["Ticker",STOCK.ticker], ["Nome",STOCK.name], ["Valuta",STOCK.currency],
+    ["Prezzo Attuale",price], ["Rendimento Periodo (%)",totalReturn.toFixed(2)],
+    ["Periodo",`${STOCK.dates[0].toISOString().slice(0,10)} - ${STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10)}`],
+    ["Sessioni",STOCK.dates.length], ["Generato il",new Date().toLocaleString("it-IT")]
+  ];
+  if(LAST_STOCK_SCORE) riepilogo.push(["Stock Quant Score",LAST_STOCK_SCORE.score+"/100"]);
+  if(LAST_REGIME_RESULT) riepilogo.push(["Regime di Mercato",LAST_REGIME_RESULT.regime+" ("+LAST_REGIME_RESULT.score+"/100)"]);
+  const verdict=computeVerdict();
+  if(verdict) riepilogo.push(["Verdetto — Direzione",verdict.direzione],["Verdetto — Timing",verdict.timing],["Verdetto — Rischio",verdict.rischio]);
+  addSheet(riepilogo,"Riepilogo");
+
+  // ── STOCK SCORE — DETTAGLIO ──────────────────────────────────────────
+  if(LAST_STOCK_SCORE){
+    const rows=[["Area","Peso (%)","Punteggio"]];
+    Object.entries(SCORE_WEIGHTS).forEach(([key,weight])=>{
+      const val=LAST_STOCK_SCORE.components[key];
+      rows.push([SCORE_LABELS[key],weight,val!=null?val.toFixed(0):"N/D"]);
+    });
+    addSheet(rows,"Stock Score");
+  }
+
+  // ── STRATEGIA — LONG e SHORT ─────────────────────────────────────────
+  if(LAST_STRATEGY_LONG){
+    [["Long",LAST_STRATEGY_LONG],["Short",LAST_STRATEGY_SHORT]].forEach(([label,res])=>{
+      const rows=[["Metrica","Valore"],
+        ["Score",res.score!=null?res.score+"/100":"N/D"],
+        ["Prezzo Attuale",res.price],
+        ["Stop (Invalidazione)",res.stop??"N/D"], ["Tipo Stop",res.stopType??"N/D"],
+        ["Zona A (retest)",res.zoneA??"N/D"], ["Zona B (breakout)",res.zoneB??"N/D"], ["Zona C (tranche 3)",res.zoneC??"N/D"],
+        ["Rischio dall'attuale (%)",res.riskPct!=null?res.riskPct.toFixed(1):"N/D"],
+        [], ["Componente","Punteggio"]];
+      res.components.forEach(c=>rows.push([c.label,c.val!=null?c.val.toFixed(0):"N/D"]));
+      addSheet(rows,"Strategia "+label);
+    });
+  }
+
+  // ── REGIME DI MERCATO ─────────────────────────────────────────────
+  if(LAST_REGIME_RESULT){
+    const r=LAST_REGIME_RESULT;
+    addSheet([["Metrica","Valore"],
+      ["Regime",r.regime], ["Punteggio",r.score],
+      ["Benchmark",r.benchTicker], ["Trend Mercato",r.benchTrend>0?"Rialzista":"Ribassista"],
+      ["Volatilità Mercato (21gg, %)",r.benchVol!=null?r.benchVol.toFixed(1):"N/D"],
+      ["Settore",STOCK_SECTOR||"N/D"]
+    ],"Regime");
+  }
+
+  // ── BILANCIO (multi-anno) ────────────────────────────────────────────
+  if(LAST_FUND_ROWS&&LAST_FUND_ROWS.length){
+    const headers=["Anno","Ricavi","Utile Netto","Margine Netto (%)","EBITDA","EBIT","Utile Lordo","EPS",
+      "Attivo Totale","Patrimonio Netto","Passivo Totale","Attivo Corrente","Passivo Corrente",
+      "Debito a Lungo","Utili non Distribuiti","Azioni in Circolazione","Cash Flow Operativo","FCF"];
+    const rows=[headers];
+    LAST_FUND_ROWS.forEach(r=>rows.push([r.year?.slice(0,4),r.revenue,r.netIncome,r.netMargin,r.ebitda,r.ebit,
+      r.grossProfit,r.eps,r.totalAssets,r.totalEquity,r.totalLiab,r.totalCurrentAssets,r.totalCurrentLiab,
+      r.longTermDebt,r.retainedEarnings,r.sharesOutstanding,r.opCF,r.fcf]));
+    addSheet(rows,"Bilancio");
+  }
+
+  // ── PATTERN CORRELATION ──────────────────────────────────────────────
+  if(LAST_PATTERN_RESULT){
+    const p=LAST_PATTERN_RESULT;
+    addSheet([["Metrica","Valore"],
+      ["Match Storici Trovati",p.matches.length], ["Correlazione Media (%)",(p.avgCorr*100).toFixed(0)],
+      ["Probabilità Esito Rialzista (%)",p.probability!=null?p.probability.toFixed(0):"N/D"],
+      ["Match Più Correlato — Esito (%)",p.mostCorrelated?p.mostCorrelated.finalReturn.toFixed(2):"N/D"]
+    ],"Pattern");
+  }
+
+  // ── MONTE CARLO ──────────────────────────────────────────────────────
+  if(LAST_MC_RESULT){
+    const m=LAST_MC_RESULT;
+    addSheet([["Metrica","Valore"],
+      ["Orizzonte (giorni)",m.horizon], ["Simulazioni",m.nSims],
+      ["Scenario Pessimistico 5° (%)",m.pessimistic.toFixed(2)], ["Scenario Mediano (%)",m.median.toFixed(2)],
+      ["Scenario Ottimistico 95° (%)",m.optimistic.toFixed(2)], ["Probabilità di Perdita (%)",m.probLoss.toFixed(1)],
+      ["VaR 95% (%)",m.var95.toFixed(2)], ["CVaR 95% (%)",m.cvar95.toFixed(2)]
+    ],"Monte Carlo");
+  }
+
+  // ── CICLI E VOLUME PROFILE (sempre disponibili) ────────────────────
+  try{
+    const threshold=parseFloat(el("zigzagThreshold")?.value)||10;
+    const cycles=LAST_CYCLES||computeCycles(STOCK.dates,STOCK.closes,threshold);
+    const vpFull=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+    const rows=[["Metrica","Valore"]];
+    if(cycles.current) rows.push(["Ciclo in Corso",(cycles.current.type==="up"?"Rialzista":"Ribassista")+", "+cycles.current.days+"gg, "+cycles.current.retPct.toFixed(1)+"%"]);
+    rows.push(["Ciclo Medio Rialzista (gg)",cycles.up.avgDays!=null?Math.round(cycles.up.avgDays):"N/D"]);
+    rows.push(["Ciclo Medio Ribassista (gg)",cycles.down.avgDays!=null?Math.round(cycles.down.avgDays):"N/D"]);
+    if(vpFull){ rows.push(["POC (storico completo)",vpFull.poc.toFixed(2)]); rows.push(["Value Area",vpFull.vaLow.toFixed(2)+" - "+vpFull.vaHigh.toFixed(2)]); }
+    addSheet(rows,"Cicli e Volume Profile");
+  }catch(e){}
+
+  // ── ANALISI AI (log completo per questo ticker) ──────────────────────
+  const tickerAiLog=AI_ANALYSIS_LOG.filter(a=>a.ticker===STOCK.ticker);
+  if(tickerAiLog.length){
+    const rows=[["Tab","Data/Ora","Risposta"]];
+    tickerAiLog.forEach(a=>rows.push([a.tab,new Date(a.timestamp).toLocaleString("it-IT"),a.answer]));
+    addSheet(rows,"Analisi AI");
+  }
+
+  XLSX.writeFile(wb, `analisi_${STOCK.ticker}_${new Date().toISOString().slice(0,10)}.xlsx`);
+};
+
 window.exportCurrentAnalysisJSON=function(){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   const returns=calcDailyReturns(STOCK.closes);
