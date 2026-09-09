@@ -3475,11 +3475,15 @@ function mergeHistories(local, cloud){
 }
 
 async function loadHistoryFromCloudAndMerge(){
-  const local=loadAnalysisHistory();
   try{
     const res=await fetch("/.netlify/functions/history");
     if(!res.ok) throw new Error("status "+res.status);
     const cloud=await res.json();
+    // IMPORTANTE: leggiamo loadAnalysisHistory() QUI, dopo la fetch (non
+    // prima) — se l'utente analizza un titolo MENTRE questa richiesta è
+    // ancora in corso, una copia "local" catturata all'inizio sarebbe
+    // vecchia e il merge cancellerebbe l'analisi appena fatta.
+    const local=loadAnalysisHistory();
     const merged=mergeHistories(local, Array.isArray(cloud)?cloud:[]);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(merged.slice(-200)));
     // IMPORTANTE: dopo aver unito locale+cloud, il risultato va anche
@@ -3520,15 +3524,18 @@ async function syncWatchlistToCloud(list){
   }catch(e){ /* fallisce in silenzio, resta comunque salvata in locale */ }
 }
 async function loadWatchlistFromCloudAndMerge(){
-  const local=WATCHLIST;
   try{
     const res=await fetch("/.netlify/functions/history?key=watchlist");
     if(!res.ok) throw new Error("status "+res.status);
     const cloud=await res.json();
     if(!Array.isArray(cloud)) return;
-    // Merge per ticker: unisce locale+cloud, senza duplicati.
+    // Merge per ticker: unisce locale+cloud, senza duplicati. IMPORTANTE:
+    // leggiamo WATCHLIST qui, ORA (non una variabile "local" catturata
+    // all'inizio della funzione) — altrimenti se l'utente carica un file
+    // MENTRE questa richiesta di rete è ancora in corso, il merge userebbe
+    // una foto vecchia (magari vuota) e cancellerebbe quello appena caricato.
     const byTicker={};
-    [...local, ...cloud].forEach(w=>{ if(w&&w.ticker) byTicker[w.ticker]=w; });
+    [...WATCHLIST, ...cloud].forEach(w=>{ if(w&&w.ticker) byTicker[w.ticker]=w; });
     WATCHLIST=Object.values(byTicker);
     localStorage.setItem(WATCHLIST_KEY, JSON.stringify(WATCHLIST));
     await syncWatchlistToCloud(WATCHLIST); // rimanda su cloud il merge, come per lo Storico
