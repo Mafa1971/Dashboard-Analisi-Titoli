@@ -888,6 +888,13 @@ window.showHistoryWithoutAnalysis=function(){
   switchTab("Storico");
 };
 window.switchTab=function(name){
+  // Storico e Watchlist non richiedono un'analisi già fatta — forziamo
+  // visibile l'area risultati anche se STOCK non è ancora caricato, così
+  // funzionano subito indipendentemente da quale pulsante li ha aperti.
+  if((name==="Storico"||name==="Watchlist") && el("resultsWrap").style.display!=="block"){
+    el("resultsWrap").style.display="block";
+    el("emptyWrap").style.display="none";
+  }
   document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
   document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
   document.querySelectorAll(".tabnav").forEach(b=>b.classList.remove("active"));
