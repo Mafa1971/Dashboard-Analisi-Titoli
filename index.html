@@ -3543,7 +3543,6 @@ async function loadWatchlistFromCloudAndMerge(){
   }catch(e){ /* offline o non raggiungibile: resta la sola copia locale */ }
 }
 loadWatchlistFromStorage();
-renderWatchlistTable();
 loadWatchlistFromCloudAndMerge();
 
 window.loadWatchlistFile=function(event){
