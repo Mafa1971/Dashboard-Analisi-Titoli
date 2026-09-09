@@ -122,6 +122,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Regime')" id="tnRegime"><span style="font-size:16px;">🌡️</span> Regime</button>
         <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
         <button class="btn tabnav" onclick="switchTab('Strategia')" id="tnStrategia"><span style="font-size:16px;">🎯</span> Strategia</button>
+        <button class="btn tabnav" onclick="switchTab('Watchlist')" id="tnWatchlist"><span style="font-size:16px;">📋</span> Watchlist</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico"><span style="font-size:16px;">📜</span> Storico</button>
       </nav>
 
@@ -665,6 +666,31 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
+      <!-- TAB WATCHLIST -->
+      <div id="tabWatchlist" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">📋 WATCHLIST</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Carica un file Excel/CSV esportato da uno screener esterno (es. Finviz — deve avere almeno una colonna "Ticker"), oppure incolla i ticker a mano. Ogni riga avrà un link diretto a TradingView e un pulsante per analizzarla subito — l'analisi finisce automaticamente nello Storico come tutte le altre.</div>
+
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+            <div style="flex:1;min-width:260px;">
+              <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">Carica file (.xlsx, .xls, .csv)</label>
+              <input type="file" id="watchlistFileInput" accept=".xlsx,.xls,.csv" onchange="loadWatchlistFile(event)">
+            </div>
+            <div style="flex:1;min-width:260px;">
+              <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">...oppure incolla ticker (separati da virgola, spazio o a capo)</label>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="watchlistPasteInput" placeholder="es. AAPL, NVDA, TSLA" style="flex:1;">
+                <button class="btn primary" onclick="loadWatchlistPaste()">Aggiungi</button>
+              </div>
+            </div>
+          </div>
+          <div id="watchlistStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <button class="btn ghost" style="font-size:10px;" onclick="clearWatchlist()">🗑 Svuota Watchlist</button>
+          <div id="watchlistTableWrap" style="overflow-x:auto;margin-top:14px;"></div>
+        </div>
+      </div>
+
       <!-- TAB STORICO ANALISI -->
       <div id="tabStorico" class="tab-content">
         <div class="panel">
@@ -748,6 +774,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
     <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
     <button class="tab-btn" onclick="switchTab('Strategia')" id="tabBtnStrategia"><span class="tab-icon">🎯</span><span class="tab-label">Strategia</span></button>
+    <button class="tab-btn" onclick="switchTab('Watchlist')" id="tabBtnWatchlist"><span class="tab-icon">📋</span><span class="tab-label">Watchlist</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
@@ -3466,6 +3493,109 @@ async function loadHistoryFromCloudAndMerge(){
 // Sincronizza subito all'apertura della pagina, così lo storico di altri
 // dispositivi è già pronto appena vai sul tab Storico.
 loadHistoryFromCloudAndMerge();
+
+// ── WATCHLIST (import da file screener esterno o incolla manuale) ──────
+let WATCHLIST=[];
+const WATCHLIST_KEY="analyzer_watchlist_v1";
+
+function saveWatchlist(){
+  try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(WATCHLIST)); }catch(e){}
+}
+function loadWatchlistFromStorage(){
+  try{ WATCHLIST=JSON.parse(localStorage.getItem(WATCHLIST_KEY)||"[]"); }catch(e){ WATCHLIST=[]; }
+}
+
+window.loadWatchlistFile=function(event){
+  const file=event.target.files[0];
+  if(!file) return;
+  el("watchlistStatus").textContent="⏳ Lettura del file...";
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const data=new Uint8Array(e.target.result);
+      const wb=XLSX.read(data,{type:"array"});
+      // Alcuni export (es. Finviz con più pagine) hanno più fogli: li leggiamo
+      // tutti, non solo il primo, per non perdere righe.
+      let added=0;
+      wb.SheetNames.forEach(sheetName=>{
+        const json=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:""});
+        json.forEach(row=>{
+          const keys=Object.keys(row);
+          const tickerKey=keys.find(k=>k.trim().toLowerCase()==="ticker"||k.trim().toLowerCase()==="symbol");
+          if(!tickerKey) return;
+          let ticker=String(row[tickerKey]).trim();
+          if(!ticker) return;
+          // Finviz a volte incolla "GME logoGME" nella cella ticker — ripuliamo
+          ticker=ticker.replace(/logo.*$/i,"").replace(/\s+[a-z].*$/,"").trim().toUpperCase();
+          if(!ticker||WATCHLIST.some(w=>w.ticker===ticker)) return;
+          const companyKey=keys.find(k=>/company|name/i.test(k));
+          const sectorKey=keys.find(k=>/^sector$/i.test(k));
+          WATCHLIST.push({ ticker, company: companyKey?String(row[companyKey]).trim():"", sector: sectorKey?String(row[sectorKey]).trim():"" });
+          added++;
+        });
+      });
+      saveWatchlist();
+      renderWatchlistTable();
+      el("watchlistStatus").textContent = added>0
+        ? `✅ ${added} ticker aggiunti dal file (${WATCHLIST.length} totali in watchlist)`
+        : `⚠️ Nessun ticker nuovo trovato — verifica che il file abbia una colonna "Ticker" o "Symbol", o che i ticker non fossero già presenti.`;
+    }catch(err){
+      el("watchlistStatus").textContent="❌ Errore nella lettura del file: "+err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  event.target.value=""; // permette di ricaricare lo stesso file in futuro
+};
+
+window.loadWatchlistPaste=function(){
+  const raw=el("watchlistPasteInput").value;
+  if(!raw.trim()) return;
+  const tickers=raw.split(/[\s,;]+/).map(t=>t.trim().toUpperCase()).filter(t=>t);
+  let added=0;
+  tickers.forEach(ticker=>{
+    if(!WATCHLIST.some(w=>w.ticker===ticker)){ WATCHLIST.push({ticker,company:"",sector:""}); added++; }
+  });
+  el("watchlistPasteInput").value="";
+  saveWatchlist();
+  renderWatchlistTable();
+  el("watchlistStatus").textContent=`✅ ${added} ticker aggiunti manualmente (${WATCHLIST.length} totali in watchlist)`;
+};
+
+window.removeFromWatchlist=function(ticker){
+  WATCHLIST=WATCHLIST.filter(w=>w.ticker!==ticker);
+  saveWatchlist();
+  renderWatchlistTable();
+};
+
+window.clearWatchlist=function(){
+  if(!confirm("Svuotare tutta la watchlist?")) return;
+  WATCHLIST=[];
+  saveWatchlist();
+  renderWatchlistTable();
+};
+
+window.renderWatchlistTable=function(){
+  const wrap=el("watchlistTableWrap");
+  if(!wrap) return;
+  if(WATCHLIST.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Watchlist vuota — carica un file o incolla dei ticker sopra</p></div>`; return; }
+  let h=`<table><tr><th>Ticker</th><th>Company</th><th>Sector</th><th></th></tr>`;
+  WATCHLIST.forEach(w=>{
+    h+=`<tr>
+      <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
+      <td style="font-size:11px;">${w.company||""}</td>
+      <td style="font-size:11px;">${w.sector||""}</td>
+      <td style="white-space:nowrap;">
+        <a href="${getTVUrl(w.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TradingView</a>
+        <button class="btn primary" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${w.ticker}';switchTab('Grafico');analyzeTicker();">🔍 Analizza</button>
+        <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="removeFromWatchlist('${w.ticker}')" title="Rimuovi">✕</button>
+      </td>
+    </tr>`;
+  });
+  h+="</table>";
+  wrap.innerHTML=h;
+};
+loadWatchlistFromStorage();
+renderWatchlistTable();
 
 function saveAnalysisToHistory(totalReturn){
   if(!STOCK) return;
