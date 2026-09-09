@@ -3505,12 +3505,39 @@ loadHistoryFromCloudAndMerge();
 let WATCHLIST=[];
 const WATCHLIST_KEY="analyzer_watchlist_v1";
 
-function saveWatchlist(){
-  try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(WATCHLIST)); }catch(e){}
-}
 function loadWatchlistFromStorage(){
   try{ WATCHLIST=JSON.parse(localStorage.getItem(WATCHLIST_KEY)||"[]"); }catch(e){ WATCHLIST=[]; }
 }
+function saveWatchlist(){
+  try{ localStorage.setItem(WATCHLIST_KEY, JSON.stringify(WATCHLIST)); }catch(e){}
+  syncWatchlistToCloud(WATCHLIST);
+}
+async function syncWatchlistToCloud(list){
+  try{
+    await fetch("/.netlify/functions/history?key=watchlist",{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(list)
+    });
+  }catch(e){ /* fallisce in silenzio, resta comunque salvata in locale */ }
+}
+async function loadWatchlistFromCloudAndMerge(){
+  const local=WATCHLIST;
+  try{
+    const res=await fetch("/.netlify/functions/history?key=watchlist");
+    if(!res.ok) throw new Error("status "+res.status);
+    const cloud=await res.json();
+    if(!Array.isArray(cloud)) return;
+    // Merge per ticker: unisce locale+cloud, senza duplicati.
+    const byTicker={};
+    [...local, ...cloud].forEach(w=>{ if(w&&w.ticker) byTicker[w.ticker]=w; });
+    WATCHLIST=Object.values(byTicker);
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(WATCHLIST));
+    await syncWatchlistToCloud(WATCHLIST); // rimanda su cloud il merge, come per lo Storico
+    renderWatchlistTable();
+  }catch(e){ /* offline o non raggiungibile: resta la sola copia locale */ }
+}
+loadWatchlistFromStorage();
+renderWatchlistTable();
+loadWatchlistFromCloudAndMerge();
 
 window.loadWatchlistFile=function(event){
   const file=event.target.files[0];
