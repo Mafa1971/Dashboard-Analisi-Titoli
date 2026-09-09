@@ -1,9 +1,10 @@
-// Storico condiviso tra dispositivi, salvato come UN UNICO file JSON su
-// Netlify Blobs (chiave "history"). Progettato per uso da UN dispositivo
-// alla volta: ogni scrittura sovrascrive l'intero file, quindi se due
-// dispositivi salvano contemporaneamente l'ultimo vince e l'altro perde
-// le proprie modifiche non ancora sincronizzate — accettabile per un uso
-// personale a singolo utente, ma non usare due schede/dispositivi insieme.
+// Storico E Watchlist condivisi tra dispositivi, salvati come file JSON su
+// Netlify Blobs — una chiave diversa per tipo di dato (?key=history oppure
+// ?key=watchlist), nello stesso "cassetto" cloud. Progettato per uso da UN
+// dispositivo alla volta: ogni scrittura sovrascrive l'intera chiave, quindi
+// se due dispositivi salvano contemporaneamente l'ultimo vince e l'altro
+// perde le proprie modifiche non ancora sincronizzate — accettabile per un
+// uso personale a singolo utente, ma non usare due schede/dispositivi insieme.
 exports.handler = async function (event) {
   const headers = {
     "Access-Control-Allow-Origin": "*",
@@ -14,6 +15,13 @@ exports.handler = async function (event) {
 
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers, body: "" };
+  }
+
+  // Chiave dati richiesta: "history" (default, per compatibilità con le
+  // chiamate esistenti senza parametro) o "watchlist".
+  const dataKey = (event.queryStringParameters && event.queryStringParameters.key) || "history";
+  if (dataKey !== "history" && dataKey !== "watchlist") {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: "Parametro 'key' non valido — deve essere 'history' o 'watchlist'" }) };
   }
 
   // Il require() viene fatto QUI DENTRO (non in cima al file) e in un
@@ -62,10 +70,10 @@ exports.handler = async function (event) {
 
   if (event.httpMethod === "GET") {
     try {
-      const data = await store.get("history", { type: "json" });
+      const data = await store.get(dataKey, { type: "json" });
       return { statusCode: 200, headers, body: JSON.stringify(data || []) };
     } catch (err) {
-      // Chiave non ancora esistente = storico vuoto, comportamento normale, non un errore
+      // Chiave non ancora esistente = dato vuoto, comportamento normale, non un errore
       return { statusCode: 200, headers, body: JSON.stringify([]) };
     }
   }
@@ -77,7 +85,7 @@ exports.handler = async function (event) {
       if (!Array.isArray(body)) {
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Il corpo della richiesta deve essere un array" }) };
       }
-      await store.setJSON("history", body);
+      await store.setJSON(dataKey, body);
       return { statusCode: 200, headers, body: JSON.stringify({ ok: true, count: body.length }) };
     } catch (err) {
       return { statusCode: 500, headers, body: JSON.stringify({ error: "Errore durante il salvataggio: " + err.message }) };
