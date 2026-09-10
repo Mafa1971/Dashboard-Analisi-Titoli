@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FMP — Analizzatore Singolo Titolo</title>
+<title>Tool Analisi Tecnica e Fondamentali</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -75,7 +75,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 <div id="appContent">
   <header class="hdr">
     <div>
-      <div class="logo" style="font-size:17px;">📈 ANALIZZATORE</div>
+      <div class="logo" style="font-size:17px;">📊 TOOL ANALISI TECNICA E FONDAMENTALI</div>
       <div style="font-size:9px;color:var(--dim);letter-spacing:2px;margin-top:2px;">MARIN</div>
     </div>
     <div class="hdr-right">
@@ -696,7 +696,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <input type="text" id="watchlistManualTicker" placeholder="Ticker*" style="width:90px;">
               <input type="text" id="watchlistManualCompany" placeholder="Company" style="width:160px;">
-              <input type="text" id="watchlistManualSector" placeholder="Sector" style="width:130px;">
               <input type="text" id="watchlistManualIndustry" placeholder="Industry" style="width:130px;">
               <input type="text" id="watchlistManualCountry" placeholder="Country" style="width:110px;">
               <button class="btn primary" onclick="addWatchlistManualDetailed()">Aggiungi con dettagli</button>
@@ -3645,7 +3644,6 @@ window.addWatchlistManualDetailed=function(){
   const ticker=(el("watchlistManualTicker").value||"").trim().toUpperCase();
   if(!ticker){ el("watchlistStatus").textContent="⚠️ Il Ticker è obbligatorio."; return; }
   const company=(el("watchlistManualCompany").value||"").trim();
-  const sector=(el("watchlistManualSector").value||"").trim();
   const industry=(el("watchlistManualIndustry").value||"").trim();
   const country=(el("watchlistManualCountry").value||"").trim();
   const note=(el("watchlistNoteInput").value||"").trim();
@@ -3654,17 +3652,16 @@ window.addWatchlistManualDetailed=function(){
   const existing=WATCHLIST.find(w=>w.ticker===ticker);
   if(existing){
     if(company) existing.company=company;
-    if(sector) existing.sector=sector;
     if(industry) existing.industry=industry;
     if(country) existing.country=country;
     existing.tags=existing.tags||[];
     if(!existing.tags.some(t=>t.file===tag.file&&t.note===tag.note)) existing.tags.push(tag);
     el("watchlistStatus").textContent=`✅ ${ticker} era già presente — dettagli aggiornati.`;
   } else {
-    WATCHLIST.push({ ticker, company, sector, industry, country, tags:[tag] });
+    WATCHLIST.push({ ticker, company, industry, country, tags:[tag] });
     el("watchlistStatus").textContent=`✅ ${ticker} aggiunto con i dettagli inseriti (${WATCHLIST.length} totali in watchlist).`;
   }
-  ["watchlistManualTicker","watchlistManualCompany","watchlistManualSector","watchlistManualIndustry","watchlistManualCountry"].forEach(id=>el(id).value="");
+  ["watchlistManualTicker","watchlistManualCompany","watchlistManualIndustry","watchlistManualCountry"].forEach(id=>el(id).value="");
   saveWatchlist();
   renderWatchlistTable();
 };
@@ -3727,7 +3724,7 @@ window.renderWatchlistTable=function(){
 
   const sortArrow=(col)=> WATCHLIST_SORT.column===col ? (WATCHLIST_SORT.dir===1?" ▲":" ▼") : "";
   const th=(col,label)=>`<th style="cursor:pointer;user-select:none;" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
-  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("sector","Sector")}${th("country","Country")}<th>Etichette</th><th></th></tr>`;
+  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Etichette</th><th></th></tr>`;
   list.forEach(w=>{
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
@@ -3736,7 +3733,6 @@ window.renderWatchlistTable=function(){
     h+=`<tr>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
-      <td style="font-size:11px;">${w.sector||""}</td>
       <td style="font-size:11px;">${w.country||""}</td>
       <td style="max-width:220px;">${tagsHtml}</td>
       <td style="white-space:nowrap;">
@@ -4905,7 +4901,7 @@ window.generatePdfReport=function(requestedTicker){
   for(let p=1;p<=pageCount;p++){
     doc.setPage(p);
     doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(150,150,150);
-    doc.text(`FMP Analyzer — Documento generato automaticamente, non costituisce consulenza finanziaria — Pagina ${p}/${pageCount}`, marginL, pageH-8);
+    doc.text(`Tool Analisi Tecnica e Fondamentali — Documento generato automaticamente, non costituisce consulenza finanziaria — Pagina ${p}/${pageCount}`, marginL, pageH-8);
   }
 
   doc.save(`report_${STOCK.ticker}_${new Date().toISOString().slice(0,10)}.pdf`);
