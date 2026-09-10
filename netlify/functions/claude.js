@@ -20,11 +20,15 @@ exports.handler = async function (event) {
     };
   }
 
-  let prompt, imageBase64;
+  let prompt, imageBase64, maxTokens;
   try {
     const body = JSON.parse(event.body || "{}");
     prompt = body.prompt;
     imageBase64 = body.imageBase64 || null;
+    // maxTokens personalizzato per richiesta (es. la tab Strategia ne chiede
+    // uno più basso per generare più in fretta e stare più comoda entro il
+    // timeout di 26s) — con un tetto di sicurezza per non sballare i tempi.
+    maxTokens = Math.min(parseInt(body.maxTokens) || 2400, 3000);
   } catch (e) {
     return { statusCode: 400, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: "Body non valido" }) };
   }
@@ -48,7 +52,7 @@ exports.handler = async function (event) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5", // controlla su docs.claude.com/en/docs/about-claude/models se è uscito un modello più recente
-        max_tokens: 2400, // il timeout della function è 26s (vedi netlify.toml) — 3200 andava in timeout col prompt Strategia esteso, ma il report Score (tabella+sezioni+semaforo) ha bisogno di un po' più di 2000
+        max_tokens: maxTokens,
         messages: [{ role: "user", content }]
       })
     });
