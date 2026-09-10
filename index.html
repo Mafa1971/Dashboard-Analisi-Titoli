@@ -670,7 +670,12 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <div id="tabWatchlist" class="tab-content">
         <div class="panel">
           <div class="panel-title">📋 WATCHLIST</div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Carica un file Excel/CSV esportato da uno screener esterno (es. Finviz — deve avere almeno una colonna "Ticker"), oppure incolla i ticker a mano. Ogni riga avrà un link diretto a TradingView e un pulsante per analizzarla subito — l'analisi finisce automaticamente nello Storico come tutte le altre.</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Carica un file Excel/CSV esportato da uno screener esterno (es. Finviz — deve avere almeno una colonna "Ticker"), oppure incolla i ticker a mano. Ogni riga avrà un link diretto a TradingView e un pulsante per analizzarla subito — l'analisi finisce automaticamente nello Storico come tutte le altre. Se un titolo compare in più file/import diversi, le etichette si accumulano invece di sostituirsi.</div>
+
+          <div style="margin-bottom:10px;">
+            <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">Nota/Categoria per questo import (es. "Fair Value", "Fondamentali ottimi", "Best Growth") — opzionale, si applica sia al file che ai ticker incollati sotto</label>
+            <input type="text" id="watchlistNoteInput" placeholder="es. Fair Value" style="width:100%;max-width:400px;">
+          </div>
 
           <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
             <div style="flex:1;min-width:260px;">
@@ -2995,6 +3000,30 @@ function mdToHtml(text){
 
 let aiChatMessages=[];
 
+// Chiamata condivisa verso la function claude.js, con UN retry automatico
+// e silenzioso se la prima risposta arriva vuota (nessun errore esplicito,
+// ma nemmeno testo) — capita raramente per motivi non sempre chiari lato
+// Anthropic, e un secondo tentativo spesso risolve senza che l'utente se
+// ne accorga. Ritorna sempre {text, error} — error è null se è andata bene.
+async function callClaudeAPI(prompt, imageBase64=null){
+  async function attempt(){
+    const res=await fetch("/.netlify/functions/claude",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ prompt, imageBase64 })
+    });
+    let data;
+    try{ data=await res.json(); }
+    catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
+    return data;
+  }
+  let data=await attempt();
+  if(!data.text && !data.error){
+    await new Promise(r=>setTimeout(r,600)); // piccola pausa prima del retry
+    data=await attempt();
+  }
+  return { text: data.text||null, error: data.text?null:(data.error||"Risposta vuota anche dopo un secondo tentativo — riprova tra qualche secondo.") };
+}
+
 window.askAIAboutTab=async function(tabName){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   const targetId="aiTab"+tabName.charAt(0).toUpperCase()+tabName.slice(1);
@@ -3311,17 +3340,11 @@ Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe ti
   }
 
   try{
-    const res=await fetch("/.netlify/functions/claude",{
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ prompt, imageBase64:null })
-    });
-    let data;
-    try{ data=await res.json(); }
-    catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
-    const answer=data.text||data.error||"Errore nella risposta.";
+    const { text, error } = await callClaudeAPI(prompt, null);
+    const answer=text||error;
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
-    if(data.text){
-      AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:tabName, answer:data.text, timestamp:new Date().toISOString() });
+    if(text){
+      AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:tabName, answer:text, timestamp:new Date().toISOString() });
       saveAiTabAsked(STOCK.ticker, tabName);
     }
   }catch(err){
@@ -3417,20 +3440,12 @@ Domanda: ${question}`;
   }
 
   try{
-    const res=await fetch("/.netlify/functions/claude",{
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ prompt, imageBase64 })
-    });
-    let data;
-    try{ data=await res.json(); }
-    catch(parseErr){
-      throw new Error(res.status>=500?"Il server ha impiegato troppo tempo a rispondere (timeout). Prova senza lo screenshot del grafico, o con una domanda più breve.":"Risposta del server non valida (status "+res.status+")");
-    }
-    const answer=data.text || data.error || "Errore nella risposta.";
+    const { text, error } = await callClaudeAPI(prompt, imageBase64);
+    const answer=text||error;
     el("aiLoadingMsg")?.remove();
     chatEl.innerHTML+=`<div style="align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 10px 0;padding:10px 13px;font-size:12px;max-width:90%;line-height:1.6;">${mdToHtml(answer)}</div>`;
     chatEl.scrollTop=chatEl.scrollHeight;
-    if(data.text) AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:"AI Claude (domanda: "+question+")", answer:data.text, timestamp:new Date().toISOString() });
+    if(text) AI_ANALYSIS_LOG.push({ ticker:STOCK.ticker, tab:"AI Claude (domanda: "+question+")", answer:text, timestamp:new Date().toISOString() });
   }catch(err){
     el("aiLoadingMsg")?.remove();
     chatEl.innerHTML+=`<div style="color:#ff6b6b;font-size:11px;padding:8px;">Errore: ${err.message}</div>`;
@@ -3548,6 +3563,8 @@ loadWatchlistFromCloudAndMerge();
 window.loadWatchlistFile=function(event){
   const file=event.target.files[0];
   if(!file) return;
+  const note=(el("watchlistNoteInput").value||"").trim();
+  const fileLabel=file.name.replace(/\.(xlsx|xls|csv)$/i,"");
   el("watchlistStatus").textContent="⏳ Lettura del file...";
   const reader=new FileReader();
   reader.onload=(e)=>{
@@ -3556,7 +3573,7 @@ window.loadWatchlistFile=function(event){
       const wb=XLSX.read(data,{type:"array"});
       // Alcuni export (es. Finviz con più pagine) hanno più fogli: li leggiamo
       // tutti, non solo il primo, per non perdere righe.
-      let added=0;
+      let added=0, tagged=0;
       wb.SheetNames.forEach(sheetName=>{
         const json=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:""});
         json.forEach(row=>{
@@ -3567,18 +3584,41 @@ window.loadWatchlistFile=function(event){
           if(!ticker) return;
           // Finviz a volte incolla "GME logoGME" nella cella ticker — ripuliamo
           ticker=ticker.replace(/logo.*$/i,"").replace(/\s+[a-z].*$/,"").trim().toUpperCase();
-          if(!ticker||WATCHLIST.some(w=>w.ticker===ticker)) return;
+          if(!ticker) return;
           const companyKey=keys.find(k=>/company|name/i.test(k));
           const sectorKey=keys.find(k=>/^sector$/i.test(k));
-          WATCHLIST.push({ ticker, company: companyKey?String(row[companyKey]).trim():"", sector: sectorKey?String(row[sectorKey]).trim():"" });
-          added++;
+          const industryKey=keys.find(k=>/^industry$/i.test(k));
+          const countryKey=keys.find(k=>/^country$/i.test(k));
+          const tag={ file:fileLabel, note:note||null, date:new Date().toISOString() };
+          const existing=WATCHLIST.find(w=>w.ticker===ticker);
+          if(existing){
+            // Titolo già presente: accumula il tag invece di sostituire,
+            // evitando duplicati esatti (stesso file+nota già aggiunto prima).
+            existing.tags=existing.tags||[];
+            if(!existing.tags.some(t=>t.file===tag.file&&t.note===tag.note)){ existing.tags.push(tag); tagged++; }
+            // Completa eventuali campi mancanti (es. se aggiunto a mano prima, senza company/sector)
+            if(!existing.company && companyKey) existing.company=String(row[companyKey]).trim();
+            if(!existing.sector && sectorKey) existing.sector=String(row[sectorKey]).trim();
+            if(!existing.industry && industryKey) existing.industry=String(row[industryKey]).trim();
+            if(!existing.country && countryKey) existing.country=String(row[countryKey]).trim();
+          } else {
+            WATCHLIST.push({
+              ticker,
+              company: companyKey?String(row[companyKey]).trim():"",
+              sector: sectorKey?String(row[sectorKey]).trim():"",
+              industry: industryKey?String(row[industryKey]).trim():"",
+              country: countryKey?String(row[countryKey]).trim():"",
+              tags:[tag]
+            });
+            added++;
+          }
         });
       });
       saveWatchlist();
       renderWatchlistTable();
-      el("watchlistStatus").textContent = added>0
-        ? `✅ ${added} ticker aggiunti dal file (${WATCHLIST.length} totali in watchlist)`
-        : `⚠️ Nessun ticker nuovo trovato — verifica che il file abbia una colonna "Ticker" o "Symbol", o che i ticker non fossero già presenti.`;
+      el("watchlistStatus").textContent = (added>0||tagged>0)
+        ? `✅ ${added} ticker nuovi aggiunti, ${tagged} già presenti hanno ricevuto una nuova etichetta "${fileLabel}"${note?" / "+note:""} (${WATCHLIST.length} totali in watchlist)`
+        : `⚠️ Nessun ticker nuovo o etichetta nuova trovata — verifica che il file abbia una colonna "Ticker" o "Symbol".`;
     }catch(err){
       el("watchlistStatus").textContent="❌ Errore nella lettura del file: "+err.message;
     }
@@ -3590,15 +3630,24 @@ window.loadWatchlistFile=function(event){
 window.loadWatchlistPaste=function(){
   const raw=el("watchlistPasteInput").value;
   if(!raw.trim()) return;
+  const note=(el("watchlistNoteInput").value||"").trim();
   const tickers=raw.split(/[\s,;]+/).map(t=>t.trim().toUpperCase()).filter(t=>t);
-  let added=0;
+  const tag={ file:"Manuale", note:note||null, date:new Date().toISOString() };
+  let added=0, tagged=0;
   tickers.forEach(ticker=>{
-    if(!WATCHLIST.some(w=>w.ticker===ticker)){ WATCHLIST.push({ticker,company:"",sector:""}); added++; }
+    const existing=WATCHLIST.find(w=>w.ticker===ticker);
+    if(existing){
+      existing.tags=existing.tags||[];
+      if(!existing.tags.some(t=>t.file===tag.file&&t.note===tag.note)){ existing.tags.push(tag); tagged++; }
+    } else {
+      WATCHLIST.push({ticker,company:"",sector:"",industry:"",country:"",tags:[tag]});
+      added++;
+    }
   });
   el("watchlistPasteInput").value="";
   saveWatchlist();
   renderWatchlistTable();
-  el("watchlistStatus").textContent=`✅ ${added} ticker aggiunti manualmente (${WATCHLIST.length} totali in watchlist)`;
+  el("watchlistStatus").textContent=`✅ ${added} ticker nuovi, ${tagged} già presenti con nuova etichetta (${WATCHLIST.length} totali in watchlist)`;
 };
 
 window.removeFromWatchlist=function(ticker){
@@ -3618,12 +3667,18 @@ window.renderWatchlistTable=function(){
   const wrap=el("watchlistTableWrap");
   if(!wrap) return;
   if(WATCHLIST.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Watchlist vuota — carica un file o incolla dei ticker sopra</p></div>`; return; }
-  let h=`<table><tr><th>Ticker</th><th>Company</th><th>Sector</th><th></th></tr>`;
+  let h=`<table><tr><th>Ticker</th><th>Company</th><th>Sector</th><th>Country</th><th>Etichette</th><th></th></tr>`;
   WATCHLIST.forEach(w=>{
+    const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
+    const tagsHtml=tags.length
+      ? tags.map(t=>`<span style="display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;margin:1px;font-size:9px;white-space:nowrap;" title="${new Date(t.date).toLocaleDateString("it-IT")}">${t.file}${t.note?" · "+t.note:""}</span>`).join("")
+      : `<span style="font-size:10px;color:var(--dim);">—</span>`;
     h+=`<tr>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
       <td style="font-size:11px;">${w.sector||""}</td>
+      <td style="font-size:11px;">${w.country||""}</td>
+      <td style="max-width:220px;">${tagsHtml}</td>
       <td style="white-space:nowrap;">
         <a href="${getTVUrl(w.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TradingView</a>
         <button class="btn primary" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${w.ticker}';switchTab('Grafico');analyzeTicker();">🔍 Analizza</button>
