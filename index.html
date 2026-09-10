@@ -3017,23 +3017,32 @@ let aiChatMessages=[];
 // ma nemmeno testo) — capita raramente per motivi non sempre chiari lato
 // Anthropic, e un secondo tentativo spesso risolve senza che l'utente se
 // ne accorga. Ritorna sempre {text, error} — error è null se è andata bene.
-async function callClaudeAPI(prompt, imageBase64=null){
+async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
   async function attempt(){
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ prompt, imageBase64 })
+      body: JSON.stringify({ prompt, imageBase64, maxTokens })
     });
     let data;
     try{ data=await res.json(); }
     catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
     return data;
   }
-  let data=await attempt();
+  // Il retry ora avviene SEMPRE (anche su un vero errore di rete/timeout,
+  // non solo su una risposta "vuota ma arrivata") — prima un timeout saltava
+  // subito all'errore finale senza nemmeno provare una seconda volta.
+  let data, lastErrMsg=null;
+  try{
+    data=await attempt();
+  }catch(e){ lastErrMsg=e.message; data={}; }
+
   if(!data.text && !data.error){
     await new Promise(r=>setTimeout(r,600)); // piccola pausa prima del retry
-    data=await attempt();
+    try{
+      data=await attempt();
+    }catch(e){ lastErrMsg=e.message; data={}; }
   }
-  return { text: data.text||null, error: data.text?null:(data.error||"Risposta vuota anche dopo un secondo tentativo — riprova tra qualche secondo.") };
+  return { text: data.text||null, error: data.text?null:(data.error||lastErrMsg||"Risposta vuota anche dopo un secondo tentativo — riprova tra qualche secondo.") };
 }
 
 window.askAIAboutTab=async function(tabName){
@@ -3339,7 +3348,7 @@ STRUTTURA RICHIESTA DELLA RISPOSTA — usa ESATTAMENTE queste 6 sezioni con ques
 Elenca i livelli reali più rilevanti sopra e sotto il prezzo attuale (Swing High/Low — preferisci i "significativi", Pivot R1/R2/S1/S2, POC recente E storico — cita SEMPRE entrambi, Value Area, Trendline, Massimo/Minimo 52w). Non inventare livelli non in lista.
 
 ⏱ Entry Point
-Per la direzione principale (score più alto): FINO A 2 approcci — Approccio A (retest/pullback su un livello reale vicino) e Approccio B (breakout confermato da volume oltre una resistenza/supporto reale) — ciascuno con zona di ingresso, condizione di validazione in una riga, e MASSIMO 2 Target Price presi dai livelli reali con R/R calcolato esplicitamente. Poi la direzione alternativa in 1-2 righe sintetiche, con la condizione che la renderebbe rilevante.
+Per la direzione principale (score più alto): SOLO 1 approccio (quello con condizioni di ingresso più realistiche in questo momento tra retest/pullback o breakout confermato da volume), con zona di ingresso, condizione di validazione in una riga, e MASSIMO 2 Target Price presi dai livelli reali con R/R calcolato esplicitamente. Poi la direzione alternativa in 1-2 righe sintetiche, con la condizione che la renderebbe rilevante.
 
 ⚠️ Rischio
 Stop Loss per ciascun approccio sopra, il livello di invalidazione più importante in assoluto, e cosa NON faresti vs cosa faresti (1-2 righe di contrasto pratico).
@@ -3354,7 +3363,11 @@ Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe ti
   }
 
   try{
-    const { text, error } = await callClaudeAPI(prompt, null);
+    // La Strategia ha il prompt più pesante di tutta l'app — le impostiamo
+    // un tetto più basso per generare più in fretta e stare più comoda
+    // entro i 26s di timeout, invece di rischiare un 504 come qui.
+    const maxTok = tabName==="strategia" ? 1500 : null;
+    const { text, error } = await callClaudeAPI(prompt, null, maxTok);
     const answer=text||error;
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
     if(text){
