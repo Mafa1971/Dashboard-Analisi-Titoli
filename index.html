@@ -704,7 +704,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
           <div id="watchlistStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
           <button class="btn ghost" style="font-size:10px;" onclick="clearWatchlist()">🗑 Svuota Watchlist</button>
-          <div id="watchlistTableWrap" style="overflow-x:auto;margin-top:14px;"></div>
+          <div id="watchlistTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:620px;margin-top:14px;"></div>
         </div>
       </div>
 
@@ -3284,6 +3284,8 @@ Sii diretto, numeri concreti, evita frasi vaghe.`;
     const lowAllTime=Math.min(...STOCK.lows.filter(v=>v!=null));
     prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
+IMPORTANTE: rispondi SEMPRE con un testo completo, anche se alcuni dati mancano — in quel caso scrivi "dato non disponibile" per quella singola voce e prosegui con il resto, non lasciare MAI la risposta vuota o troppo corta per indecisione.
+
 DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
 - Orizzonte: ${l.horizon==="posizionale"?"posizionale (settimane-mesi)":"swing (giorni-settimane)"}
@@ -3348,7 +3350,7 @@ Stop Loss per ciascun approccio sopra, il livello di invalidazione più importan
 🏆 Giudizio
 1-2 frasi di sintesi finale: qual è il piano più solido in questo momento e perché, con il livello di prezzo più importante da tenere d'occhio.
 
-Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo.`;
+Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo — ma NON saltare intere sezioni: scrivi sempre qualcosa in ognuna delle 6, anche solo "dato non disponibile per questa parte".`;
   }
 
   try{
@@ -3744,9 +3746,11 @@ window.renderWatchlistTable=function(){
   }
 
   const sortArrow=(col)=> WATCHLIST_SORT.column===col ? (WATCHLIST_SORT.dir===1?" ▲":" ▼") : "";
-  const th=(col,label)=>`<th style="cursor:pointer;user-select:none;" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
-  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Valutazione</th><th>Qualità</th><th>Etichette</th><th></th></tr>`;
-  list.forEach(w=>{
+  const stickyBase="position:sticky;top:0;background:var(--panel);z-index:2;border-bottom:2px solid var(--line);";
+  const th=(col,label)=>`<th style="cursor:pointer;user-select:none;${stickyBase}" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
+  const thPlain=(label)=>`<th style="${stickyBase}">${label}</th>`;
+  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
+  list.forEach((w,idx)=>{
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
       ? tags.map(t=>`<span style="display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;margin:1px;font-size:9px;white-space:nowrap;" title="${new Date(t.date).toLocaleDateString("it-IT")}">${t.file}${t.note?" · "+t.note:""}</span>`).join("")
@@ -3760,6 +3764,7 @@ window.renderWatchlistTable=function(){
     if(w.piotroski) qualBits.push(`Piotroski: ${w.piotroski}`);
     const qualitaHtml=qualBits.length ? `<span style="font-size:10px;">${qualBits.join("<br>")}</span>` : `<span style="font-size:10px;color:var(--dim);">—</span>`;
     h+=`<tr>
+      <td style="font-size:11px;color:var(--dim);font-weight:700;text-align:center;">${idx+1}</td>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
       <td style="font-size:11px;">${w.country||""}</td>
