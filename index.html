@@ -683,13 +683,26 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <input type="file" id="watchlistFileInput" accept=".xlsx,.xls,.csv" onchange="loadWatchlistFile(event)">
             </div>
             <div style="flex:1;min-width:260px;">
-              <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">...oppure incolla ticker (separati da virgola, spazio o a capo)</label>
+              <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">...oppure incolla ticker (separati da virgola, spazio o a capo) — solo ticker, senza altri dettagli</label>
               <div style="display:flex;gap:6px;">
                 <input type="text" id="watchlistPasteInput" placeholder="es. AAPL, NVDA, TSLA" style="flex:1;">
                 <button class="btn primary" onclick="loadWatchlistPaste()">Aggiungi</button>
               </div>
             </div>
           </div>
+
+          <div style="border-top:1px solid var(--line);padding-top:12px;margin-bottom:14px;">
+            <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:6px;">...oppure aggiungi UN titolo con tutti i dettagli a mano</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <input type="text" id="watchlistManualTicker" placeholder="Ticker*" style="width:90px;">
+              <input type="text" id="watchlistManualCompany" placeholder="Company" style="width:160px;">
+              <input type="text" id="watchlistManualSector" placeholder="Sector" style="width:130px;">
+              <input type="text" id="watchlistManualIndustry" placeholder="Industry" style="width:130px;">
+              <input type="text" id="watchlistManualCountry" placeholder="Country" style="width:110px;">
+              <button class="btn primary" onclick="addWatchlistManualDetailed()">Aggiungi con dettagli</button>
+            </div>
+          </div>
+
           <div id="watchlistStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
           <button class="btn ghost" style="font-size:10px;" onclick="clearWatchlist()">🗑 Svuota Watchlist</button>
           <div id="watchlistTableWrap" style="overflow-x:auto;margin-top:14px;"></div>
@@ -3522,6 +3535,7 @@ loadHistoryFromCloudAndMerge();
 
 // ── WATCHLIST (import da file screener esterno o incolla manuale) ──────
 let WATCHLIST=[];
+let WATCHLIST_SORT={column:null, dir:1}; // dir: 1=crescente, -1=decrescente
 const WATCHLIST_KEY="analyzer_watchlist_v1";
 
 function loadWatchlistFromStorage(){
@@ -3627,6 +3641,34 @@ window.loadWatchlistFile=function(event){
   event.target.value=""; // permette di ricaricare lo stesso file in futuro
 };
 
+window.addWatchlistManualDetailed=function(){
+  const ticker=(el("watchlistManualTicker").value||"").trim().toUpperCase();
+  if(!ticker){ el("watchlistStatus").textContent="⚠️ Il Ticker è obbligatorio."; return; }
+  const company=(el("watchlistManualCompany").value||"").trim();
+  const sector=(el("watchlistManualSector").value||"").trim();
+  const industry=(el("watchlistManualIndustry").value||"").trim();
+  const country=(el("watchlistManualCountry").value||"").trim();
+  const note=(el("watchlistNoteInput").value||"").trim();
+  const tag={ file:"Manuale (dettagliato)", note:note||null, date:new Date().toISOString() };
+
+  const existing=WATCHLIST.find(w=>w.ticker===ticker);
+  if(existing){
+    if(company) existing.company=company;
+    if(sector) existing.sector=sector;
+    if(industry) existing.industry=industry;
+    if(country) existing.country=country;
+    existing.tags=existing.tags||[];
+    if(!existing.tags.some(t=>t.file===tag.file&&t.note===tag.note)) existing.tags.push(tag);
+    el("watchlistStatus").textContent=`✅ ${ticker} era già presente — dettagli aggiornati.`;
+  } else {
+    WATCHLIST.push({ ticker, company, sector, industry, country, tags:[tag] });
+    el("watchlistStatus").textContent=`✅ ${ticker} aggiunto con i dettagli inseriti (${WATCHLIST.length} totali in watchlist).`;
+  }
+  ["watchlistManualTicker","watchlistManualCompany","watchlistManualSector","watchlistManualIndustry","watchlistManualCountry"].forEach(id=>el(id).value="");
+  saveWatchlist();
+  renderWatchlistTable();
+};
+
 window.loadWatchlistPaste=function(){
   const raw=el("watchlistPasteInput").value;
   if(!raw.trim()) return;
@@ -3663,12 +3705,30 @@ window.clearWatchlist=function(){
   renderWatchlistTable();
 };
 
+window.sortWatchlistBy=function(column){
+  if(WATCHLIST_SORT.column===column) WATCHLIST_SORT.dir*=-1; // stessa colonna: inverte la direzione
+  else WATCHLIST_SORT={column, dir:1};
+  renderWatchlistTable();
+};
+
 window.renderWatchlistTable=function(){
   const wrap=el("watchlistTableWrap");
   if(!wrap) return;
   if(WATCHLIST.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Watchlist vuota — carica un file o incolla dei ticker sopra</p></div>`; return; }
-  let h=`<table><tr><th>Ticker</th><th>Company</th><th>Sector</th><th>Country</th><th>Etichette</th><th></th></tr>`;
-  WATCHLIST.forEach(w=>{
+
+  let list=WATCHLIST.slice();
+  if(WATCHLIST_SORT.column){
+    const col=WATCHLIST_SORT.column, dir=WATCHLIST_SORT.dir;
+    list.sort((a,b)=>{
+      const va=(a[col]||"").toString().toLowerCase(), vb=(b[col]||"").toString().toLowerCase();
+      if(va<vb) return -1*dir; if(va>vb) return 1*dir; return 0;
+    });
+  }
+
+  const sortArrow=(col)=> WATCHLIST_SORT.column===col ? (WATCHLIST_SORT.dir===1?" ▲":" ▼") : "";
+  const th=(col,label)=>`<th style="cursor:pointer;user-select:none;" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
+  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("sector","Sector")}${th("country","Country")}<th>Etichette</th><th></th></tr>`;
+  list.forEach(w=>{
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
       ? tags.map(t=>`<span style="display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;margin:1px;font-size:9px;white-space:nowrap;" title="${new Date(t.date).toLocaleDateString("it-IT")}">${t.file}${t.note?" · "+t.note:""}</span>`).join("")
