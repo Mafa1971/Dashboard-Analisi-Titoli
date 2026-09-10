@@ -3308,7 +3308,7 @@ ${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: no
 ${(()=>{
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
-  const supportLine=detectTrendline(sw.lows), resistanceLine=detectTrendline(sw.highs);
+  const supportLine=detectTrendline(sw.lows,"support"), resistanceLine=detectTrendline(sw.highs,"resistance");
   const lines=[];
   if(supportLine) lines.push(`- Trendline di Supporto (rialzista, ${supportLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(supportLine,n-1).toFixed(2)}`);
   if(resistanceLine) lines.push(`- Trendline di Resistenza (ribassista, ${resistanceLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(resistanceLine,n-1).toFixed(2)}`);
@@ -5408,7 +5408,12 @@ function calcATR(highs,lows,closes,period){
 // "toccano" quella retta entro una tolleranza — la retta con più tocchi
 // (minimo 3, cioè almeno un terzo punto di conferma oltre ai 2 di partenza)
 // è la trendline valida. Nessuna soggettività: pura geometria sui dati.
-function detectTrendline(pivots,tolerancePct=1.5){
+function detectTrendline(pivots,type,tolerancePct=1.5){
+  // type: 'support' (minimi — la linea NON deve avere nessun minimo sotto di
+  // sé, a parte piccole tolleranze) o 'resistance' (massimi — NON deve avere
+  // nessun massimo sopra). Senza questo controllo, l'algoritmo trovava la
+  // retta con "più tocchi" anche se altri punti la attraversavano — non è
+  // una vera trendline, solo una retta che passa vicino a tanti prezzi.
   if(!pivots||pivots.length<3) return null;
   let best=null;
   for(let i=0;i<pivots.length-1;i++){
@@ -5417,12 +5422,16 @@ function detectTrendline(pivots,tolerancePct=1.5){
       if(p2.idx===p1.idx) continue;
       const slope=(p2.price-p1.price)/(p2.idx-p1.idx);
       const intercept=p1.price-slope*p1.idx;
-      let touches=0;
+      let touches=0, violations=0;
       pivots.forEach(p=>{
         const lineVal=slope*p.idx+intercept;
-        if(Math.abs(p.price-lineVal)<=lineVal*(tolerancePct/100)) touches++;
+        const tolerance=Math.abs(lineVal*(tolerancePct/100));
+        const diff=p.price-lineVal;
+        if(Math.abs(diff)<=tolerance) touches++;
+        else if(type==="support" && diff<-tolerance) violations++; // un minimo sotto la linea di supporto = non valida
+        else if(type==="resistance" && diff>tolerance) violations++; // un massimo sopra la linea di resistenza = non valida
       });
-      if(touches>=3 && (!best||touches>best.touches)) best={slope,intercept,touches,fromIdx:p1.idx,toIdx:p2.idx};
+      if(touches>=3 && violations===0 && (!best||touches>best.touches)) best={slope,intercept,touches,fromIdx:p1.idx,toIdx:p2.idx};
     }
   }
   return best;
@@ -5500,8 +5509,8 @@ function drawTrendlineAndPatternOverlay(ctx,w,xForIdx){
   // Usiamo gli Swing "Internal" (lookback corto) per avere più punti recenti
   // su cui tracciare trendline sensate nella finestra visibile.
   const sw=calcSwingsICT(highs,lows,STOCK.dates,5);
-  const supportLine=detectTrendline(sw.lows);
-  const resistanceLine=detectTrendline(sw.highs);
+  const supportLine=detectTrendline(sw.lows,"support");
+  const resistanceLine=detectTrendline(sw.highs,"resistance");
   LAST_TRENDLINES={supportLine,resistanceLine};
 
   function drawLine(line,color,label){
@@ -5674,7 +5683,7 @@ function computeApproachZones(direction){
   const price=STOCK.closes[STOCK.closes.length-1];
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
-  const supportLine=detectTrendline(sw.lows), resistanceLine=detectTrendline(sw.highs);
+  const supportLine=detectTrendline(sw.lows,"support"), resistanceLine=detectTrendline(sw.highs,"resistance");
   const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
   const supportLineVal=supportLine?trendlineValueAt(supportLine,n-1):null;
   const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
