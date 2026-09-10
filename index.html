@@ -5444,7 +5444,14 @@ function detectTrendline(pivots,type,tolerancePct=1.5){
         else if(type==="support" && diff<-tolerance) violations++; // un minimo sotto la linea di supporto = non valida
         else if(type==="resistance" && diff>tolerance) violations++; // un massimo sopra la linea di resistenza = non valida
       });
-      if(touches>=3 && violations===0 && (!best||touches>best.touches)) best={slope,intercept,touches,fromIdx:p1.idx,toIdx:p2.idx};
+      if(touches>=3 && violations<=1){
+        // Punteggio che premia i tocchi ma penalizza le violazioni più
+        // pesantemente — così tra due candidate valide vince quella più
+        // "pulita", non semplicemente quella con più tocchi in assoluto.
+        const score=touches-violations*2;
+        const bestScore=best?best.touches-best.violations*2:-Infinity;
+        if(score>bestScore) best={slope,intercept,touches,violations,fromIdx:p1.idx,toIdx:p2.idx};
+      }
     }
   }
   return best;
