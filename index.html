@@ -3293,7 +3293,7 @@ Sii diretto, numeri concreti, evita frasi vaghe.`;
     const lowAllTime=Math.min(...STOCK.lows.filter(v=>v!=null));
     prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
-IMPORTANTE: rispondi SEMPRE con un testo completo, anche se alcuni dati mancano — in quel caso scrivi "dato non disponibile" per quella singola voce e prosegui con il resto, non lasciare MAI la risposta vuota o troppo corta per indecisione.
+Rispondi sempre per intero, anche con dati mancanti (scrivi "N/D" dove serve, mai risposta vuota).
 
 DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Prezzo attuale: ${STOCK.currency} ${price.toFixed(2)}
@@ -3301,65 +3301,51 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - ATR: ${l.atr!=null?l.atr.toFixed(2):"N/D"} (usalo SOLO per lo Stop Loss, mai per i target — vedi regola sotto)
 - POC (Volume Profile, storico completo): ${vp?vp.poc.toFixed(2):"N/D"} — livello a lungo termine, può essere lontano dal prezzo su titoli con anni di trend
 - POC (Volume Profile, ultimi ${recentN}gg — PIÙ RILEVANTE per l'operatività): ${vpRecent?vpRecent.poc.toFixed(2):"N/D"}, Value Area recente: ${vpRecent?vpRecent.vaLow.toFixed(2)+" - "+vpRecent.vaHigh.toFixed(2):"N/D"}
-- Value Area: ${vp?vp.vaLow.toFixed(2)+" - "+vp.vaHigh.toFixed(2):"N/D"}
-- Pivot Points (ultimi 60gg): Pivot ${piv?piv.pivot.toFixed(2):"N/D"}, R1 ${piv?piv.r1.toFixed(2):"N/D"}, R2 ${piv?piv.r2.toFixed(2):"N/D"}, S1 ${piv?piv.s1.toFixed(2):"N/D"}, S2 ${piv?piv.s2.toFixed(2):"N/D"}
+- Value Area (storico completo): ${vp?vp.vaLow.toFixed(2)+" - "+vp.vaHigh.toFixed(2):"N/D"}
+- Pivot Points (ultimi 60gg): Pivot ${piv?piv.pivot.toFixed(2):"N/D"}, R1 ${piv?piv.r1.toFixed(2):"N/D"}, S1 ${piv?piv.s1.toFixed(2):"N/D"}
 - Massimo 52 settimane: ${high52w.toFixed(2)} | Minimo 52 settimane: ${low52w.toFixed(2)}
-- Massimo storico (intero periodo caricato): ${highAllTime.toFixed(2)} | Minimo storico: ${lowAllTime.toFixed(2)}
-- Swing High sopra il prezzo attuale (possibili TARGET per Long, o STOP per Short): ${swingHighsAbove.length?swingHighsAbove.join(", "):"nessuno rilevato"}
-- Swing Low sotto il prezzo attuale (possibili TARGET per Short, o STOP per Long): ${swingLowsBelow.length?swingLowsBelow.join(", "):"nessuno rilevato"}
-- Swing Low sopra il prezzo attuale (possibile STOP alternativo per Short): ${swingLowsAbove.length?swingLowsAbove.join(", "):"nessuno rilevato"}
-- Swing High sotto il prezzo attuale (possibile TARGET alternativo per Short): ${swingHighsBelow.length?swingHighsBelow.join(", "):"nessuno rilevato"}
-- LONG: Entry Score ${l.score!=null?l.score+"/100":"N/D"}, stop Order Block ${l.structuralStop!=null?l.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${l.atrStop!=null?l.atrStop.toFixed(2):"N/D"}, stop scelto ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}
-- SHORT: Entry Score ${s.score!=null?s.score+"/100":"N/D"}, stop Order Block ${s.structuralStop!=null?s.structuralStop.toFixed(2):"N/D"}, stop ATR(1.5x) ${s.atrStop!=null?s.atrStop.toFixed(2):"N/D"}, stop scelto ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
+- Massimo storico: ${highAllTime.toFixed(2)} | Minimo storico: ${lowAllTime.toFixed(2)}
+- Swing High sopra il prezzo (target Long / stop Short): ${swingHighsAbove.length?swingHighsAbove.slice(0,4).join(", "):"nessuno"}
+- Swing Low sotto il prezzo (target Short / stop Long): ${swingLowsBelow.length?swingLowsBelow.slice(0,4).join(", "):"nessuno"}
+- Swing Low sopra il prezzo (stop alt. Short): ${swingLowsAbove.length?swingLowsAbove.slice(0,3).join(", "):"nessuno"}
+- Swing High sotto il prezzo (target alt. Short): ${swingHighsBelow.length?swingHighsBelow.slice(0,3).join(", "):"nessuno"}
+- LONG: Score ${l.score!=null?l.score+"/100":"N/D"}, stop ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}
+- SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
-${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati in questa sessione (vai sul tab Bilancio se vuoi che vengano considerati)."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (ultimo anno ${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (crescita YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine Netto ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski F-Score ${piotroski?piotroski.score+"/9":"N/D"} — usa questo per dire se un eventuale breakout tecnico ha un contesto fondamentale che lo rende più o meno "da inseguire".`; })()}
+${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}.`; })()}
 ${(()=>{
   const n=STOCK.closes.length;
-  const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
   const supportLine=detectTrendline(sw.lows,"support"), resistanceLine=detectTrendline(sw.highs,"resistance");
   const lines=[];
-  if(supportLine) lines.push(`- Trendline di Supporto (rialzista, ${supportLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(supportLine,n-1).toFixed(2)}`);
-  if(resistanceLine) lines.push(`- Trendline di Resistenza (ribassista, ${resistanceLine.touches} tocchi): valore oggi ≈ ${trendlineValueAt(resistanceLine,n-1).toFixed(2)}`);
-  const triangle=detectTrianglePattern(supportLine,resistanceLine,n-1);
-  if(triangle) lines.push(`- Pattern rilevato: ${triangle.type} (supporto ≈${triangle.supportNow.toFixed(2)}, resistenza ≈${triangle.resistanceNow.toFixed(2)})`);
-  const atrArr=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14);
-  const flag=detectFlagPattern(STOCK.closes,atrArr);
-  if(flag) lines.push(`- Flag/Pennant rilevato: consolidamento dopo movimento ${flag.direction} del ${flag.impulsePct.toFixed(1)}% — spesso precede una continuazione nella stessa direzione se rotto con volume`);
-  const sigSw=calcSignificantSwings(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,STOCK.dates,5);
-  const sigHighs=sigSw.highs.filter(p=>p.significant).map(p=>p.price.toFixed(2));
-  const sigLows=sigSw.lows.filter(p=>p.significant).map(p=>p.price.toFixed(2));
-  if(sigHighs.length) lines.push(`- Swing High "significativi" (rottura confermata da volume/volatilità anomali — livelli PIÙ affidabili degli altri Swing High): ${sigHighs.join(", ")}`);
-  if(sigLows.length) lines.push(`- Swing Low "significativi" (stesso criterio, livelli PIÙ affidabili): ${sigLows.join(", ")}`);
-  return lines.length ? lines.join("\n") : "- Trendline/Pattern: nessuno rilevato con sufficiente affidabilità sui dati disponibili.";
+  if(supportLine) lines.push(`- Trendline Supporto (oggi ≈${trendlineValueAt(supportLine,n-1).toFixed(2)})`);
+  if(resistanceLine) lines.push(`- Trendline Resistenza (oggi ≈${trendlineValueAt(resistanceLine,n-1).toFixed(2)})`);
+  return lines.join("\n");
 })()}
 
-REGOLE FONDAMENTALI SUI TARGET (rispettale rigorosamente, sono più importanti dello stile della risposta):
-1. Ogni Target Price DEVE coincidere ESATTAMENTE con uno dei livelli reali elencati sopra (Swing High/Low — preferisci quelli "significativi" se disponibili, R1/R2/S1/S2, POC, Value Area, Massimo/Minimo 52w, Massimo/Minimo storico, Trendline). VIETATO calcolare un target come entry ± N×ATR o come multiplo aritmetico del rischio (es. rischio×1, ×2, ×3) — questo NON è un livello reale, è una stima inventata.
-2. Se dopo aver controllato TUTTI i livelli sopra non ce ne sono abbastanza per costruire 2-3 target scalati in una direzione, dillo esplicitamente ("dati insufficienti per target multipli oltre X, l'unico livello reale disponibile è Y") — non riempire il vuoto con un numero stimato.
-3. PRIMA di scrivere la risposta finale, verifica tu stesso ogni riga: (a) il Target è diverso dall'Entry (altrimenti il R/R è per definizione 0, non un numero positivo); (b) il rapporto R/R scritto corrisponde davvero a (Target−Entry)/(Entry−Stop) per i Long, o (Entry−Target)/(Stop−Entry) per gli Short; (c) i target sono in ordine logico crescente di distanza dall'entry (T1 il più vicino, T3 il più lontano).
+REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali sopra (mai entry±N×ATR o multipli del rischio). Se mancano livelli sufficienti, dillo invece di inventare. Verifica che Target≠Entry e che R/R=(Target-Entry)/(Entry-Stop) sia calcolato giusto.
 
-STRUTTURA RICHIESTA DELLA RISPOSTA — usa ESATTAMENTE queste 6 sezioni con questi titoli ed emoji, in quest'ordine, con numeri concreti derivati dai dati sopra (se un dato manca, dillo esplicitamente invece di inventarlo). Sii conciso in ognuna, frasi brevi, vai dritto ai numeri:
+STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
 
 📊 Analisi Tecnica
-2-3 frasi: trend (SMA), momentum (RSI), e contesto generale (rialzista/ribassista/incerto). Cita anche i fondamentali in una frase se disponibili.
+2 frasi: trend, momentum, contesto generale, fondamentali se ci sono.
 
 🎯 Supporti/Resistenze
-Elenca i livelli reali più rilevanti sopra e sotto il prezzo attuale (Swing High/Low — preferisci i "significativi", Pivot R1/R2/S1/S2, POC recente E storico — cita SEMPRE entrambi, Value Area, Trendline, Massimo/Minimo 52w). Non inventare livelli non in lista.
+Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendline, 52w). Solo dati in lista.
 
 ⏱ Entry Point
-Per la direzione principale (score più alto): SOLO 1 approccio (quello con condizioni di ingresso più realistiche in questo momento tra retest/pullback o breakout confermato da volume), con zona di ingresso, condizione di validazione in una riga, e MASSIMO 2 Target Price presi dai livelli reali con R/R calcolato esplicitamente. Poi la direzione alternativa in 1-2 righe sintetiche, con la condizione che la renderebbe rilevante.
+1 approccio per la direzione migliore (retest o breakout), zona+condizione+Stop+max 2 Target con R/R. Poi l'altra direzione in 1 riga.
 
 ⚠️ Rischio
-Stop Loss per ciascun approccio sopra, il livello di invalidazione più importante in assoluto, e cosa NON faresti vs cosa faresti (1-2 righe di contrasto pratico).
+Stop, invalidazione principale, 1 riga cosa faresti/non faresti.
 
 🔗 Markov
-1-2 frasi su cosa suggerisce lo stato/probabilità Markov per la continuazione a breve — se è in linea o in contraddizione con lo score tecnico complessivo, dillo esplicitamente.
+1 frase: cosa dice lo score Markov, coerente o no col resto.
 
 🏆 Giudizio
-1-2 frasi di sintesi finale: qual è il piano più solido in questo momento e perché, con il livello di prezzo più importante da tenere d'occhio.
+1-2 frasi finali: piano migliore ora e livello chiave.
 
-Numeri veri, R/R calcolato esplicitamente per OGNI target, niente frasi vaghe tipo "potrebbe salire". Se i dati non bastano per un livello specifico, dillo chiaramente invece di inventarlo — ma NON saltare intere sezioni: scrivi sempre qualcosa in ognuna delle 6, anche solo "dato non disponibile per questa parte".`;
+R/R sempre calcolato. Se manca un dato dillo, non inventarlo. Scrivi sempre le 6 sezioni, anche solo con "N/D" dove serve.`;
   }
 
   try{
