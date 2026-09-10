@@ -3602,6 +3602,25 @@ window.loadWatchlistFile=function(event){
           const sectorKey=keys.find(k=>/^sector$/i.test(k));
           const industryKey=keys.find(k=>/^industry$/i.test(k));
           const countryKey=keys.find(k=>/^country$/i.test(k));
+          // Colonne aggiuntive presenti in alcuni screener (es. "The best growth
+          // stock"): Fair Value + le sue due etichette, Target Analisti, e i
+          // punteggi Altman/Piotroski già pronti (utili come riferimento rapido
+          // in watchlist, prima ancora di caricare il bilancio completo di ogni
+          // titolo). Matching tollerante sul nome colonna, non sulla posizione.
+          const fairValueKey=keys.find(k=>k.trim().toLowerCase()==="fair value");
+          const targetLabelKey=keys.find(k=>/etichetta.*fair value.*target/i.test(k.trim())); // va cercata PRIMA della semplice "etichetta fair value"
+          const fairValueLabelKey=keys.find(k=>k.trim().toLowerCase()==="etichetta fair value");
+          const analystTargetKey=keys.find(k=>k.trim().toLowerCase()==="target analisti") || keys.find(k=>/target.*analist/i.test(k.trim())&&!/etichetta/i.test(k));
+          const altmanKey=keys.find(k=>/altman/i.test(k.trim()));
+          const piotroskiKey=keys.find(k=>/piotroski/i.test(k.trim()));
+          const extra={
+            fairValue: fairValueKey?String(row[fairValueKey]).trim():"",
+            fairValueLabel: fairValueLabelKey?String(row[fairValueLabelKey]).trim():"",
+            analystTarget: analystTargetKey?String(row[analystTargetKey]).trim():"",
+            targetLabel: targetLabelKey?String(row[targetLabelKey]).trim():"",
+            altmanZ: altmanKey?String(row[altmanKey]).trim():"",
+            piotroski: piotroskiKey?String(row[piotroskiKey]).trim():""
+          };
           const tag={ file:fileLabel, note:note||null, date:new Date().toISOString() };
           const existing=WATCHLIST.find(w=>w.ticker===ticker);
           if(existing){
@@ -3614,6 +3633,7 @@ window.loadWatchlistFile=function(event){
             if(!existing.sector && sectorKey) existing.sector=String(row[sectorKey]).trim();
             if(!existing.industry && industryKey) existing.industry=String(row[industryKey]).trim();
             if(!existing.country && countryKey) existing.country=String(row[countryKey]).trim();
+            Object.entries(extra).forEach(([k,v])=>{ if(v && !existing[k]) existing[k]=v; });
           } else {
             WATCHLIST.push({
               ticker,
@@ -3621,6 +3641,7 @@ window.loadWatchlistFile=function(event){
               sector: sectorKey?String(row[sectorKey]).trim():"",
               industry: industryKey?String(row[industryKey]).trim():"",
               country: countryKey?String(row[countryKey]).trim():"",
+              ...extra,
               tags:[tag]
             });
             added++;
@@ -3724,16 +3745,26 @@ window.renderWatchlistTable=function(){
 
   const sortArrow=(col)=> WATCHLIST_SORT.column===col ? (WATCHLIST_SORT.dir===1?" ▲":" ▼") : "";
   const th=(col,label)=>`<th style="cursor:pointer;user-select:none;" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
-  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Etichette</th><th></th></tr>`;
+  let h=`<table><tr>${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Valutazione</th><th>Qualità</th><th>Etichette</th><th></th></tr>`;
   list.forEach(w=>{
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
       ? tags.map(t=>`<span style="display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;margin:1px;font-size:9px;white-space:nowrap;" title="${new Date(t.date).toLocaleDateString("it-IT")}">${t.file}${t.note?" · "+t.note:""}</span>`).join("")
       : `<span style="font-size:10px;color:var(--dim);">—</span>`;
+    const valBits=[];
+    if(w.fairValue) valBits.push(`FV ${w.fairValue}${w.fairValueLabel?" ("+w.fairValueLabel+")":""}`);
+    if(w.analystTarget) valBits.push(`Target ${w.analystTarget}${w.targetLabel?" ("+w.targetLabel+")":""}`);
+    const valutazioneHtml=valBits.length ? `<span style="font-size:10px;">${valBits.join("<br>")}</span>` : `<span style="font-size:10px;color:var(--dim);">—</span>`;
+    const qualBits=[];
+    if(w.altmanZ) qualBits.push(`Altman Z: ${w.altmanZ}`);
+    if(w.piotroski) qualBits.push(`Piotroski: ${w.piotroski}`);
+    const qualitaHtml=qualBits.length ? `<span style="font-size:10px;">${qualBits.join("<br>")}</span>` : `<span style="font-size:10px;color:var(--dim);">—</span>`;
     h+=`<tr>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
       <td style="font-size:11px;">${w.country||""}</td>
+      <td>${valutazioneHtml}</td>
+      <td>${qualitaHtml}</td>
       <td style="max-width:220px;">${tagsHtml}</td>
       <td style="white-space:nowrap;">
         <a href="${getTVUrl(w.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TradingView</a>
