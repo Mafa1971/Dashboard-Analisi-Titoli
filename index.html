@@ -3341,7 +3341,7 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 ${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}.`; })()}
 ${(()=>{
   const n=STOCK.closes.length;
-  const supportLine=detectTrendline(sw.lows,"support"), resistanceLine=detectTrendline(sw.highs,"resistance");
+  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support"), resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
   const lines=[];
   if(supportLine) lines.push(`- Trendline Supporto (oggi ≈${trendlineValueAt(supportLine,n-1).toFixed(2)})`);
   if(resistanceLine) lines.push(`- Trendline Resistenza (oggi ≈${trendlineValueAt(resistanceLine,n-1).toFixed(2)})`);
@@ -5461,6 +5461,16 @@ function calcATR(highs,lows,closes,period){
 // "toccano" quella retta entro una tolleranza — la retta con più tocchi
 // (minimo 3, cioè almeno un terzo punto di conferma oltre ai 2 di partenza)
 // è la trendline valida. Nessuna soggettività: pura geometria sui dati.
+// Limita gli swing a una finestra RECENTE (default ultimi 180gg circa) prima
+// di cercare una trendline — senza questo filtro, due punti presi da inizio
+// storico vengono estrapolati su TUTTA la lunghezza del grafico: anche una
+// pendenza minima, proiettata su centinaia di barre, finisce lontanissima
+// dal prezzo attuale (es. una linea che "dovrebbe" essere vicina a 300 che
+// invece arriva a 100 dall'altra parte del grafico).
+function recentPivotsOnly(pivots,totalBars,lookback=180){
+  const cutoff=totalBars-lookback;
+  return pivots.filter(p=>p.idx>=cutoff);
+}
 function detectTrendline(pivots,type,tolerancePct=1.5){
   // type: 'support' (minimi — la linea NON deve avere nessun minimo sotto di
   // sé, a parte piccole tolleranze) o 'resistance' (massimi — NON deve avere
@@ -5569,8 +5579,8 @@ function drawTrendlineAndPatternOverlay(ctx,w,xForIdx){
   // Usiamo gli Swing "Internal" (lookback corto) per avere più punti recenti
   // su cui tracciare trendline sensate nella finestra visibile.
   const sw=calcSwingsICT(highs,lows,STOCK.dates,5);
-  const supportLine=detectTrendline(sw.lows,"support");
-  const resistanceLine=detectTrendline(sw.highs,"resistance");
+  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support");
+  const resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
   LAST_TRENDLINES={supportLine,resistanceLine};
 
   function drawLine(line,color,label){
@@ -5743,7 +5753,7 @@ function computeApproachZones(direction){
   const price=STOCK.closes[STOCK.closes.length-1];
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
-  const supportLine=detectTrendline(sw.lows,"support"), resistanceLine=detectTrendline(sw.highs,"resistance");
+  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support"), resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
   const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
   const supportLineVal=supportLine?trendlineValueAt(supportLine,n-1):null;
   const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
