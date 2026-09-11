@@ -3614,7 +3614,11 @@ window.loadWatchlistFile=function(event){
       // tutti, non solo il primo, per non perdere righe.
       let added=0, tagged=0;
       wb.SheetNames.forEach(sheetName=>{
-        const json=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:""});
+        // raw:false = legge il valore COME APPARE in Excel (rispetta la
+        // formattazione della cella: percentuali, valute, ecc.), non il
+        // numero "grezzo" interno — altrimenti una cella percentuale tipo
+        // "27,41%" arriverebbe come 0.2741288144231382, illeggibile.
+        const json=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:"",raw:false});
         json.forEach(row=>{
           const keys=Object.keys(row);
           const tickerKey=keys.find(k=>k.trim().toLowerCase()==="ticker"||k.trim().toLowerCase()==="symbol");
