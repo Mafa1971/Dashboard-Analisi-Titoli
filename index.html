@@ -4383,6 +4383,28 @@ function calcTimeAboveBelowThreshold(closes,thresholdSeries){
 }
 
 let ergoRollingChartObj=null, ergoDrawdownChartObj=null;
+// Regressione lineare di log(prezzo) sul tempo — misura quanto la crescita
+// di un titolo è "pulita" (esponenziale costante, R² alto) o "a strappi"
+// (ciclica/irregolare, R² basso), indipendentemente dal rendimento totale.
+// Idea ripresa dal Coma Screener dell'utente (log_trend_r2 in Python).
+function computeLogTrendR2(closes){
+  const y=closes.map(c=>Math.log(c));
+  const n=y.length;
+  if(n<10) return {r2:null,dispersion:null};
+  const x=Array.from({length:n},(_,i)=>i);
+  const xMean=x.reduce((a,b)=>a+b,0)/n, yMean=y.reduce((a,b)=>a+b,0)/n;
+  let num=0, den=0;
+  for(let i=0;i<n;i++){ num+=(x[i]-xMean)*(y[i]-yMean); den+=(x[i]-xMean)**2; }
+  const slope=den!==0?num/den:0;
+  const intercept=yMean-slope*xMean;
+  const residuals=y.map((yi,i)=>yi-(slope*x[i]+intercept));
+  const ssRes=residuals.reduce((a,r)=>a+r*r,0);
+  const ssTot=y.reduce((a,yi)=>a+(yi-yMean)**2,0);
+  const r2=ssTot>0?1-ssRes/ssTot:null;
+  const dispersion=Math.sqrt(residuals.reduce((a,r)=>a+r*r,0)/n);
+  return {r2,dispersion,slope};
+}
+
 window.renderErgodicita=function(){
   if(!STOCK) return;
   const {dates,closes}=STOCK;
@@ -4397,12 +4419,20 @@ window.renderErgodicita=function(){
   const volDrag=ensembleAnnualPct-timeAvgAnnualPct;
   const volAnnualPct=calcVolatility(dailyReturns);
 
+  // ── R² del trend logaritmico (pulizia/costanza della crescita) ────────
+  // Regressione lineare di log(prezzo) sul tempo: un R² alto significa che
+  // il titolo cresce in modo esponenziale "liscio" e costante (un buon
+  // compounder, tipo blue chip tranquilla); un R² basso segnala un
+  // andamento ciclico/a strappi, anche se il rendimento totale è simile.
+  const logTrend=computeLogTrendR2(closes);
+
   const card=(label,val,col,sub)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div>${sub?`<div style="font-size:9px;color:var(--dim);margin-top:3px;">${sub}</div>`:""}</div>`;
   el("ergoAvgCardsWrap").innerHTML=
     card("Media Ensemble (annua)", fmtPct(ensembleAnnualPct), "#4fa3ff", "media aritmetica semplice")+
     card("Media Time — Realizzata (CAGR)", fmtPct(timeAvgAnnualPct), "#00d4b8", "crescita composta effettiva")+
     card("Volatility Drag", (volDrag>=0?"-":"+")+Math.abs(volDrag).toFixed(2)+"%/anno", "#ffd23f", "quanto la media semplice sovrastima la crescita reale")+
-    card("Volatilità Annua", volAnnualPct!=null?volAnnualPct.toFixed(1)+"%":"--", volAnnualPct>25?"#ff6b6b":volAnnualPct>15?"#ffd23f":"#00d4b8", "più alta = drag maggiore");
+    card("Volatilità Annua", volAnnualPct!=null?volAnnualPct.toFixed(1)+"%":"--", volAnnualPct>25?"#ff6b6b":volAnnualPct>15?"#ffd23f":"#00d4b8", "più alta = drag maggiore")+
+    card("R² Trend (pulizia crescita)", logTrend.r2!=null?(logTrend.r2*100).toFixed(0)+"%":"--", logTrend.r2>0.85?"#00d4b8":logTrend.r2>0.6?"#ffd23f":"#ff6b6b", logTrend.r2>0.85?"compounder lineare e prevedibile":logTrend.r2>0.6?"crescita moderatamente ciclica":"andamento a strappi/molto ciclico");
 
   // ── Rolling return/vol (finestra 252gg = 1 anno) ──────────────────
   const {rollRet,rollVol}=calcRollingSeries(dates,closes,252);
