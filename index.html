@@ -120,8 +120,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Pattern')" id="tnPattern"><span style="font-size:16px;">🔮</span> Pattern</button>
         <button class="btn tabnav" onclick="switchTab('MonteCarlo')" id="tnMonteCarlo"><span style="font-size:16px;">🎲</span> Monte Carlo</button>
         <button class="btn tabnav" onclick="switchTab('Regime')" id="tnRegime"><span style="font-size:16px;">🌡️</span> Regime</button>
-        <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
         <button class="btn tabnav" onclick="switchTab('Strategia')" id="tnStrategia"><span style="font-size:16px;">🎯</span> Strategia</button>
+        <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
         <button class="btn tabnav" onclick="switchTab('Watchlist')" id="tnWatchlist"><span style="font-size:16px;">📋</span> Watchlist</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico"><span style="font-size:16px;">📜</span> Storico</button>
       </nav>
@@ -801,8 +801,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
     <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
-    <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
     <button class="tab-btn" onclick="switchTab('Strategia')" id="tabBtnStrategia"><span class="tab-icon">🎯</span><span class="tab-label">Strategia</span></button>
+    <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
     <button class="tab-btn" onclick="switchTab('Watchlist')" id="tabBtnWatchlist"><span class="tab-icon">📋</span><span class="tab-label">Watchlist</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
@@ -3341,7 +3341,8 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 ${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}.`; })()}
 ${(()=>{
   const n=STOCK.closes.length;
-  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support"), resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
+  const weeklySw=calcWeeklySwings(STOCK.dates,STOCK.highs,STOCK.lows);
+  const supportLine=detectTrendline(recentPivotsOnly(weeklySw.lows,n,365),"support"), resistanceLine=detectTrendline(recentPivotsOnly(weeklySw.highs,n,365),"resistance");
   const lines=[];
   if(supportLine) lines.push(`- Trendline Supporto (oggi ≈${trendlineValueAt(supportLine,n-1).toFixed(2)})`);
   if(resistanceLine) lines.push(`- Trendline Resistenza (oggi ≈${trendlineValueAt(resistanceLine,n-1).toFixed(2)})`);
@@ -5606,11 +5607,12 @@ function drawTrendlineAndPatternOverlay(ctx,w,xForIdx){
 
   const highs=STOCK.highs, lows=STOCK.lows, closes=STOCK.closes;
   const n=closes.length;
-  // Usiamo gli Swing "Internal" (lookback corto) per avere più punti recenti
-  // su cui tracciare trendline sensate nella finestra visibile.
-  const sw=calcSwingsICT(highs,lows,STOCK.dates,5);
-  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support");
-  const resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
+  // Gli SH/SL disegnati sul grafico restano giornalieri (per i punti di
+  // svolta recenti, gestiti altrove), ma le TRENDLINE ora usano swing
+  // SETTIMANALI — pivot meno numerosi ma più significativi, con molto meno rumore.
+  const weeklySw=calcWeeklySwings(STOCK.dates,highs,lows);
+  const supportLine=detectTrendline(recentPivotsOnly(weeklySw.lows,n,365),"support");
+  const resistanceLine=detectTrendline(recentPivotsOnly(weeklySw.highs,n,365),"resistance");
   LAST_TRENDLINES={supportLine,resistanceLine};
 
   function drawLine(line,color,label){
@@ -5662,6 +5664,109 @@ function drawTrendlineAndPatternOverlay(ctx,w,xForIdx){
   LAST_SIGNIFICANT_SWINGS=calcSignificantSwings(highs,lows,closes,STOCK.volumes,STOCK.dates,5);
 }
 
+// ── SWING SETTIMANALI (per trendline più stabili, meno rumore) ─────────
+// Aggrega i massimi/minimi giornalieri in barre settimanali, poi applica
+// lo stesso algoritmo di rilevamento swing su quei dati — pivot meno
+// numerosi ma più significativi, ideali per tracciare trendline che non
+// saltano da un piccolo rumore giornaliero all'altro.
+function getISOWeekKey(date){
+  const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));
+  const dayNum=(d.getUTCDay()+6)%7;
+  d.setUTCDate(d.getUTCDate()-dayNum+3);
+  const firstThursday=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  const weekNum=1+Math.round(((d-firstThursday)/86400000-3+((firstThursday.getUTCDay()+6)%7))/7);
+  return d.getUTCFullYear()+"-W"+weekNum;
+}
+function aggregateWeeklyHL(dates,highs,lows){
+  const weeks=[];
+  let cur=null;
+  dates.forEach((d,i)=>{
+    const key=getISOWeekKey(d);
+    if(!cur||cur.key!==key){
+      if(cur) weeks.push(cur);
+      cur={key,high:highs[i],low:lows[i],endDailyIdx:i};
+    } else {
+      if(highs[i]!=null) cur.high=Math.max(cur.high,highs[i]);
+      if(lows[i]!=null) cur.low=Math.min(cur.low,lows[i]);
+      cur.endDailyIdx=i;
+    }
+  });
+  if(cur) weeks.push(cur);
+  return weeks;
+}
+function calcWeeklySwings(dates,highs,lows,lookback=3){
+  const weeks=aggregateWeeklyHL(dates,highs,lows);
+  if(weeks.length<lookback*2+1) return {highs:[],lows:[]};
+  const wHighs=weeks.map(w=>w.high), wLows=weeks.map(w=>w.low);
+  const sw=calcSwingsICT(wHighs,wLows,weeks.map(()=>null),lookback);
+  // Rimappa gli idx SETTIMANALI sull'idx GIORNALIERO di fine settimana
+  // corrispondente — così restano compatibili con xForIdx e con
+  // l'estrapolazione delle trendline, che lavorano in spazio "barre giornaliere".
+  const remap=(arr)=>arr.map(p=>({idx:weeks[p.idx].endDailyIdx, price:p.price}));
+  return { highs:remap(sw.highs), lows:remap(sw.lows) };
+}
+
+// ── PATTERN CANDLESTICK (conferma o esaurimento) ────────────────────────
+// Guarda le ultime 2 candele per pattern classici (engulfing, hammer,
+// shooting star, doji) — un'entry "a mercato" senza nessuna conferma dopo
+// un movimento forte è più debole di una con una candela di conferma.
+function detectCandlestickSignal(opens,highs,lows,closes,direction){
+  const n=closes.length;
+  if(n<3||opens[n-2]==null||opens[n-1]==null) return 55;
+  const o1=opens[n-2],h1=highs[n-2],l1=lows[n-2],c1=closes[n-2];
+  const o2=opens[n-1],h2=highs[n-1],l2=lows[n-1],c2=closes[n-1];
+  const body2=Math.abs(c2-o2), range2=h2-l2;
+  const upperWick2=h2-Math.max(o2,c2), lowerWick2=Math.min(o2,c2)-l2;
+
+  const bullishEngulfing = c1<o1 && c2>o2 && c2>=o1 && o2<=c1;
+  const bearishEngulfing = c1>o1 && c2<o2 && c2<=o1 && o2>=c1;
+  const hammer = range2>0 && lowerWick2>body2*2 && upperWick2<body2*0.6;
+  const shootingStar = range2>0 && upperWick2>body2*2 && lowerWick2<body2*0.6;
+  const doji = range2>0 && body2<range2*0.1;
+
+  if(direction==="long"){
+    if(bullishEngulfing||hammer) return 80;
+    if(bearishEngulfing||shootingStar) return 20; // esaurimento, rischioso comprare proprio ora
+    if(doji) return 45;
+    return 55;
+  } else {
+    if(bearishEngulfing||shootingStar) return 80;
+    if(bullishEngulfing||hammer) return 20;
+    if(doji) return 45;
+    return 55;
+  }
+}
+
+// ── RISCHIO DI RIGETTO DA ORDER BLOCK OPPOSTO ───────────────────────────
+// Se stiamo valutando un Long ma c'è un Order Block RIBASSISTA (di segno
+// opposto) proprio sopra il prezzo attuale, rischiamo di comprare a ridosso
+// di una zona che ha già respinto il prezzo in passato — va penalizzato,
+// non ignorato come faceva il modello finora.
+function computeOBRejectionRisk(highs,lows,closes,direction,atr){
+  const n=closes.length;
+  const price=closes[n-1];
+  try{
+    const struct=computeSMCStructure(highs,lows,closes,5);
+    const opDir = direction==="long" ? "down" : "up";
+    let nearestDist=Infinity;
+    struct.events.forEach(ev=>{
+      if(ev.dir!==opDir) return;
+      const ob=findOrderBlockRange(highs,lows,ev.fromIdx,ev.idx,ev.dir);
+      if(!ob) return;
+      const obLevel = direction==="long" ? ob.bottom : ob.top;
+      if(obLevel==null) return;
+      const dist=Math.abs(price-obLevel);
+      if(dist<nearestDist) nearestDist=dist;
+    });
+    if(!isFinite(nearestDist)||!atr) return 70; // nessun OB opposto rilevato: rischio moderato di default, non "tutto ok"
+    const distInATR=nearestDist/atr;
+    if(distInATR<0.5) return 15;  // OB opposto MOLTO vicino: alto rischio di rigetto
+    if(distInATR<1.5) return 45;
+    if(distInATR<3) return 70;
+    return 90; // OB opposto lontano: rischio basso
+  }catch(e){ return 70; }
+}
+
 function computeEntryScore(direction,horizon){
   if(!STOCK) return null;
   const params = horizon==="posizionale"
@@ -5686,9 +5791,9 @@ function computeEntryScore(direction,horizon){
     const bullAligned=price>smaFast && smaFast>smaSlow, bearAligned=price<smaFast && smaFast<smaSlow;
     trendScore = direction==="long" ? (bullAligned?100:(price>smaSlow?50:0)) : (bearAligned?100:(price<smaSlow?50:0));
   }
-  components.push({key:"trend",label:"Trend (SMA allineate)",weight:25,val:trendScore});
+  components.push({key:"trend",label:"Trend (SMA allineate)",weight:20,val:trendScore});
 
-  // 2) MOMENTUM — RSI in zona "sana", penalizza gli estremi (peso 15)
+  // 2) MOMENTUM — RSI in zona "sana", penalizza gli estremi (peso 12)
   let momScore=null;
   if(rsi!=null){
     if(direction==="long"){
@@ -5705,10 +5810,10 @@ function computeEntryScore(direction,horizon){
       else momScore=15;
     }
   }
-  components.push({key:"momentum",label:"Momentum (RSI)",weight:15,val:momScore});
+  components.push({key:"momentum",label:"Momentum (RSI)",weight:12,val:momScore});
 
   // 3) STRUTTURA ICT — ultimo evento BOS/CHoCH nella direzione giusta, e
-  // livello dell'Order Block associato come possibile stop strutturale (peso 25)
+  // livello dell'Order Block associato come possibile stop strutturale (peso 20)
   let structScore=null, structuralStop=null;
   try{
     const struct=computeSMCStructure(highs,lows,closes,params.structureSz);
@@ -5724,9 +5829,9 @@ function computeEntryScore(direction,horizon){
       }
     }
   }catch(e){}
-  components.push({key:"struttura",label:"Struttura ICT (BOS/CHoCH)",weight:25,val:structScore});
+  components.push({key:"struttura",label:"Struttura ICT (BOS/CHoCH)",weight:20,val:structScore});
 
-  // 4) MARKOV — probabilità di continuazione nella direzione desiderata (peso 15)
+  // 4) MARKOV — probabilità di continuazione nella direzione desiderata (peso 13)
   let markovScore=null;
   try{
     const series=periodReturnSeries(STOCK.dates,closes,"daily");
@@ -5739,14 +5844,14 @@ function computeEntryScore(direction,horizon){
       markovScore = direction==="long" ? Math.max(0,Math.min(100,50+(upProb-downProb)*150)) : Math.max(0,Math.min(100,50+(downProb-upProb)*150));
     }
   }catch(e){}
-  components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:15,val:markovScore});
+  components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:13,val:markovScore});
 
-  // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 10)
+  // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 8)
   let regimeScore=null;
   if(LAST_REGIME_RESULT) regimeScore = direction==="long" ? LAST_REGIME_RESULT.score : 100-LAST_REGIME_RESULT.score;
-  components.push({key:"regime",label:"Regime di Mercato",weight:10,val:regimeScore});
+  components.push({key:"regime",label:"Regime di Mercato",weight:8,val:regimeScore});
 
-  // 6) VOLUME — conferma del movimento, penalizza sia debolezza che esaurimento (peso 10)
+  // 6) VOLUME — conferma del movimento, penalizza sia debolezza che esaurimento (peso 7)
   let volScore=null;
   const lastVol=STOCK.volumes[n-1], lastVolMA=smaSeriesCalc(STOCK.volumes,20)[n-1];
   if(lastVol!=null && lastVolMA){
@@ -5756,7 +5861,16 @@ function computeEntryScore(direction,horizon){
     else if(ratio>4) volScore=30;
     else volScore=Math.max(20,ratio*80);
   }
-  components.push({key:"volume",label:"Volume (conferma)",weight:10,val:volScore});
+  components.push({key:"volume",label:"Volume (conferma)",weight:7,val:volScore});
+
+  // 7) CANDLESTICK — pattern di conferma o esaurimento sulle ultime 2 candele (peso 10)
+  const candleScore=detectCandlestickSignal(STOCK.opens,highs,lows,closes,direction);
+  components.push({key:"candlestick",label:"Pattern Candlestick",weight:10,val:candleScore});
+
+  // 8) RISCHIO ORDER BLOCK OPPOSTO — penalizza l'ingresso se un OB di segno
+  // contrario è troppo vicino al prezzo attuale (rischio di rigetto) (peso 10)
+  const obRiskScore=computeOBRejectionRisk(highs,lows,closes,direction,atr);
+  components.push({key:"obRisk",label:"Rischio Rigetto Order Block",weight:10,val:obRiskScore});
 
   let totalWeight=0, weightedSum=0;
   components.forEach(c=>{ if(c.val!=null){ totalWeight+=c.weight; weightedSum+=c.val*c.weight; } });
@@ -5783,7 +5897,8 @@ function computeApproachZones(direction){
   const price=STOCK.closes[STOCK.closes.length-1];
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
-  const supportLine=detectTrendline(recentPivotsOnly(sw.lows,n),"support"), resistanceLine=detectTrendline(recentPivotsOnly(sw.highs,n),"resistance");
+  const weeklySw=calcWeeklySwings(STOCK.dates,STOCK.highs,STOCK.lows);
+  const supportLine=detectTrendline(recentPivotsOnly(weeklySw.lows,n,365),"support"), resistanceLine=detectTrendline(recentPivotsOnly(weeklySw.highs,n,365),"resistance");
   const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
   const supportLineVal=supportLine?trendlineValueAt(supportLine,n-1):null;
   const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
