@@ -3619,6 +3619,7 @@ loadHistoryFromCloudAndMerge();
 // ── WATCHLIST (import da file screener esterno o incolla manuale) ──────
 let WATCHLIST=[];
 let WATCHLIST_SORT={column:null, dir:1}; // dir: 1=crescente, -1=decrescente
+let WATCHLIST_EDITING=null; // ticker della riga attualmente in modifica, o null
 const WATCHLIST_KEY="analyzer_watchlist_v1";
 
 function loadWatchlistFromStorage(){
@@ -3868,6 +3869,32 @@ window.clearWatchlist=function(){
   renderWatchlistTable();
 };
 
+window.editWatchlistRow=function(ticker){
+  WATCHLIST_EDITING=ticker;
+  renderWatchlistTable();
+};
+window.cancelWatchlistRowEdit=function(){
+  WATCHLIST_EDITING=null;
+  renderWatchlistTable();
+};
+window.saveWatchlistRowEdit=function(ticker){
+  const w=WATCHLIST.find(x=>x.ticker===ticker);
+  if(!w) return;
+  const val=(id)=>{ const elm=document.getElementById(id); return elm?elm.value.trim():""; };
+  w.company=val(`wlEdit_company_${ticker}`);
+  w.country=val(`wlEdit_country_${ticker}`);
+  w.industry=val(`wlEdit_industry_${ticker}`);
+  w.fairValue=val(`wlEdit_fairValue_${ticker}`);
+  w.fairValueLabel=val(`wlEdit_fairValueLabel_${ticker}`);
+  w.analystTarget=val(`wlEdit_analystTarget_${ticker}`);
+  w.targetLabel=val(`wlEdit_targetLabel_${ticker}`);
+  w.altmanZ=val(`wlEdit_altmanZ_${ticker}`);
+  w.piotroski=val(`wlEdit_piotroski_${ticker}`);
+  WATCHLIST_EDITING=null;
+  saveWatchlist();
+  renderWatchlistTable();
+};
+
 window.sortWatchlistBy=function(column){
   if(WATCHLIST_SORT.column===column) WATCHLIST_SORT.dir*=-1; // stessa colonna: inverte la direzione
   else WATCHLIST_SORT={column, dir:1};
@@ -3899,6 +3926,26 @@ window.renderWatchlistTable=function(){
   loadAnalysisHistory().forEach(h=>{ if(h.stockScore!=null) historyByTicker[h.ticker]=h.stockScore; });
   let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
   list.forEach((w,idx)=>{
+    if(WATCHLIST_EDITING===w.ticker){
+      // Riga in modalità modifica: un campo per ciascun dato importabile,
+      // precompilato con quello che c'è già (anche vuoto se manca).
+      const inp=(id,val,placeholder,width)=>`<input type="text" id="wlEdit_${id}_${w.ticker}" value="${(val||"").toString().replace(/"/g,"&quot;")}" placeholder="${placeholder}" style="width:${width||70}px;font-size:10px;">`;
+      h+=`<tr style="background:var(--panel2);">
+        <td style="font-size:11px;color:var(--dim);font-weight:700;text-align:center;">${idx+1}</td>
+        <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
+        <td>${inp("company",w.company,"Company",110)}</td>
+        <td>${inp("country",w.country,"Country",80)}<br>${inp("industry",w.industry,"Industry",80)}</td>
+        <td style="font-size:9px;color:var(--dim);">manuale</td>
+        <td>${inp("fairValue",w.fairValue,"Fair Value",55)} ${inp("fairValueLabel",w.fairValueLabel,"Etichetta",70)}<br>${inp("analystTarget",w.analystTarget,"Target",55)} ${inp("targetLabel",w.targetLabel,"Etichetta",70)}</td>
+        <td>${inp("altmanZ",w.altmanZ,"Altman Z",55)}<br>${inp("piotroski",w.piotroski,"Piotroski",55)}</td>
+        <td style="max-width:220px;">—</td>
+        <td style="white-space:nowrap;">
+          <button class="btn primary" style="font-size:10px;padding:3px 8px;" onclick="saveWatchlistRowEdit('${w.ticker}')">💾 Salva</button>
+          <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="cancelWatchlistRowEdit()">✕ Annulla</button>
+        </td>
+      </tr>`;
+      return;
+    }
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
       ? tags.map(t=>`<span style="display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;margin:1px;font-size:9px;white-space:nowrap;" title="${new Date(t.date).toLocaleDateString("it-IT")}">${t.file}${t.note?" · "+t.note:""}</span>`).join("")
@@ -3926,6 +3973,7 @@ window.renderWatchlistTable=function(){
       <td style="white-space:nowrap;">
         <a href="${getTVUrl(w.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TradingView</a>
         <button class="btn primary" style="font-size:10px;padding:3px 8px;" onclick="el('tickerInput').value='${w.ticker}';switchTab('Grafico');analyzeTicker();">🔍 Analizza</button>
+        <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="editWatchlistRow('${w.ticker}')" title="Modifica i dati mancanti">✏️ Modifica</button>
         <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="removeFromWatchlist('${w.ticker}')" title="Rimuovi">✕</button>
       </td>
     </tr>`;
