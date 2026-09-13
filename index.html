@@ -990,6 +990,7 @@ window.switchTab=function(name){
   if(name==="Markov" && STOCK) renderMarkov();
   if(name==="Ergodicita" && STOCK){ renderRisk(); renderErgodicita(); }
   if(name==="Storico") renderHistoryTab();
+  if(name==="Watchlist") renderWatchlistTable();
   if(name==="Pattern" && STOCK) prefillAnalystTargetForCurrentStock();
 };
 
