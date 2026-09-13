@@ -759,6 +759,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Minima Volatilità')">Minima Volatilità</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Massimo Sharpe')">Massimo Sharpe</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Bilanciato')">Bilanciato</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Equal Weight')">Equal Weight</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Coma')">Coma</button>
             </div>
             <div id="portfolioDetailWrap" style="overflow-x:auto;"></div>
           </div>
@@ -3389,7 +3391,7 @@ ${(()=>{
   const lines=[];
   const addZoneLines=(res,label)=>{
     if(res.zoneA!=null) lines.push(`- ${label} Zona A (retest): ${res.zoneA.toFixed(2)}`);
-    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — confine ${res.patternBreakout.patternType}, NON ancora rotto, usa ESATTAMENTE questo valore come livello di breakout`:""}: ${res.zoneB.toFixed(2)}`);
+    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — confine ${res.patternBreakout.patternType}, NON ancora rotto: usa ESATTAMENTE questo valore sia come trigger di rottura CHE come livello di ritest successivo (metodologia corretta: attendi la chiusura oltre questo prezzo con volume, poi il ritorno/ritest verso lo stesso livello, entra lì — non sulla prima candela di rottura)`:""}: ${res.zoneB.toFixed(2)}`);
     if(res.zoneC!=null) lines.push(`- ${label} Zona C (tranche più lontana): ${res.zoneC.toFixed(2)}`);
   };
   addZoneLines(l,"LONG"); addZoneLines(s,"SHORT");
@@ -3407,7 +3409,7 @@ STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
 Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendline, 52w). Solo dati in lista.
 
 ⏱ Entry Point
-1 approccio per la direzione migliore (retest o breakout), zona+condizione+Stop+max 2 Target con R/R. Poi l'altra direzione in 1 riga.
+1 approccio per la direzione migliore, zona+condizione+Stop+max 2 Target con R/R. Se la Zona B ha un pattern non ancora rotto, usa la metodologia rottura-confermata-poi-ritest (stesso prezzo per entrambe le fasi, vedi dati sopra), non un ingresso secco sulla prima candela di rottura. Poi l'altra direzione in 1 riga.
 
 ⚠️ Rischio
 Stop, invalidazione principale, 1 riga cosa faresti/non faresti.
@@ -3691,6 +3693,36 @@ window.loadWatchlistFile=function(event){
           const analystTargetKey=keys.find(k=>k.trim().toLowerCase()==="target analisti") || keys.find(k=>/target.*analist/i.test(k.trim())&&!/etichetta/i.test(k));
           const altmanKey=keys.find(k=>/altman/i.test(k.trim()));
           const piotroskiKey=keys.find(k=>/piotroski/i.test(k.trim()));
+          // Colonne del Coma Screener (l'altro tuo progetto): titoli scesi
+          // molto dai massimi, con metriche quant già pronte. Il "Coma Score"
+          // è quello che usiamo per marcare un titolo come eleggibile per il
+          // portafoglio "Coma" dedicato — non serve un tag testuale a parte.
+          const qualityKey=keys.find(k=>k.trim().toLowerCase()==="quality");
+          const comaScoreKey=keys.find(k=>/coma\s*score/i.test(k.trim()));
+          const cagrKey=keys.find(k=>k.trim().toLowerCase()==="cagr");
+          const volKey=keys.find(k=>/^volatilit[àa]$/i.test(k.trim()));
+          const daAthKey=keys.find(k=>/da\s*ath/i.test(k.trim()));
+          const maxDdKey=keys.find(k=>/maxdd\s*storico/i.test(k.trim()));
+          const min5yKey=keys.find(k=>/min\s*5y/i.test(k.trim()));
+          const r2Key=keys.find(k=>k.trim().toLowerCase()==="r2"||k.trim()==="R²");
+          const marKey=keys.find(k=>k.trim().toLowerCase()==="mar");
+          const sortinoKey=keys.find(k=>k.trim().toLowerCase()==="sortino");
+          const anniStoriaKey=keys.find(k=>/anni\s*storia/i.test(k.trim()));
+          const mesiPiccoKey=keys.find(k=>/mesi\s*da\s*picco/i.test(k.trim()));
+          const comaExtra={
+            quality: qualityKey?parseFloat(row[qualityKey])||null:null,
+            comaScore: comaScoreKey?parseFloat(row[comaScoreKey])||null:null,
+            cagr: cagrKey?parseFloat(row[cagrKey])||null:null,
+            volatility: volKey?parseFloat(row[volKey])||null:null,
+            daAth: daAthKey?parseFloat(row[daAthKey])||null:null,
+            maxDdStorico: maxDdKey?parseFloat(row[maxDdKey])||null:null,
+            min5y: min5yKey?parseFloat(row[min5yKey])||null:null,
+            r2: r2Key?parseFloat(row[r2Key])||null:null,
+            mar: marKey?parseFloat(row[marKey])||null:null,
+            sortino: sortinoKey?parseFloat(row[sortinoKey])||null:null,
+            anniStoria: anniStoriaKey?parseFloat(row[anniStoriaKey])||null:null,
+            mesiDaPicco: mesiPiccoKey?parseFloat(row[mesiPiccoKey])||null:null
+          };
           const extra={
             fairValue: fairValueKey?String(row[fairValueKey]).trim():"",
             fairValueLabel: fairValueLabelKey?String(row[fairValueLabelKey]).trim():"",
@@ -3712,6 +3744,7 @@ window.loadWatchlistFile=function(event){
             if(!existing.industry && industryKey) existing.industry=String(row[industryKey]).trim();
             if(!existing.country && countryKey) existing.country=String(row[countryKey]).trim();
             Object.entries(extra).forEach(([k,v])=>{ if(v && !existing[k]) existing[k]=v; });
+            Object.entries(comaExtra).forEach(([k,v])=>{ if(v!=null && existing[k]==null) existing[k]=v; });
           } else {
             WATCHLIST.push({
               ticker,
@@ -3720,6 +3753,7 @@ window.loadWatchlistFile=function(event){
               industry: industryKey?String(row[industryKey]).trim():"",
               country: countryKey?String(row[countryKey]).trim():"",
               ...extra,
+              ...comaExtra,
               tags:[tag]
             });
             added++;
@@ -4004,6 +4038,37 @@ function selectPortfolios(frontier,riskFreeRate=0.03){
   return {"Minima Volatilità":minVar,"Massimo Sharpe":maxSharpe,"Bilanciato":balanced};
 }
 
+// Portafoglio 4: pesi uguali su tutti i titoli — baseline semplice per
+// confrontare se l'ottimizzazione aggiunge davvero valore o no.
+function buildEqualWeightPortfolio(mu,cov,tickers){
+  const n=tickers.length;
+  const weights=new Array(n).fill(1/n);
+  const covW=matVecMul(cov,weights);
+  const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+  const volatility=Math.sqrt(Math.max(0,variance));
+  const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+  return {weights,expectedReturn,volatility};
+}
+
+// Portafoglio 5: SOLO sui titoli importati dal Coma Screener (colonna
+// "Coma Score" in Watchlist), pesati proporzionalmente al punteggio —
+// più "in coma" e di qualità alta, più peso riceve. Se nessun titolo Coma
+// ha dati di prezzo validi, ritorna null (portafoglio non costruibile).
+function buildComaPortfolio(mu,cov,tickers){
+  const comaWeights=tickers.map(t=>{
+    const w=WATCHLIST.find(x=>x.ticker===t);
+    return (w&&w.comaScore!=null)?w.comaScore:0;
+  });
+  const total=comaWeights.reduce((a,b)=>a+b,0);
+  if(total<=0) return null;
+  const weights=comaWeights.map(w=>w/total);
+  const covW=matVecMul(cov,weights);
+  const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+  const volatility=Math.sqrt(Math.max(0,variance));
+  const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+  return {weights,expectedReturn,volatility};
+}
+
 // Il gradiente restituisce pesi "densi" (quasi tutti i titoli con un po' di
 // peso) — li tronchiamo ai migliori N e rinormalizziamo, per avere un
 // portafoglio davvero gestibile con un numero limitato di posizioni.
@@ -4036,6 +4101,10 @@ window.buildOptimalPortfolio=async function(){
   el("portfolioStatus").textContent="⏳ Traccio la frontiera efficiente...";
   const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
   const selected=selectPortfolios(frontier);
+  selected["Equal Weight"]=buildEqualWeightPortfolio(mu,cov,tickers);
+  const comaPortfolio=buildComaPortfolio(mu,cov,tickers);
+  if(comaPortfolio) selected["Coma"]=comaPortfolio;
+  else el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — nessun titolo Coma Screener con dati di prezzo validi nella Watchlist.`;
 
   const portfolios={};
   Object.entries(selected).forEach(([name,p])=>{ portfolios[name]={...p, sparse:sparsifyPortfolio(p.weights,tickers,maxStocks)}; });
@@ -4054,7 +4123,7 @@ window.renderPortfolioResults=function(){
   const ctx=el("frontierChart");
   if(PORTFOLIO_FRONTIER_CHART) PORTFOLIO_FRONTIER_CHART.destroy();
   const frontierPoints=r.frontier.map(p=>({x:p.volatility*100,y:p.expectedReturn*100}));
-  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff"};
+  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff","Equal Weight":"#c77dff","Coma":"#ff6b6b"};
   const datasets=[{label:"Frontiera Efficiente",data:frontierPoints,borderColor:"#7d8aa3",backgroundColor:"#7d8aa3",showLine:true,pointRadius:3,tension:0.2}];
   Object.entries(r.portfolios).forEach(([name,p])=>{
     datasets.push({label:name,data:[{x:p.volatility*100,y:p.expectedReturn*100}],backgroundColor:highlightColors[name],borderColor:highlightColors[name],pointRadius:8,showLine:false});
