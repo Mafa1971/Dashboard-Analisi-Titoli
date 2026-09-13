@@ -724,8 +724,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       <!-- TAB PORTAFOGLIO OTTIMALE -->
       <div id="tabPortafoglio" class="tab-content">
         <div class="panel">
-          <div class="panel-title">📊 PORTAFOGLIO OTTIMALE (dalla Watchlist)</div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Scarica lo storico prezzi di tutti i titoli in Watchlist, calcola rischio/rendimento/correlazioni, e costruisce 3 portafogli ottimizzati (Minima Volatilità, Massimo Sharpe, Bilanciato) rispettando i tetti di concentrazione per titolo e per settore. Con molti titoli in Watchlist può richiedere diversi minuti — pensato per essere rifatto 1-2 volte al mese, non ad ogni sessione.</div>
+          <div class="panel-title">📊 PORTAFOGLIO OTTIMALE (dai titoli analizzati nello Storico)</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Usa solo i titoli nello Storico con uno Score calcolato DA NOI (Piotroski/Regime/Markov/ecc. nostri, non importati da fonti esterne come la Watchlist) — dati coerenti, stessa metodologia per tutti. Scarica lo storico prezzi, calcola rischio/rendimento/correlazioni, e costruisce 5 portafogli ottimizzati. Con molti titoli può richiedere diversi minuti — pensato per essere rifatto 1-2 volte al mese, non ad ogni sessione.</div>
           <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
             <label style="font-size:11px;color:var(--dim);">Budget (€/$):
               <input type="number" id="portfolioBudget" value="20000" min="0" step="1000" style="width:100px;">
@@ -738,6 +738,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </label>
             <label style="font-size:11px;color:var(--dim);">Tetto max per settore (%):
               <input type="number" id="portfolioMaxSector" value="30" min="5" max="100" style="width:55px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Score minimo per essere incluso:
+              <input type="number" id="portfolioMinScore" value="0" min="0" max="100" style="width:55px;">
             </label>
           </div>
           <button class="btn primary" onclick="buildOptimalPortfolio()">🎯 COSTRUISCI PORTAFOGLIO</button>
@@ -3889,7 +3892,12 @@ window.renderWatchlistTable=function(){
   const stickyBase="position:sticky;top:0;background:var(--panel);z-index:2;border-bottom:2px solid var(--line);";
   const th=(col,label)=>`<th style="cursor:pointer;user-select:none;${stickyBase}" onclick="sortWatchlistBy('${col}')" title="Clicca per ordinare">${label}${sortArrow(col)}</th>`;
   const thPlain=(label)=>`<th style="${stickyBase}">${label}</th>`;
-  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
+  // Calcolato una sola volta fuori dal loop, non ad ogni riga — indica quali
+  // titoli sono già stati analizzati DA NOI (hanno uno Score nello Storico),
+  // e quindi sono anche eleggibili per il tab Portafoglio.
+  const historyByTicker={};
+  loadAnalysisHistory().forEach(h=>{ if(h.stockScore!=null) historyByTicker[h.ticker]=h.stockScore; });
+  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
   list.forEach((w,idx)=>{
     const tags=w.tags||[]; // voci create prima di questo aggiornamento potrebbero non averle
     const tagsHtml=tags.length
@@ -3903,11 +3911,15 @@ window.renderWatchlistTable=function(){
     if(w.altmanZ) qualBits.push(`Altman Z: ${w.altmanZ}`);
     if(w.piotroski) qualBits.push(`Piotroski: ${w.piotroski}`);
     const qualitaHtml=qualBits.length ? `<span style="font-size:10px;">${qualBits.join("<br>")}</span>` : `<span style="font-size:10px;color:var(--dim);">—</span>`;
+    const analizzatoHtml = historyByTicker[w.ticker]!=null
+      ? `<span style="font-size:10px;color:#00d4b8;font-weight:700;" title="Presente nello Storico, eleggibile per il Portafoglio">✓ Score ${historyByTicker[w.ticker]}</span>`
+      : `<span style="font-size:10px;color:var(--dim);">—</span>`;
     h+=`<tr>
       <td style="font-size:11px;color:var(--dim);font-weight:700;text-align:center;">${idx+1}</td>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
       <td style="font-size:11px;">${w.country||""}</td>
+      <td>${analizzatoHtml}</td>
       <td>${valutazioneHtml}</td>
       <td>${qualitaHtml}</td>
       <td style="max-width:220px;">${tagsHtml}</td>
@@ -3933,11 +3945,11 @@ let PORTFOLIO_EQUITY_CHART=null;
 // alla volta con una piccola pausa — con 200 titoli richiede diversi minuti,
 // per questo è pensato per essere rifatto solo 1-2 volte al mese, non ad
 // ogni sessione. I titoli che falliscono vengono semplicemente saltati.
-async function fetchWatchlistPriceHistory(onProgress){
+async function fetchPriceHistoryForTickers(tickerList,onProgress){
   const priceData={};
-  for(let i=0;i<WATCHLIST.length;i++){
-    const ticker=WATCHLIST[i].ticker;
-    if(onProgress) onProgress(i+1,WATCHLIST.length,ticker);
+  for(let i=0;i<tickerList.length;i++){
+    const ticker=tickerList[i];
+    if(onProgress) onProgress(i+1,tickerList.length,ticker);
     try{
       const res=await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&range=2y&interval=1wk`);
       const json=await res.json();
@@ -4086,14 +4098,23 @@ function sparsifyPortfolio(weights,tickers,maxStocks){
 }
 
 window.buildOptimalPortfolio=async function(){
-  if(WATCHLIST.length<10){ el("portfolioStatus").textContent="⚠️ Servono almeno 10 titoli in Watchlist per costruire un portafoglio sensato."; return; }
+  // L'universo del portafoglio sono i ticker nello STORICO con uno Score
+  // calcolato DA NOI (Piotroski/Regime/Markov/ecc. nostri, non importati da
+  // fonti esterne) — la Watchlist può contenere nomi mai analizzati, presi
+  // pari pari da uno screener esterno con metodologie diverse dalle nostre.
+  const eligibleHistory=loadAnalysisHistory().filter(h=>h.stockScore!=null);
+  const minScore=parseFloat(el("portfolioMinScore")?.value)||0;
+  const scoreFiltered=eligibleHistory.filter(h=>h.stockScore>=minScore);
+  if(scoreFiltered.length<10){ el("portfolioStatus").textContent=`⚠️ Solo ${scoreFiltered.length} titoli nello Storico con Score calcolato (e ≥${minScore}) — servono almeno 10. Analizza e calcola lo Score di più titoli, o abbassa la soglia minima.`; return; }
+  const universeTickers=scoreFiltered.map(h=>h.ticker);
+
   const budget=parseFloat(el("portfolioBudget").value)||20000;
   const maxStocks=parseInt(el("portfolioMaxStocks").value)||20;
   const maxWeight=(parseFloat(el("portfolioMaxWeight").value)||10)/100;
   const maxSectorWeight=(parseFloat(el("portfolioMaxSector").value)||30)/100;
 
-  el("portfolioStatus").textContent=`⏳ Scarico storico prezzi per ${WATCHLIST.length} titoli — può richiedere diversi minuti...`;
-  const priceData=await fetchWatchlistPriceHistory((done,total,ticker)=>{
+  el("portfolioStatus").textContent=`⏳ Scarico storico prezzi per ${universeTickers.length} titoli (dallo Storico analizzato) — può richiedere diversi minuti...`;
+  const priceData=await fetchPriceHistoryForTickers(universeTickers,(done,total,ticker)=>{
     el("portfolioStatus").textContent=`⏳ Scarico storico (${done}/${total}): ${ticker}...`;
   });
   const validTickers=Object.keys(priceData);
@@ -4102,7 +4123,11 @@ window.buildOptimalPortfolio=async function(){
   el("portfolioStatus").textContent="⏳ Calcolo rendimenti, volatilità e correlazioni...";
   const {tickers,returns}=alignAndComputeReturns(priceData);
   const {mu,cov}=computeMuAndCov(tickers,returns);
-  const sectorOf=tickers.map(t=>WATCHLIST.find(w=>w.ticker===t)?.sector||"Altro");
+  // Il Settore non è salvato nello Storico (non lo calcoliamo noi) — se il
+  // ticker capita di essere ANCHE in Watchlist lo recuperiamo da lì come
+  // bonus, altrimenti resta "N/D" e il vincolo di diversificazione settoriale
+  // si applica solo dove il dato è disponibile.
+  const sectorOf=tickers.map(t=>WATCHLIST.find(w=>w.ticker===t)?.sector||"N/D");
 
   el("portfolioStatus").textContent="⏳ Traccio la frontiera efficiente...";
   const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
@@ -4110,14 +4135,14 @@ window.buildOptimalPortfolio=async function(){
   selected["Equal Weight"]=buildEqualWeightPortfolio(mu,cov,tickers);
   const comaPortfolio=buildComaPortfolio(mu,cov,tickers);
   if(comaPortfolio) selected["Coma"]=comaPortfolio;
-  else el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — nessun titolo Coma Screener con dati di prezzo validi nella Watchlist.`;
+  else el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — verrà ridisegnato con dati nostri (Piotroski/rendimento) nel prossimo passo.`;
 
   const portfolios={};
   Object.entries(selected).forEach(([name,p])=>{ portfolios[name]={...p, sparse:sparsifyPortfolio(p.weights,tickers,maxStocks)}; });
 
   LAST_PORTFOLIO_RESULT={frontier,portfolios,priceData,budget,tickers,sectorOf};
   renderPortfolioResults();
-  el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${WATCHLIST.length} titoli con dati validi (${WATCHLIST.length-validTickers.length} saltati per dati insufficienti).`;
+  el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${universeTickers.length} titoli dello Storico con dati validi (${universeTickers.length-validTickers.length} saltati per dati di prezzo insufficienti).`;
 };
 
 // Equity retroattiva: "se avessi tenuto ESATTAMENTE questi pesi per gli
