@@ -750,8 +750,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="height:320px;"><canvas id="frontierChart"></canvas></div>
           </div>
           <div class="panel">
-            <div class="panel-title">🏆 I 3 PORTAFOGLI</div>
-            <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;"></div>
+            <div class="panel-title">📊 EQUITY RETROATTIVA (ultimi 2 anni, pesi attuali)</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Se avessi tenuto ESATTAMENTE questi pesi per gli ultimi 2 anni (dati settimanali) — base 100 all'inizio del periodo. Non è un backtest storico con ribilanciamenti, solo un'indicazione di come si sarebbe comportata questa combinazione.</div>
+            <div style="height:320px;"><canvas id="portfolioEquityChart"></canvas></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">🏆 I 5 PORTAFOGLI</div>
+            <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"></div>
           </div>
           <div class="panel">
             <div class="panel-title">📋 DETTAGLIO PESI E QUANTITÀ</div>
@@ -3922,6 +3927,7 @@ window.renderWatchlistTable=function(){
 // ══════════════════════════════════════════════════════════════════════
 let LAST_PORTFOLIO_RESULT=null;
 let PORTFOLIO_FRONTIER_CHART=null;
+let PORTFOLIO_EQUITY_CHART=null;
 
 // Scarica lo storico settimanale (2 anni) per ogni titolo in Watchlist, uno
 // alla volta con una piccola pausa — con 200 titoli richiede diversi minuti,
@@ -4114,6 +4120,29 @@ window.buildOptimalPortfolio=async function(){
   el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${WATCHLIST.length} titoli con dati validi (${WATCHLIST.length-validTickers.length} saltati per dati insufficienti).`;
 };
 
+// Equity retroattiva: "se avessi tenuto ESATTAMENTE questi pesi per gli
+// ultimi 2 anni" (gli stessi dati settimanali già scaricati per la
+// frontiera efficiente, nessun nuovo download). Base 100 all'inizio del
+// periodo. È un backtest statico sui pesi FINALI, non un vero backtest
+// storico con ribilanciamenti — utile per farsi un'idea, non una previsione.
+function computeBacktestEquity(priceData,weights,tickers){
+  const minLen=Math.min(...tickers.map(t=>priceData[t].closes.length));
+  if(minLen<2) return [];
+  const dates=priceData[tickers[0]].dates.slice(-minLen);
+  const closesByTicker=tickers.map(t=>priceData[t].closes.slice(-minLen));
+  const equity=[];
+  for(let i=0;i<minLen;i++){
+    let value=0;
+    tickers.forEach((t,idx)=>{
+      const closes=closesByTicker[idx];
+      const firstPrice=closes[0];
+      if(firstPrice>0) value+=weights[idx]*(closes[i]/firstPrice);
+    });
+    equity.push({date:dates[i],value:value*100});
+  }
+  return equity;
+}
+
 window.renderPortfolioResults=function(){
   const r=LAST_PORTFOLIO_RESULT;
   if(!r) return;
@@ -4155,6 +4184,26 @@ window.renderPortfolioResults=function(){
     </div>`;
   });
   el("portfolioCardsWrap").innerHTML=cardsHtml;
+
+  // Equity retroattiva a 2 anni: "se avessi tenuto questi pesi dall'inizio
+  // dello storico scaricato" — stessi dati settimanali già usati per la frontiera.
+  const eqCtx=el("portfolioEquityChart");
+  if(PORTFOLIO_EQUITY_CHART) PORTFOLIO_EQUITY_CHART.destroy();
+  const eqDatasets=Object.entries(r.portfolios).map(([name,p])=>{
+    const curve=computeBacktestEquity(r.priceData,p.weights,r.tickers);
+    return { label:name, data:curve.map(pt=>pt.value), borderColor:highlightColors[name], backgroundColor:highlightColors[name], borderWidth:name==="Bilanciato"?2.5:1.5, pointRadius:0, tension:0.1 };
+  });
+  const eqLabels=(()=>{ const t=r.tickers[0]; const minLen=Math.min(...r.tickers.map(tk=>r.priceData[tk].closes.length)); return r.priceData[t].dates.slice(-minLen).map(d=>new Date(d).toISOString().slice(0,10)); })();
+  PORTFOLIO_EQUITY_CHART=new Chart(eqCtx.getContext("2d"),{
+    type:"line",
+    data:{labels:eqLabels, datasets:eqDatasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+        y:{title:{display:true,text:"Valore (base 100)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+      }}
+  });
 
   renderPortfolioDetailTable("Minima Volatilità");
 };
@@ -4207,12 +4256,14 @@ function saveAnalysisToHistory(totalReturn){
   filtered.push(entry);
   saveHistoryArr(filtered);
 }
-function updateHistoryScore(ticker,score){
-  // Aggiorna il punteggio nella riga storico già esistente per questo ticker,
-  // senza toccare data/prezzo/altri campi — chiamata dopo Calcola Score.
+function updateHistoryScore(ticker,score,components){
+  // Aggiorna il punteggio E il dettaglio dei componenti nella riga storico
+  // già esistente per questo ticker, senza toccare data/prezzo/altri campi —
+  // chiamata dopo Calcola Score. I componenti servono per usare "più
+  // parametri" (non solo il numero finale) quando costruiamo un portafoglio.
   const hist=loadAnalysisHistory();
   const idx=hist.findIndex(h=>h.ticker===ticker);
-  if(idx>=0){ hist[idx].stockScore=score; saveHistoryArr(hist); }
+  if(idx>=0){ hist[idx].stockScore=score; hist[idx].scoreComponents=components||null; saveHistoryArr(hist); }
 }
 function saveFundamentalsToHistory(ticker, rows){
   // Salva l'intero storico multi-anno del bilancio (non solo l'ultimo anno)
@@ -5701,7 +5752,7 @@ window.calcStockScore=function(){
   }
   const finalScore=Math.round(weightedSum/totalWeight);
   LAST_STOCK_SCORE={ score:finalScore, components, missing, coveragePct:Math.round(totalWeight) };
-  updateHistoryScore(STOCK.ticker, finalScore);
+  updateHistoryScore(STOCK.ticker, finalScore, components);
 
   let label,color,emoji;
   if(finalScore>=85){ label="Molto Interessante"; color="#00d4b8"; emoji="🟢🟢"; }
