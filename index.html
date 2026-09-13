@@ -123,6 +123,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <button class="btn tabnav" onclick="switchTab('Strategia')" id="tnStrategia"><span style="font-size:16px;">🎯</span> Strategia</button>
         <button class="btn tabnav" onclick="switchTab('Score')" id="tnScore"><span style="font-size:16px;">⭐</span> Stock Score</button>
         <button class="btn tabnav" onclick="switchTab('Watchlist')" id="tnWatchlist"><span style="font-size:16px;">📋</span> Watchlist</button>
+        <button class="btn tabnav" onclick="switchTab('Portafoglio')" id="tnPortafoglio"><span style="font-size:16px;">📊</span> Portafoglio</button>
         <button class="btn tabnav" onclick="switchTab('Storico')" id="tnStorico"><span style="font-size:16px;">📜</span> Storico</button>
       </nav>
 
@@ -720,6 +721,50 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         </div>
       </div>
 
+      <!-- TAB PORTAFOGLIO OTTIMALE -->
+      <div id="tabPortafoglio" class="tab-content">
+        <div class="panel">
+          <div class="panel-title">📊 PORTAFOGLIO OTTIMALE (dalla Watchlist)</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Scarica lo storico prezzi di tutti i titoli in Watchlist, calcola rischio/rendimento/correlazioni, e costruisce 3 portafogli ottimizzati (Minima Volatilità, Massimo Sharpe, Bilanciato) rispettando i tetti di concentrazione per titolo e per settore. Con molti titoli in Watchlist può richiedere diversi minuti — pensato per essere rifatto 1-2 volte al mese, non ad ogni sessione.</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+            <label style="font-size:11px;color:var(--dim);">Budget (€/$):
+              <input type="number" id="portfolioBudget" value="20000" min="0" step="1000" style="width:100px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">N. titoli finali per portafoglio:
+              <input type="number" id="portfolioMaxStocks" value="20" min="5" max="50" style="width:60px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Tetto max per titolo (%):
+              <input type="number" id="portfolioMaxWeight" value="10" min="1" max="100" style="width:55px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Tetto max per settore (%):
+              <input type="number" id="portfolioMaxSector" value="30" min="5" max="100" style="width:55px;">
+            </label>
+          </div>
+          <button class="btn primary" onclick="buildOptimalPortfolio()">🎯 COSTRUISCI PORTAFOGLIO</button>
+          <div id="portfolioStatus" style="font-size:11px;color:var(--gold);margin-top:10px;"></div>
+        </div>
+
+        <div id="portfolioResultsWrap" style="display:none;">
+          <div class="panel">
+            <div class="panel-title">📈 FRONTIERA EFFICIENTE</div>
+            <div style="height:320px;"><canvas id="frontierChart"></canvas></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">🏆 I 3 PORTAFOGLI</div>
+            <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">📋 DETTAGLIO PESI E QUANTITÀ</div>
+            <div style="display:flex;gap:10px;margin-bottom:10px;">
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Minima Volatilità')">Minima Volatilità</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Massimo Sharpe')">Massimo Sharpe</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Bilanciato')">Bilanciato</button>
+            </div>
+            <div id="portfolioDetailWrap" style="overflow-x:auto;"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB STORICO ANALISI -->
       <div id="tabStorico" class="tab-content">
         <div class="panel">
@@ -804,6 +849,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Strategia')" id="tabBtnStrategia"><span class="tab-icon">🎯</span><span class="tab-label">Strategia</span></button>
     <button class="tab-btn" onclick="switchTab('Score')" id="tabBtnScore"><span class="tab-icon">⭐</span><span class="tab-label">Score</span></button>
     <button class="tab-btn" onclick="switchTab('Watchlist')" id="tabBtnWatchlist"><span class="tab-icon">📋</span><span class="tab-label">Watchlist</span></button>
+    <button class="tab-btn" onclick="switchTab('Portafoglio')" id="tabBtnPortafoglio"><span class="tab-icon">📊</span><span class="tab-label">Portafoglio</span></button>
     <button class="tab-btn" onclick="switchTab('Storico')" id="tabBtnStorico"><span class="tab-icon">📜</span><span class="tab-label">Storico</span></button>
   </nav>
 </div>
@@ -920,7 +966,7 @@ window.switchTab=function(name){
   // Storico e Watchlist non richiedono un'analisi già fatta — forziamo
   // visibile l'area risultati anche se STOCK non è ancora caricato, così
   // funzionano subito indipendentemente da quale pulsante li ha aperti.
-  if((name==="Storico"||name==="Watchlist") && el("resultsWrap").style.display!=="block"){
+  if((name==="Storico"||name==="Watchlist"||name==="Portafoglio") && el("resultsWrap").style.display!=="block"){
     el("resultsWrap").style.display="block";
     el("emptyWrap").style.display="none";
   }
@@ -3340,16 +3386,17 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 ${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}.`; })()}
 ${(()=>{
-  const n=STOCK.closes.length;
-  const weeklySw=calcWeeklySwings(STOCK.dates,STOCK.highs,STOCK.lows);
-  const supportLine=detectTrendline(recentPivotsOnly(weeklySw.lows,n,365),"support"), resistanceLine=detectTrendline(recentPivotsOnly(weeklySw.highs,n,365),"resistance");
   const lines=[];
-  if(supportLine) lines.push(`- Trendline Supporto (oggi ≈${trendlineValueAt(supportLine,n-1).toFixed(2)})`);
-  if(resistanceLine) lines.push(`- Trendline Resistenza (oggi ≈${trendlineValueAt(resistanceLine,n-1).toFixed(2)})`);
+  const addZoneLines=(res,label)=>{
+    if(res.zoneA!=null) lines.push(`- ${label} Zona A (retest): ${res.zoneA.toFixed(2)}`);
+    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — confine ${res.patternBreakout.patternType}, NON ancora rotto, usa ESATTAMENTE questo valore come livello di breakout`:""}: ${res.zoneB.toFixed(2)}`);
+    if(res.zoneC!=null) lines.push(`- ${label} Zona C (tranche più lontana): ${res.zoneC.toFixed(2)}`);
+  };
+  addZoneLines(l,"LONG"); addZoneLines(s,"SHORT");
   return lines.join("\n");
 })()}
 
-REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali sopra (mai entry±N×ATR o multipli del rischio). Se mancano livelli sufficienti, dillo invece di inventare. Verifica che Target≠Entry e che R/R=(Target-Entry)/(Entry-Stop) sia calcolato giusto.
+REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali elencati sopra (mai entry±N×ATR o multipli del rischio). Per l'Entry Point usa PRIORITARIAMENTE le Zone A/B/C già calcolate sopra (sono i livelli ufficiali del sistema, coerenti con le card che l'utente vede) — non inventarne di alternativi. Se mancano livelli sufficienti, dillo invece di inventare. Verifica che Target≠Entry e che R/R=(Target-Entry)/(Entry-Stop) sia calcolato giusto.
 
 STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
 
@@ -3835,6 +3882,238 @@ window.renderWatchlistTable=function(){
   h+="</table>";
   wrap.innerHTML=h;
 };
+
+// ══════════════════════════════════════════════════════════════════════
+// PORTAFOGLIO OTTIMALE — frontiera efficiente sulla Watchlist
+// ══════════════════════════════════════════════════════════════════════
+let LAST_PORTFOLIO_RESULT=null;
+let PORTFOLIO_FRONTIER_CHART=null;
+
+// Scarica lo storico settimanale (2 anni) per ogni titolo in Watchlist, uno
+// alla volta con una piccola pausa — con 200 titoli richiede diversi minuti,
+// per questo è pensato per essere rifatto solo 1-2 volte al mese, non ad
+// ogni sessione. I titoli che falliscono vengono semplicemente saltati.
+async function fetchWatchlistPriceHistory(onProgress){
+  const priceData={};
+  for(let i=0;i<WATCHLIST.length;i++){
+    const ticker=WATCHLIST[i].ticker;
+    if(onProgress) onProgress(i+1,WATCHLIST.length,ticker);
+    try{
+      const res=await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&range=2y&interval=1wk`);
+      const json=await res.json();
+      const parsed=parseYahooResult(json);
+      if(parsed.closes.length>=30) priceData[ticker]={dates:parsed.dates,closes:parsed.closes};
+    }catch(e){ /* titolo saltato, si continua con gli altri */ }
+    await new Promise(r=>setTimeout(r,150)); // piccola pausa di cortesia verso Yahoo
+  }
+  return priceData;
+}
+
+// Allinea tutte le serie sulla stessa lunghezza (le ultime N settimane in
+// comune) e calcola i rendimenti settimanali per ciascun titolo.
+function alignAndComputeReturns(priceData){
+  const tickers=Object.keys(priceData);
+  const minLen=Math.min(...tickers.map(t=>priceData[t].closes.length));
+  const returns={};
+  tickers.forEach(t=>{
+    const closes=priceData[t].closes.slice(-minLen);
+    const rets=[];
+    for(let i=1;i<closes.length;i++) rets.push((closes[i]-closes[i-1])/closes[i-1]);
+    returns[t]=rets;
+  });
+  return {tickers,returns};
+}
+
+// Rendimento atteso (annualizzato) e matrice di covarianza (annualizzata,
+// ×52 settimane) — gli ingredienti standard di Markowitz.
+function computeMuAndCov(tickers,returns){
+  const n=tickers.length;
+  const T=returns[tickers[0]].length;
+  const means=tickers.map(t=>{ const r=returns[t]; return r.reduce((a,b)=>a+b,0)/r.length; });
+  const mu=means.map(m=>m*52);
+  const cov=Array.from({length:n},()=>new Array(n).fill(0));
+  for(let i=0;i<n;i++){
+    for(let j=i;j<n;j++){
+      const ri=returns[tickers[i]], rj=returns[tickers[j]];
+      let s=0;
+      for(let k=0;k<T;k++) s+=(ri[k]-means[i])*(rj[k]-means[j]);
+      const c=(s/(T-1))*52;
+      cov[i][j]=c; cov[j][i]=c;
+    }
+  }
+  return {mu,cov};
+}
+
+function matVecMul(mat,vec){ return mat.map(row=>row.reduce((s,v,i)=>s+v*vec[i],0)); }
+
+// Discesa del gradiente PROIETTATA: ad ogni passo si scende lungo il
+// gradiente di "rischio meno rendimento pesato", poi si RIPORTA il risultato
+// dentro i vincoli ammessi (pesi tra 0 e il tetto massimo, somma=1, tetto
+// per settore) — un'approssimazione pratica della vera programmazione
+// quadratica, ragionevole con centinaia di titoli correlati.
+function optimizePortfolio(mu,cov,sectorOf,maxWeight,maxSectorWeight,lambda,iterations=400){
+  const n=mu.length;
+  let w=new Array(n).fill(1/n);
+  const stepSize=0.02;
+  for(let it=0;it<iterations;it++){
+    const covW=matVecMul(cov,w);
+    const grad=covW.map((cw,i)=>2*lambda*cw-(1-lambda)*mu[i]);
+    w=w.map((wi,i)=>wi-stepSize*grad[i]);
+    w=w.map(wi=>Math.max(0,Math.min(maxWeight,wi)));
+    let sum=w.reduce((a,b)=>a+b,0);
+    if(sum>0) w=w.map(wi=>wi/sum);
+    const sectorSums={};
+    w.forEach((wi,i)=>{ const s=sectorOf[i]||"Altro"; sectorSums[s]=(sectorSums[s]||0)+wi; });
+    let violated=false;
+    Object.entries(sectorSums).forEach(([s,total])=>{
+      if(total>maxSectorWeight){
+        violated=true;
+        const scale=maxSectorWeight/total;
+        w=w.map((wi,i)=>(sectorOf[i]||"Altro")===s?wi*scale:wi);
+      }
+    });
+    if(violated){ let sum2=w.reduce((a,b)=>a+b,0); if(sum2>0) w=w.map(wi=>wi/sum2); }
+  }
+  return w;
+}
+
+// Traccia la frontiera provando diversi "gradi di avversione al rischio" —
+// da molto prudente (lambda vicino a 1) a molto orientato al rendimento
+// (lambda vicino a 0).
+function traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight){
+  const lambdas=[0.998,0.99,0.96,0.9,0.8,0.65,0.5,0.35,0.2,0.08,0.02];
+  return lambdas.map(lambda=>{
+    const w=optimizePortfolio(mu,cov,sectorOf,maxWeight,maxSectorWeight,lambda);
+    const covW=matVecMul(cov,w);
+    const variance=w.reduce((s,wi,i)=>s+wi*covW[i],0);
+    const volatility=Math.sqrt(Math.max(0,variance));
+    const expectedReturn=w.reduce((s,wi,i)=>s+wi*mu[i],0);
+    return {lambda,weights:w,expectedReturn,volatility};
+  });
+}
+
+function selectPortfolios(frontier,riskFreeRate=0.03){
+  const minVar=frontier.reduce((best,p)=>p.volatility<best.volatility?p:best);
+  const maxSharpe=frontier.reduce((best,p)=>{
+    const sp=p.volatility>0?(p.expectedReturn-riskFreeRate)/p.volatility:-Infinity;
+    const sb=best.volatility>0?(best.expectedReturn-riskFreeRate)/best.volatility:-Infinity;
+    return sp>sb?p:best;
+  });
+  const sorted=[...frontier].sort((a,b)=>a.volatility-b.volatility);
+  const balanced=sorted[Math.floor(sorted.length/2)];
+  return {"Minima Volatilità":minVar,"Massimo Sharpe":maxSharpe,"Bilanciato":balanced};
+}
+
+// Il gradiente restituisce pesi "densi" (quasi tutti i titoli con un po' di
+// peso) — li tronchiamo ai migliori N e rinormalizziamo, per avere un
+// portafoglio davvero gestibile con un numero limitato di posizioni.
+function sparsifyPortfolio(weights,tickers,maxStocks){
+  const indexed=weights.map((w,i)=>({w,ticker:tickers[i]})).filter(t=>t.w>0.001).sort((a,b)=>b.w-a.w);
+  const top=indexed.slice(0,maxStocks);
+  const sum=top.reduce((s,t)=>s+t.w,0);
+  return top.map(t=>({ticker:t.ticker,weight:sum>0?t.w/sum:0}));
+}
+
+window.buildOptimalPortfolio=async function(){
+  if(WATCHLIST.length<10){ el("portfolioStatus").textContent="⚠️ Servono almeno 10 titoli in Watchlist per costruire un portafoglio sensato."; return; }
+  const budget=parseFloat(el("portfolioBudget").value)||20000;
+  const maxStocks=parseInt(el("portfolioMaxStocks").value)||20;
+  const maxWeight=(parseFloat(el("portfolioMaxWeight").value)||10)/100;
+  const maxSectorWeight=(parseFloat(el("portfolioMaxSector").value)||30)/100;
+
+  el("portfolioStatus").textContent=`⏳ Scarico storico prezzi per ${WATCHLIST.length} titoli — può richiedere diversi minuti...`;
+  const priceData=await fetchWatchlistPriceHistory((done,total,ticker)=>{
+    el("portfolioStatus").textContent=`⏳ Scarico storico (${done}/${total}): ${ticker}...`;
+  });
+  const validTickers=Object.keys(priceData);
+  if(validTickers.length<10){ el("portfolioStatus").textContent=`❌ Solo ${validTickers.length} titoli con dati validi — troppo pochi per un'ottimizzazione affidabile.`; return; }
+
+  el("portfolioStatus").textContent="⏳ Calcolo rendimenti, volatilità e correlazioni...";
+  const {tickers,returns}=alignAndComputeReturns(priceData);
+  const {mu,cov}=computeMuAndCov(tickers,returns);
+  const sectorOf=tickers.map(t=>WATCHLIST.find(w=>w.ticker===t)?.sector||"Altro");
+
+  el("portfolioStatus").textContent="⏳ Traccio la frontiera efficiente...";
+  const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
+  const selected=selectPortfolios(frontier);
+
+  const portfolios={};
+  Object.entries(selected).forEach(([name,p])=>{ portfolios[name]={...p, sparse:sparsifyPortfolio(p.weights,tickers,maxStocks)}; });
+
+  LAST_PORTFOLIO_RESULT={frontier,portfolios,priceData,budget,tickers,sectorOf};
+  renderPortfolioResults();
+  el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${WATCHLIST.length} titoli con dati validi (${WATCHLIST.length-validTickers.length} saltati per dati insufficienti).`;
+};
+
+window.renderPortfolioResults=function(){
+  const r=LAST_PORTFOLIO_RESULT;
+  if(!r) return;
+  el("portfolioResultsWrap").style.display="block";
+
+  // Grafico frontiera: dispersione rischio/rendimento, con i 3 portafogli evidenziati
+  const ctx=el("frontierChart");
+  if(PORTFOLIO_FRONTIER_CHART) PORTFOLIO_FRONTIER_CHART.destroy();
+  const frontierPoints=r.frontier.map(p=>({x:p.volatility*100,y:p.expectedReturn*100}));
+  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff"};
+  const datasets=[{label:"Frontiera Efficiente",data:frontierPoints,borderColor:"#7d8aa3",backgroundColor:"#7d8aa3",showLine:true,pointRadius:3,tension:0.2}];
+  Object.entries(r.portfolios).forEach(([name,p])=>{
+    datasets.push({label:name,data:[{x:p.volatility*100,y:p.expectedReturn*100}],backgroundColor:highlightColors[name],borderColor:highlightColors[name],pointRadius:8,showLine:false});
+  });
+  PORTFOLIO_FRONTIER_CHART=new Chart(ctx.getContext("2d"),{
+    type:"scatter",
+    data:{datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{title:{display:true,text:"Volatilità Annua (%)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}},
+        y:{title:{display:true,text:"Rendimento Atteso Annuo (%)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+      }}
+  });
+
+  // Card riassuntive dei 3 portafogli
+  let cardsHtml="";
+  Object.entries(r.portfolios).forEach(([name,p])=>{
+    const col=highlightColors[name];
+    const sectorBreakdown={};
+    p.sparse.forEach(s=>{ const sec=r.sectorOf[r.tickers.indexOf(s.ticker)]||"Altro"; sectorBreakdown[sec]=(sectorBreakdown[sec]||0)+s.weight; });
+    const topSectors=Object.entries(sectorBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([s,w])=>`${s} ${(w*100).toFixed(0)}%`).join(", ");
+    cardsHtml+=`<div style="border:2px solid ${col};border-radius:12px;padding:14px;">
+      <div style="font-size:13px;font-weight:800;color:${col};margin-bottom:8px;">${name}</div>
+      <div style="font-size:11px;color:var(--dim);">Rendimento atteso: <strong style="color:#00d4b8;">${(p.expectedReturn*100).toFixed(1)}%/anno</strong></div>
+      <div style="font-size:11px;color:var(--dim);">Volatilità: <strong style="color:#ff9f1c;">${(p.volatility*100).toFixed(1)}%/anno</strong></div>
+      <div style="font-size:11px;color:var(--dim);">Titoli: <strong style="color:var(--txt);">${p.sparse.length}</strong></div>
+      <div style="font-size:10px;color:var(--dim);margin-top:6px;">Settori principali: ${topSectors||"N/D"}</div>
+    </div>`;
+  });
+  el("portfolioCardsWrap").innerHTML=cardsHtml;
+
+  renderPortfolioDetailTable("Minima Volatilità");
+};
+
+window.renderPortfolioDetailTable=function(name){
+  const r=LAST_PORTFOLIO_RESULT;
+  if(!r||!r.portfolios[name]) return;
+  const p=r.portfolios[name];
+  const budget=r.budget;
+  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th></tr>`;
+  p.sparse.forEach(s=>{
+    const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
+    const dollars=budget*s.weight;
+    const shares=price?dollars/price:null;
+    const sector=r.sectorOf[r.tickers.indexOf(s.ticker)]||"N/D";
+    h+=`<tr>
+      <td style="font-weight:700;color:#4fa3ff;">${s.ticker}</td>
+      <td style="font-size:11px;">${sector}</td>
+      <td>${(s.weight*100).toFixed(1)}%</td>
+      <td>${price!=null?price.toFixed(2):"N/D"}</td>
+      <td>${dollars.toFixed(0)}</td>
+      <td>${shares!=null?shares.toFixed(2):"N/D"}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  el("portfolioDetailWrap").innerHTML=h;
+};
+
 loadWatchlistFromStorage();
 renderWatchlistTable();
 
@@ -5893,7 +6172,7 @@ function computeEntryScore(direction,horizon){
 // usando gli stessi livelli reali del prompt AI (Swing, Pivot, Trendline) —
 // necessario per poterle disegnare sul grafico, non solo scriverle nel testo.
 function computeApproachZones(direction){
-  if(!STOCK) return {zoneA:null,zoneB:null,zoneC:null};
+  if(!STOCK) return {zoneA:null,zoneB:null,zoneC:null,patternBreakout:null};
   const price=STOCK.closes[STOCK.closes.length-1];
   const n=STOCK.closes.length;
   const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
@@ -5903,16 +6182,39 @@ function computeApproachZones(direction){
   const supportLineVal=supportLine?trendlineValueAt(supportLine,n-1):null;
   const resistanceLineVal=resistanceLine?trendlineValueAt(resistanceLine,n-1):null;
 
+  // Se siamo DENTRO un pattern (triangolo/cuneo) individuato dalle stesse
+  // trendline, il suo confine è il vero livello di breakout — più preciso
+  // di uno swing generico, perché è ESATTAMENTE dove il pattern dice che
+  // avverrà la rottura. Con la strategia "breakout + ritest": si aspetta
+  // la rottura di quel livello, poi il ritorno a testarlo prima di entrare
+  // — quindi lo stesso numero serve sia da trigger di breakout sia da
+  // riferimento per il ritest successivo.
+  const triangle=detectTrianglePattern(supportLine,resistanceLine,n-1);
+  let patternBreakout=null;
+  if(triangle){
+    const breakoutLevel = direction==="long" ? triangle.resistanceNow : triangle.supportNow;
+    const alreadyBroken = direction==="long" ? price>breakoutLevel : price<breakoutLevel;
+    patternBreakout = { patternType:triangle.type, level:breakoutLevel, alreadyBroken };
+  }
+
   if(direction==="long"){
     const belowCandidates=[piv?.pivot,piv?.s1,piv?.s2,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
     const aboveCandidates=[piv?.r1,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
     const belowSorted=[...new Set(belowCandidates)].sort((a,b)=>b-a); // dal più vicino al prezzo al più lontano
-    return { zoneA: belowSorted[0]??null, zoneB: aboveCandidates.length?Math.min(...aboveCandidates):null, zoneC: belowSorted[1]??null };
+    // Se il pattern non è ancora rotto, il suo confine è il livello di
+    // breakout PIÙ affidabile — lo mettiamo al posto della Zona B generica.
+    const zoneB = (patternBreakout && !patternBreakout.alreadyBroken)
+      ? patternBreakout.level
+      : (aboveCandidates.length?Math.min(...aboveCandidates):null);
+    return { zoneA: belowSorted[0]??null, zoneB, zoneC: belowSorted[1]??null, patternBreakout };
   } else {
     const aboveCandidates=[piv?.pivot,piv?.r1,piv?.r2,resistanceLineVal,...sw.highs.map(p=>p.price)].filter(v=>v!=null&&v>price);
     const belowCandidates=[piv?.s1,supportLineVal,...sw.lows.map(p=>p.price)].filter(v=>v!=null&&v<price);
     const aboveSorted=[...new Set(aboveCandidates)].sort((a,b)=>a-b); // dal più vicino al prezzo al più lontano
-    return { zoneA: aboveSorted[0]??null, zoneB: belowCandidates.length?Math.max(...belowCandidates):null, zoneC: aboveSorted[1]??null };
+    const zoneB = (patternBreakout && !patternBreakout.alreadyBroken)
+      ? patternBreakout.level
+      : (belowCandidates.length?Math.max(...belowCandidates):null);
+    return { zoneA: aboveSorted[0]??null, zoneB, zoneC: aboveSorted[1]??null, patternBreakout };
   }
 }
 
@@ -5941,7 +6243,7 @@ window.calcStrategy=function(){
       <div style="font-size:11px;color:var(--dim);">Invalidazione (stop): <strong style="color:#ff6b6b;">${res.stop!=null?STOCK.currency+" "+res.stop.toFixed(2):"N/D"}</strong> ${res.stopType?"("+res.stopType+")":""}</div>
       <div style="font-size:11px;color:var(--dim);">Rischio dall'attuale: <strong style="color:#ff9f1c;">${res.riskPct!=null?res.riskPct.toFixed(1)+"%":"N/D"}</strong></div>
       <div style="font-size:11px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">Zona A (retest/pullback): <strong style="color:#c77dff;">${res.zoneA!=null?STOCK.currency+" "+res.zoneA.toFixed(2):"nessun livello reale trovato"}</strong></div>
-      <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong></div>
+      <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong>${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` <span style="color:#f9c74f;">— confine ${res.patternBreakout.patternType}, non ancora rotto</span>`:""}</div>
     </div>`;
   }
   el("stratLongCard").innerHTML=renderCard(long,"📈 LONG","#00d4b8");
