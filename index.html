@@ -764,12 +764,20 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div id="portfolioCloudStatus" style="font-size:11px;color:var(--gold);margin-top:8px;"></div>
           </div>
           <div class="panel">
+            <div class="panel-title">📈 EQUITY REALE DAL CLOUD (aggiornata ogni notte)</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">A differenza del grafico "retroattivo" sopra (una simulazione sui 2 anni passati), questa è l'equity VERA, calcolata ogni notte dal job automatico sui prezzi reali di oggi — parte da quando hai premuto "Salva su Cloud" per la prima volta, non prima.</div>
+            <button class="btn ghost" style="font-size:10px;" onclick="loadPortfoliosFromCloud()">🔄 Aggiorna dal Cloud</button>
+            <div id="portfolioRebalanceBanner"></div>
+            <div id="cloudEquityStatus" style="font-size:11px;color:var(--gold);margin:8px 0;"></div>
+            <div style="height:280px;"><canvas id="cloudEquityChart"></canvas></div>
+          </div>
+          <div class="panel">
             <div class="panel-title">🏆 GLI 8 PORTAFOGLI</div>
             <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"></div>
           </div>
           <div class="panel">
-            <div class="panel-title">📋 DETTAGLIO PESI E QUANTITÀ</div>
-            <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <div class="panel-title">📋 DETTAGLIO PESI E QUANTITÀ (con rating tecnico dal cloud)</div>
+            <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Minima Volatilità')">Minima Volatilità</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Massimo Sharpe')">Massimo Sharpe</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Bilanciato')">Bilanciato</button>
@@ -1000,6 +1008,7 @@ window.switchTab=function(name){
   if(name==="Ergodicita" && STOCK){ renderRisk(); renderErgodicita(); }
   if(name==="Storico") renderHistoryTab();
   if(name==="Watchlist") renderWatchlistTable();
+  if(name==="Portafoglio" && !CLOUD_PORTFOLIO_DATA) loadPortfoliosFromCloud();
   if(name==="Pattern" && STOCK) prefillAnalystTargetForCurrentStock();
 };
 
@@ -4014,6 +4023,7 @@ window.renderWatchlistTable=function(){
 // PORTAFOGLIO OTTIMALE — frontiera efficiente sulla Watchlist
 // ══════════════════════════════════════════════════════════════════════
 let LAST_PORTFOLIO_RESULT=null;
+const PORTFOLIO_COLORS={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff","Equal Weight":"#c77dff","Risk Parity":"#20c997","Score-Weighted":"#f0c040","Momentum":"#4dd0e1","Coma":"#ff6b6b"};
 let PORTFOLIO_FRONTIER_CHART=null;
 let PORTFOLIO_EQUITY_CHART=null;
 
@@ -4328,7 +4338,7 @@ window.renderPortfolioResults=function(){
   const ctx=el("frontierChart");
   if(PORTFOLIO_FRONTIER_CHART) PORTFOLIO_FRONTIER_CHART.destroy();
   const frontierPoints=r.frontier.map(p=>({x:p.volatility*100,y:p.expectedReturn*100}));
-  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff","Equal Weight":"#c77dff","Risk Parity":"#20c997","Score-Weighted":"#f0c040","Momentum":"#4dd0e1","Coma":"#ff6b6b"};
+  const highlightColors=PORTFOLIO_COLORS;
   const datasets=[{label:"Frontiera Efficiente",data:frontierPoints,borderColor:"#7d8aa3",backgroundColor:"#7d8aa3",showLine:true,pointRadius:3,tension:0.2}];
   Object.entries(r.portfolios).forEach(([name,p])=>{
     datasets.push({label:name,data:[{x:p.volatility*100,y:p.expectedReturn*100}],backgroundColor:highlightColors[name],borderColor:highlightColors[name],pointRadius:8,showLine:false});
@@ -4389,12 +4399,21 @@ window.renderPortfolioDetailTable=function(name){
   if(!r||!r.portfolios[name]) return;
   const p=r.portfolios[name];
   const budget=r.budget;
-  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th></tr>`;
+  // Rating più recente per ciascun ticker (i dati cloud hanno order=date.desc,
+  // quindi il primo trovato per ogni ticker è già il più recente).
+  const latestRatingByTicker={};
+  (CLOUD_PORTFOLIO_DATA?.ratings||[]).forEach(rt=>{ if(!latestRatingByTicker[rt.ticker]) latestRatingByTicker[rt.ticker]=rt; });
+  const ratingColor={"Strong Buy":"#00d4b8","Buy":"#7fd99a","Neutral":"#ffd23f","Sell":"#ff9a7f","Strong Sell":"#ff6b6b"};
+  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th><th>Rating (dal cloud)</th></tr>`;
   p.sparse.forEach(s=>{
     const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
     const dollars=budget*s.weight;
     const shares=price?dollars/price:null;
     const sector=r.sectorOf[r.tickers.indexOf(s.ticker)]||"N/D";
+    const rating=latestRatingByTicker[s.ticker];
+    const ratingHtml=rating
+      ? `<span style="color:${ratingColor[rating.rating_label]||'var(--dim)'};font-weight:700;font-size:11px;">${rating.rating_label} (${rating.rating_score>0?"+":""}${rating.rating_score})</span> <span style="font-size:9px;color:var(--dim);">${rating.date}</span>`
+      : `<span style="font-size:10px;color:var(--dim);">— non ancora calcolato</span>`;
     h+=`<tr>
       <td style="font-weight:700;color:#4fa3ff;">${s.ticker}</td>
       <td style="font-size:11px;">${sector}</td>
@@ -4402,17 +4421,26 @@ window.renderPortfolioDetailTable=function(name){
       <td>${price!=null?price.toFixed(2):"N/D"}</td>
       <td>${dollars.toFixed(0)}</td>
       <td>${shares!=null?shares.toFixed(2):"N/D"}</td>
+      <td>${ratingHtml}</td>
     </tr>`;
   });
   h+="</table>";
   el("portfolioDetailWrap").innerHTML=h;
 };
 
+let CLOUD_PORTFOLIO_DATA=null; // {portfolios, equity, ratings} — caricato da Supabase
+let CLOUD_EQUITY_CHART=null;
+
 window.savePortfoliosToCloud=async function(){
   const r=LAST_PORTFOLIO_RESULT;
   if(!r){ el("portfolioCloudStatus").textContent="⚠️ Costruisci prima un portafoglio."; return; }
   el("portfolioCloudStatus").textContent="⏳ Salvataggio su Supabase in corso...";
   const today=new Date().toISOString().slice(0,10);
+  // L'inception_date NON va mai sovrascritta se il portafoglio esiste già —
+  // altrimenti perderemmo la data di partenza vera ad ogni ricalcolo. La
+  // preserviamo se abbiamo già caricato lo stato cloud in questa sessione.
+  const existingByName={};
+  (CLOUD_PORTFOLIO_DATA?.portfolios||[]).forEach(p=>{ existingByName[p.portfolio_name]=p; });
   const rows=Object.entries(r.portfolios).map(([name,p])=>{
     const holdings=p.sparse.map(s=>{
       const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
@@ -4420,7 +4448,8 @@ window.savePortfoliosToCloud=async function(){
       const shares=price?dollars/price:null;
       return { ticker:s.ticker, weight:s.weight, shares:shares!=null?Math.round(shares*100)/100:null, entry_price:price!=null?Math.round(price*100)/100:null };
     });
-    return { portfolio_name:name, inception_date:today, budget:r.budget, holdings, last_rebalance_date:today };
+    const inception=existingByName[name]?.inception_date||today;
+    return { portfolio_name:name, inception_date:inception, budget:r.budget, holdings, last_rebalance_date:today };
   });
   try{
     const res=await fetch("/.netlify/functions/portfolio",{
@@ -4430,10 +4459,70 @@ window.savePortfoliosToCloud=async function(){
     const data=await res.json();
     if(!res.ok||data.error){ el("portfolioCloudStatus").textContent="❌ Errore: "+(data.error||"status "+res.status); return; }
     el("portfolioCloudStatus").textContent=`✅ ${rows.length} portafogli salvati su Supabase (${today}). Il job notturno inizierà a calcolare equity e rating dalla prossima esecuzione.`;
+    loadPortfoliosFromCloud(); // ricarica per aggiornare grafico/banner con lo stato appena salvato
   }catch(e){
     el("portfolioCloudStatus").textContent="❌ Errore di rete: "+e.message;
   }
 };
+
+window.loadPortfoliosFromCloud=async function(){
+  const statusEl=el("cloudEquityStatus");
+  if(statusEl) statusEl.textContent="⏳ Carico dati da Supabase...";
+  try{
+    const res=await fetch("/.netlify/functions/portfolio");
+    const data=await res.json();
+    if(!res.ok||data.error){ if(statusEl) statusEl.textContent="❌ Errore: "+(data.error||"status "+res.status); return; }
+    CLOUD_PORTFOLIO_DATA=data;
+    renderCloudEquityChart();
+    renderRebalanceBanner();
+    if(statusEl) statusEl.textContent = data.equity.length ? `✅ ${data.equity.length} punti equity, ${data.ratings.length} rating caricati.` : "⚠️ Nessun dato equity ancora — il job notturno non è ancora passato, o i portafogli non sono ancora stati salvati.";
+  }catch(e){
+    if(statusEl) statusEl.textContent="❌ Errore di rete: "+e.message;
+  }
+};
+
+function renderCloudEquityChart(){
+  const ctx=el("cloudEquityChart");
+  if(!ctx||!CLOUD_PORTFOLIO_DATA) return;
+  if(CLOUD_EQUITY_CHART) CLOUD_EQUITY_CHART.destroy();
+  const byPortfolio={};
+  CLOUD_PORTFOLIO_DATA.equity.forEach(row=>{
+    (byPortfolio[row.portfolio_name]=byPortfolio[row.portfolio_name]||[]).push(row);
+  });
+  const allDates=[...new Set(CLOUD_PORTFOLIO_DATA.equity.map(r=>r.date))].sort();
+  const datasets=Object.entries(byPortfolio).map(([name,rows])=>{
+    const byDate={}; rows.forEach(r=>byDate[r.date]=r.equity_value);
+    return { label:name, data:allDates.map(d=>byDate[d]!=null?byDate[d]:null), borderColor:PORTFOLIO_COLORS?.[name]||"#4fa3ff", borderWidth:2, pointRadius:0, tension:0.1, spanGaps:true };
+  });
+  CLOUD_EQUITY_CHART=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels:allDates, datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+        y:{title:{display:true,text:"Valore (€/$)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+      }}
+  });
+}
+
+function renderRebalanceBanner(){
+  const wrap=el("portfolioRebalanceBanner");
+  if(!wrap||!CLOUD_PORTFOLIO_DATA) return;
+  const now=new Date();
+  const currentMonthKey=`${now.getFullYear()}-${now.getMonth()}`;
+  const needsRebalance=(CLOUD_PORTFOLIO_DATA.portfolios||[]).filter(p=>{
+    if(!p.last_rebalance_date) return true;
+    const d=new Date(p.last_rebalance_date);
+    return `${d.getFullYear()}-${d.getMonth()}` !== currentMonthKey;
+  });
+  if(needsRebalance.length===0){ wrap.innerHTML=""; return; }
+  wrap.innerHTML=`<div style="background:#3a2f0a;border:1px solid var(--gold);border-radius:8px;padding:10px;margin:8px 0;font-size:11px;">
+    ⚠️ ${needsRebalance.length} portafogli non ribilanciati questo mese (${needsRebalance.map(p=>p.portfolio_name).join(", ")}).
+    <button class="btn primary" style="font-size:10px;margin-left:8px;" onclick="buildOptimalPortfolio().then(()=>savePortfoliosToCloud())">🔄 Ricalcola e Ribilancia Ora</button>
+  </div>`;
+}
+
 
 loadWatchlistFromStorage();
 renderWatchlistTable();
