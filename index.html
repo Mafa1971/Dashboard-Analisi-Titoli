@@ -4397,32 +4397,55 @@ window.renderPortfolioResults=function(){
 
 window.renderPortfolioDetailTable=function(name){
   const r=LAST_PORTFOLIO_RESULT;
-  if(!r||!r.portfolios[name]) return;
-  const p=r.portfolios[name];
-  const budget=r.budget;
-  // Rating più recente per ciascun ticker (i dati cloud hanno order=date.desc,
-  // quindi il primo trovato per ogni ticker è già il più recente).
+  const ratingColor={"Strong Buy":"#00d4b8","Buy":"#7fd99a","Neutral":"#ffd23f","Sell":"#ff9a7f","Strong Sell":"#ff6b6b"};
   const latestRatingByTicker={};
   (CLOUD_PORTFOLIO_DATA?.ratings||[]).forEach(rt=>{ if(!latestRatingByTicker[rt.ticker]) latestRatingByTicker[rt.ticker]=rt; });
-  const ratingColor={"Strong Buy":"#00d4b8","Buy":"#7fd99a","Neutral":"#ffd23f","Sell":"#ff9a7f","Strong Sell":"#ff6b6b"};
-  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th><th>Rating (dal cloud)</th></tr>`;
-  p.sparse.forEach(s=>{
-    const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
-    const dollars=budget*s.weight;
-    const shares=price?dollars/price:null;
-    const sector=r.sectorOf[r.tickers.indexOf(s.ticker)]||"N/D";
-    const rating=latestRatingByTicker[s.ticker];
-    const ratingHtml=rating
+  const ratingCell=(ticker)=>{
+    const rating=latestRatingByTicker[ticker];
+    return rating
       ? `<span style="color:${ratingColor[rating.rating_label]||'var(--dim)'};font-weight:700;font-size:11px;">${rating.rating_label} (${rating.rating_score>0?"+":""}${rating.rating_score})</span> <span style="font-size:9px;color:var(--dim);">${rating.date}</span>`
       : `<span style="font-size:10px;color:var(--dim);">— non ancora calcolato</span>`;
+  };
+
+  // Se c'è un calcolo fresco in questa sessione (dopo "Costruisci
+  // Portafoglio"), usa quello — dati più aggiornati, prezzi live.
+  if(r&&r.portfolios[name]){
+    const p=r.portfolios[name];
+    const budget=r.budget;
+    let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th><th>Rating (dal cloud)</th></tr>`;
+    p.sparse.forEach(s=>{
+      const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
+      const dollars=budget*s.weight;
+      const shares=price?dollars/price:null;
+      const sector=r.sectorOf[r.tickers.indexOf(s.ticker)]||"N/D";
+      h+=`<tr>
+        <td style="font-weight:700;color:#4fa3ff;">${s.ticker}</td>
+        <td style="font-size:11px;">${sector}</td>
+        <td>${(s.weight*100).toFixed(1)}%</td>
+        <td>${price!=null?price.toFixed(2):"N/D"}</td>
+        <td>${dollars.toFixed(0)}</td>
+        <td>${shares!=null?shares.toFixed(2):"N/D"}</td>
+        <td>${ratingCell(s.ticker)}</td>
+      </tr>`;
+    });
+    h+="</table>";
+    el("portfolioDetailWrap").innerHTML=h;
+    return;
+  }
+
+  // Altrimenti, ricostruisci dall'ULTIMO SALVATAGGIO su cloud — prezzo e
+  // quantità di allora (etichettati come tali), non prezzi live.
+  const cloudP=(CLOUD_PORTFOLIO_DATA?.portfolios||[]).find(p=>p.portfolio_name===name);
+  if(!cloudP){ el("portfolioDetailWrap").innerHTML=`<div class="empty-state"><p>Nessun dato per "${name}" — costruisci un portafoglio o salvane uno su cloud.</p></div>`; return; }
+  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo (al salvataggio)</th><th>Azioni</th><th>Rating (dal cloud)</th></tr>`;
+  (cloudP.holdings||[]).forEach(hd=>{
     h+=`<tr>
-      <td style="font-weight:700;color:#4fa3ff;">${s.ticker}</td>
-      <td style="font-size:11px;">${sector}</td>
-      <td>${(s.weight*100).toFixed(1)}%</td>
-      <td>${price!=null?price.toFixed(2):"N/D"}</td>
-      <td>${dollars.toFixed(0)}</td>
-      <td>${shares!=null?shares.toFixed(2):"N/D"}</td>
-      <td>${ratingHtml}</td>
+      <td style="font-weight:700;color:#4fa3ff;">${hd.ticker}</td>
+      <td style="font-size:11px;">${hd.sector||"N/D"}</td>
+      <td>${(hd.weight*100).toFixed(1)}%</td>
+      <td>${hd.entry_price!=null?hd.entry_price.toFixed(2):"N/D"}</td>
+      <td>${hd.shares!=null?hd.shares.toFixed(2):"N/D"}</td>
+      <td>${ratingCell(hd.ticker)}</td>
     </tr>`;
   });
   h+="</table>";
@@ -4447,7 +4470,8 @@ window.savePortfoliosToCloud=async function(){
       const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
       const dollars=r.budget*s.weight;
       const shares=price?dollars/price:null;
-      return { ticker:s.ticker, weight:s.weight, shares:shares!=null?Math.round(shares*100)/100:null, entry_price:price!=null?Math.round(price*100)/100:null };
+      const sector=r.sectorOf[r.tickers.indexOf(s.ticker)]||"N/D";
+      return { ticker:s.ticker, weight:s.weight, shares:shares!=null?Math.round(shares*100)/100:null, entry_price:price!=null?Math.round(price*100)/100:null, sector };
     });
     const inception=existingByName[name]?.inception_date||today;
     return { portfolio_name:name, inception_date:inception, budget:r.budget, holdings, last_rebalance_date:today };
@@ -4476,10 +4500,35 @@ window.loadPortfoliosFromCloud=async function(){
     CLOUD_PORTFOLIO_DATA=data;
     renderCloudEquityChart();
     renderRebalanceBanner();
+    if(!LAST_PORTFOLIO_RESULT) renderPortfoliosFromCloudData(); // se non c'è già un calcolo fresco in questa sessione, mostra l'ultimo salvato
     if(statusEl) statusEl.textContent = data.equity.length ? `✅ ${data.equity.length} punti equity, ${data.ratings.length} rating caricati.` : "⚠️ Nessun dato equity ancora — il job notturno non è ancora passato, o i portafogli non sono ancora stati salvati.";
   }catch(e){
     if(statusEl) statusEl.textContent="❌ Errore di rete: "+e.message;
   }
+};
+
+// Mostra card e dettaglio dall'ULTIMO SALVATAGGIO su cloud, senza bisogno
+// di rifare il calcolo pesante — così i portafogli restano visibili anche
+// dopo un refresh della pagina, non solo subito dopo "Costruisci Portafoglio".
+window.renderPortfoliosFromCloudData=function(){
+  if(!CLOUD_PORTFOLIO_DATA||!CLOUD_PORTFOLIO_DATA.portfolios.length) return;
+  el("portfolioResultsWrap").style.display="block";
+  let cardsHtml="";
+  CLOUD_PORTFOLIO_DATA.portfolios.forEach(p=>{
+    const col=PORTFOLIO_COLORS[p.portfolio_name]||"#4fa3ff";
+    const sectorBreakdown={};
+    (p.holdings||[]).forEach(h=>{ const sec=h.sector||"N/D"; sectorBreakdown[sec]=(sectorBreakdown[sec]||0)+h.weight; });
+    const topSectors=Object.entries(sectorBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([s,w])=>`${s} ${(w*100).toFixed(0)}%`).join(", ");
+    cardsHtml+=`<div style="border:2px solid ${col};border-radius:12px;padding:14px;">
+      <div style="font-size:13px;font-weight:800;color:${col};margin-bottom:8px;">${p.portfolio_name}</div>
+      <div style="font-size:10px;color:var(--dim);">☁️ Ultimo salvataggio: ${p.updated_at?new Date(p.updated_at).toLocaleDateString("it-IT"):"N/D"}</div>
+      <div style="font-size:11px;color:var(--dim);">Titoli: <strong style="color:var(--txt);">${(p.holdings||[]).length}</strong></div>
+      <div style="font-size:10px;color:var(--dim);margin-top:6px;">Settori principali: ${topSectors||"N/D"}</div>
+    </div>`;
+  });
+  el("portfolioCardsWrap").innerHTML=cardsHtml;
+  const firstName=CLOUD_PORTFOLIO_DATA.portfolios[0]?.portfolio_name;
+  if(firstName) renderPortfolioDetailTable(firstName);
 };
 
 function renderCloudEquityChart(){
