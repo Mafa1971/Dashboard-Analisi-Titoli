@@ -808,6 +808,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <span id="cloudSyncStatus" style="font-size:10px;color:#4fa3ff;white-space:nowrap;">☁️ Cloud: sincronizzazione in corso...</span>
             <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="loadHistoryFromCloudAndMerge()">↻ Sincronizza ora</button>
           </div>
+          <div id="historyStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
           <div id="historyTableWrap" style="overflow-x:auto;"></div>
         </div>
       </div>
@@ -3576,7 +3577,7 @@ function loadAnalysisHistory(){
 }
 function saveHistoryArr(arr){
   try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(arr.slice(-200))); }catch(e){} // max 200 righe
-  syncHistoryToCloud(arr); // "fire and forget": non blocca l'interfaccia, se fallisce resta comunque salvato in locale
+  return syncHistoryToCloud(arr); // ritorna la Promise — i chiamanti che vogliono ASPETTARE la conferma cloud (es. cancellazioni) possono fare await
 }
 
 async function syncHistoryToCloud(arr){
@@ -4624,15 +4625,21 @@ window.renderHistoryTab=function(){
   if(hist.some(r=>r.stockScore==null)) h+=`<div style="font-size:10px;color:var(--dim);margin-top:8px;">I titoli senza punteggio (--) non hanno ancora avuto lo Stock Quant Score calcolato — vai sul tab ⭐ Stock Score dopo averli rianalizzati.</div>`;
   wrap.innerHTML=h;
 };
-window.deleteHistoryEntry=function(ticker){
+window.deleteHistoryEntry=async function(ticker){
   if(!confirm(`Eliminare l'analisi di ${ticker} dallo storico?`)) return;
   const hist=loadAnalysisHistory().filter(h=>h.ticker!==ticker);
-  saveHistoryArr(hist);
+  const statusEl=el("historyStatus");
+  if(statusEl) statusEl.textContent=`⏳ Eliminazione di ${ticker} in corso, non ricaricare la pagina...`;
+  await saveHistoryArr(hist); // ASPETTA che il cloud confermi, prima che l'utente possa ricaricare la pagina
+  if(statusEl) statusEl.textContent="";
   renderHistoryTab();
 };
-window.clearAnalysisHistory=function(){
+window.clearAnalysisHistory=async function(){
   if(!confirm("Svuotare tutto lo storico delle analisi salvate in questo browser?")) return;
-  saveHistoryArr([]);
+  const statusEl=el("historyStatus");
+  if(statusEl) statusEl.textContent="⏳ Svuotamento in corso, non ricaricare la pagina...";
+  await saveHistoryArr([]); // ASPETTA la conferma cloud, stesso motivo
+  if(statusEl) statusEl.textContent="";
   renderHistoryTab();
 };
 window.exportAnalysisHistoryCSV=function(){
