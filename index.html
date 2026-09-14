@@ -758,7 +758,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="height:320px;"><canvas id="portfolioEquityChart"></canvas></div>
           </div>
           <div class="panel">
-            <div class="panel-title">🏆 I 5 PORTAFOGLI</div>
+            <div class="panel-title">🏆 GLI 8 PORTAFOGLI</div>
             <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"></div>
           </div>
           <div class="panel">
@@ -768,6 +768,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Massimo Sharpe')">Massimo Sharpe</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Bilanciato')">Bilanciato</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Equal Weight')">Equal Weight</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Risk Parity')">Risk Parity</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Score-Weighted')">Score-Weighted</button>
+              <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Momentum')">Momentum</button>
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Coma')">Coma</button>
             </div>
             <div id="portfolioDetailWrap" style="overflow-x:auto;"></div>
@@ -3899,6 +3902,7 @@ window.saveWatchlistRowEdit=function(ticker){
   const val=(id)=>{ const elm=document.getElementById(id); return elm?elm.value.trim():""; };
   w.company=val(`wlEdit_company_${ticker}`);
   w.country=val(`wlEdit_country_${ticker}`);
+  w.sector=val(`wlEdit_sector_${ticker}`);
   w.industry=val(`wlEdit_industry_${ticker}`);
   w.fairValue=val(`wlEdit_fairValue_${ticker}`);
   w.fairValueLabel=val(`wlEdit_fairValueLabel_${ticker}`);
@@ -3940,7 +3944,7 @@ window.renderWatchlistTable=function(){
   // e quindi sono anche eleggibili per il tab Portafoglio.
   const historyByTicker={};
   loadAnalysisHistory().forEach(h=>{ if(h.stockScore!=null) historyByTicker[h.ticker]=h.stockScore; });
-  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
+  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}${th("sector","Sector")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
   list.forEach((w,idx)=>{
     if(WATCHLIST_EDITING===w.ticker){
       // Riga in modalità modifica: un campo per ciascun dato importabile,
@@ -3951,6 +3955,7 @@ window.renderWatchlistTable=function(){
         <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
         <td>${inp("company",w.company,"Company",110)}</td>
         <td>${inp("country",w.country,"Country",80)}<br>${inp("industry",w.industry,"Industry",80)}</td>
+        <td>${inp("sector",w.sector,"Sector",80)}</td>
         <td style="font-size:9px;color:var(--dim);">manuale</td>
         <td>${inp("fairValue",w.fairValue,"Fair Value",55)} ${inp("fairValueLabel",w.fairValueLabel,"Etichetta",70)}<br>${inp("analystTarget",w.analystTarget,"Target",55)} ${inp("targetLabel",w.targetLabel,"Etichetta",70)}</td>
         <td>${inp("altmanZ",w.altmanZ,"Altman Z",55)}<br>${inp("piotroski",w.piotroski,"Piotroski",55)}</td>
@@ -3982,6 +3987,7 @@ window.renderWatchlistTable=function(){
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
       <td style="font-size:11px;">${w.company||""}</td>
       <td style="font-size:11px;">${w.country||""}</td>
+      <td style="font-size:11px;">${w.sector||""}</td>
       <td>${analizzatoHtml}</td>
       <td>${valutazioneHtml}</td>
       <td>${qualitaHtml}</td>
@@ -4151,6 +4157,76 @@ function buildComaPortfolio(mu,cov,tickers){
   return {weights,expectedReturn,volatility};
 }
 
+// Portafoglio 6: RISK PARITY — invece di ottimizzare rendimento/rischio
+// (Markowitz), pesa ogni titolo perché contribuisca in EGUAL MISURA al
+// rischio totale del portafoglio (non alla capitalizzazione). Approccio
+// "All Weather" — nessuna stima di rendimento atteso richiesta, solo la
+// matrice di covarianza, quindi tende ad essere più stabile quando le
+// stime di rendimento sono incerte. Risolto per iterazione (non esiste una
+// formula chiusa generale con correlazioni diverse da zero).
+function buildRiskParityPortfolio(mu,cov,tickers){
+  const n=tickers.length;
+  let weights=new Array(n).fill(1/n);
+  const target=1/n;
+  for(let iter=0;iter<200;iter++){
+    const covW=matVecMul(cov,weights);
+    const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+    if(variance<=0) break;
+    const riskContrib=weights.map((wi,i)=>wi*covW[i]/variance); // somma a 1
+    weights=weights.map((wi,i)=>Math.max(1e-6, wi*(target/Math.max(riskContrib[i],1e-6))**0.5)); // radice per convergenza più morbida
+    const sum=weights.reduce((a,b)=>a+b,0);
+    weights=weights.map(w=>w/sum);
+  }
+  const covW=matVecMul(cov,weights);
+  const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+  const volatility=Math.sqrt(Math.max(0,variance));
+  const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+  return {weights,expectedReturn,volatility};
+}
+
+// Portafoglio 7: SCORE-WEIGHTED — pesa i titoli in base al nostro Stock
+// Quant Score aggregato (0-100, dallo Storico) invece che solo su
+// prezzo/volatilità — "quanto è solido secondo TUTTA la nostra analisi"
+// (fondamentali, tecnica, regime, tutto insieme), non solo Markowitz.
+function buildScoreWeightedPortfolio(mu,cov,tickers,eligibleHistory){
+  const scores=tickers.map(t=>{
+    const h=eligibleHistory.find(x=>x.ticker===t);
+    return (h&&h.stockScore!=null)?h.stockScore:0;
+  });
+  const total=scores.reduce((a,b)=>a+b,0);
+  if(total<=0) return null;
+  const weights=scores.map(s=>s/total);
+  const covW=matVecMul(cov,weights);
+  const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+  const volatility=Math.sqrt(Math.max(0,variance));
+  const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+  return {weights,expectedReturn,volatility};
+}
+
+// Portafoglio 8: MOMENTUM — pesa i titoli in base al rendimento degli
+// ultimi 6 mesi (26 settimane, stessi dati settimanali già scaricati) —
+// fattore ben documentato in letteratura ("chi ha corso di più di recente
+// tende a continuare nel breve-medio periodo"). Solo momentum POSITIVO
+// riceve peso — un titolo in calo negli ultimi 6 mesi riceve peso zero,
+// non un peso negativo (non facciamo posizioni short qui).
+function buildMomentumPortfolio(mu,cov,tickers,priceData,lookbackWeeks=26){
+  const momentumScores=tickers.map(t=>{
+    const closes=priceData[t]?.closes;
+    if(!closes||closes.length<=lookbackWeeks) return 0;
+    const past=closes[closes.length-1-lookbackWeeks];
+    const now=closes[closes.length-1];
+    return past>0 ? Math.max(0,(now/past-1)) : 0;
+  });
+  const total=momentumScores.reduce((a,b)=>a+b,0);
+  if(total<=0) return null;
+  const weights=momentumScores.map(s=>s/total);
+  const covW=matVecMul(cov,weights);
+  const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+  const volatility=Math.sqrt(Math.max(0,variance));
+  const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+  return {weights,expectedReturn,volatility};
+}
+
 // Il gradiente restituisce pesi "densi" (quasi tutti i titoli con un po' di
 // peso) — li tronchiamo ai migliori N e rinormalizziamo, per avere un
 // portafoglio davvero gestibile con un numero limitato di posizioni.
@@ -4197,6 +4273,11 @@ window.buildOptimalPortfolio=async function(){
   const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
   const selected=selectPortfolios(frontier);
   selected["Equal Weight"]=buildEqualWeightPortfolio(mu,cov,tickers);
+  selected["Risk Parity"]=buildRiskParityPortfolio(mu,cov,tickers);
+  const scoreWeighted=buildScoreWeightedPortfolio(mu,cov,tickers,scoreFiltered);
+  if(scoreWeighted) selected["Score-Weighted"]=scoreWeighted;
+  const momentum=buildMomentumPortfolio(mu,cov,tickers,priceData);
+  if(momentum) selected["Momentum"]=momentum;
   const comaPortfolio=buildComaPortfolio(mu,cov,tickers);
   if(comaPortfolio) selected["Coma"]=comaPortfolio;
   else el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — verrà ridisegnato con dati nostri (Piotroski/rendimento) nel prossimo passo.`;
@@ -4241,7 +4322,7 @@ window.renderPortfolioResults=function(){
   const ctx=el("frontierChart");
   if(PORTFOLIO_FRONTIER_CHART) PORTFOLIO_FRONTIER_CHART.destroy();
   const frontierPoints=r.frontier.map(p=>({x:p.volatility*100,y:p.expectedReturn*100}));
-  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff","Equal Weight":"#c77dff","Coma":"#ff6b6b"};
+  const highlightColors={"Minima Volatilità":"#00d4b8","Massimo Sharpe":"#ffd23f","Bilanciato":"#4fa3ff","Equal Weight":"#c77dff","Risk Parity":"#20c997","Score-Weighted":"#f0c040","Momentum":"#4dd0e1","Coma":"#ff6b6b"};
   const datasets=[{label:"Frontiera Efficiente",data:frontierPoints,borderColor:"#7d8aa3",backgroundColor:"#7d8aa3",showLine:true,pointRadius:3,tension:0.2}];
   Object.entries(r.portfolios).forEach(([name,p])=>{
     datasets.push({label:name,data:[{x:p.volatility*100,y:p.expectedReturn*100}],backgroundColor:highlightColors[name],borderColor:highlightColors[name],pointRadius:8,showLine:false});
