@@ -34,21 +34,26 @@ exports.handler = async function (event) {
     "Content-Type": "application/json"
   };
 
-  // GET → restituisce { portfolios: [...], equity: [...], ratings: [...] }
+  // GET → restituisce { portfolios: [...], equity: [...], ratings: [...], swaps: [...] }
   if (event.httpMethod === "GET") {
     try {
-      const [portfoliosRes, equityRes, ratingsRes] = await Promise.all([
+      const [portfoliosRes, equityRes, ratingsRes, swapsRes] = await Promise.all([
         fetch(`${SUPABASE_URL}/rest/v1/qa_portfolios?select=*`, { headers: sbHeaders }),
         fetch(`${SUPABASE_URL}/rest/v1/qa_portfolio_equity?select=*&order=date.asc`, { headers: sbHeaders }),
-        fetch(`${SUPABASE_URL}/rest/v1/qa_portfolio_ratings?select=*&order=date.desc`, { headers: sbHeaders })
+        fetch(`${SUPABASE_URL}/rest/v1/qa_portfolio_ratings?select=*&order=date.desc`, { headers: sbHeaders }),
+        fetch(`${SUPABASE_URL}/rest/v1/qa_portfolio_swaps?select=*&order=date.desc&limit=200`, { headers: sbHeaders })
       ]);
       if (!portfoliosRes.ok) throw new Error("qa_portfolios: " + portfoliosRes.status);
       if (!equityRes.ok) throw new Error("qa_portfolio_equity: " + equityRes.status);
       if (!ratingsRes.ok) throw new Error("qa_portfolio_ratings: " + ratingsRes.status);
+      // qa_portfolio_swaps potrebbe non esistere ancora se non hai eseguito
+      // lo script SQL di aggiunta — non blocchiamo tutto il resto per questo,
+      // torniamo semplicemente un elenco vuoto.
       const portfolios = await portfoliosRes.json();
       const equity = await equityRes.json();
       const ratings = await ratingsRes.json();
-      return { statusCode: 200, headers, body: JSON.stringify({ portfolios, equity, ratings }) };
+      const swaps = swapsRes.ok ? await swapsRes.json() : [];
+      return { statusCode: 200, headers, body: JSON.stringify({ portfolios, equity, ratings, swaps }) };
     } catch (err) {
       return { statusCode: 500, headers, body: JSON.stringify({ error: "Errore lettura Supabase: " + err.message }) };
     }
