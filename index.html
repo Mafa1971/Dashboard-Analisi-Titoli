@@ -758,6 +758,12 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="height:320px;"><canvas id="portfolioEquityChart"></canvas></div>
           </div>
           <div class="panel">
+            <div class="panel-title">☁️ SALVA SU CLOUD (per equity e rating automatici)</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Salva la composizione (pesi e quantità) di tutti gli 8 portafogli su Supabase — da lì il job notturno calcolerà ogni giorno il valore aggiornato e il rating tecnico di ciascun titolo. Rifallo dopo ogni ricalcolo/ribilanciamento importante.</div>
+            <button class="btn primary" onclick="savePortfoliosToCloud()">☁️ Salva Tutti su Cloud</button>
+            <div id="portfolioCloudStatus" style="font-size:11px;color:var(--gold);margin-top:8px;"></div>
+          </div>
+          <div class="panel">
             <div class="panel-title">🏆 GLI 8 PORTAFOGLI</div>
             <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"></div>
           </div>
@@ -4400,6 +4406,33 @@ window.renderPortfolioDetailTable=function(name){
   });
   h+="</table>";
   el("portfolioDetailWrap").innerHTML=h;
+};
+
+window.savePortfoliosToCloud=async function(){
+  const r=LAST_PORTFOLIO_RESULT;
+  if(!r){ el("portfolioCloudStatus").textContent="⚠️ Costruisci prima un portafoglio."; return; }
+  el("portfolioCloudStatus").textContent="⏳ Salvataggio su Supabase in corso...";
+  const today=new Date().toISOString().slice(0,10);
+  const rows=Object.entries(r.portfolios).map(([name,p])=>{
+    const holdings=p.sparse.map(s=>{
+      const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
+      const dollars=r.budget*s.weight;
+      const shares=price?dollars/price:null;
+      return { ticker:s.ticker, weight:s.weight, shares:shares!=null?Math.round(shares*100)/100:null, entry_price:price!=null?Math.round(price*100)/100:null };
+    });
+    return { portfolio_name:name, inception_date:today, budget:r.budget, holdings, last_rebalance_date:today };
+  });
+  try{
+    const res=await fetch("/.netlify/functions/portfolio",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ portfolios: rows })
+    });
+    const data=await res.json();
+    if(!res.ok||data.error){ el("portfolioCloudStatus").textContent="❌ Errore: "+(data.error||"status "+res.status); return; }
+    el("portfolioCloudStatus").textContent=`✅ ${rows.length} portafogli salvati su Supabase (${today}). Il job notturno inizierà a calcolare equity e rating dalla prossima esecuzione.`;
+  }catch(e){
+    el("portfolioCloudStatus").textContent="❌ Errore di rete: "+e.message;
+  }
 };
 
 loadWatchlistFromStorage();
