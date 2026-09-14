@@ -4493,7 +4493,7 @@ function renderCloudEquityChart(){
   const allDates=[...new Set(CLOUD_PORTFOLIO_DATA.equity.map(r=>r.date))].sort();
   const datasets=Object.entries(byPortfolio).map(([name,rows])=>{
     const byDate={}; rows.forEach(r=>byDate[r.date]=r.equity_value);
-    return { label:name, data:allDates.map(d=>byDate[d]!=null?byDate[d]:null), borderColor:PORTFOLIO_COLORS?.[name]||"#4fa3ff", borderWidth:2, pointRadius:0, tension:0.1, spanGaps:true };
+    return { label:name, data:allDates.map(d=>byDate[d]!=null?byDate[d]:null), borderColor:PORTFOLIO_COLORS?.[name]||"#4fa3ff", backgroundColor:PORTFOLIO_COLORS?.[name]||"#4fa3ff", borderWidth:2, pointRadius:4, pointHoverRadius:6, tension:0.1, spanGaps:true };
   });
   CLOUD_EQUITY_CHART=new Chart(ctx.getContext("2d"),{
     type:"line",
