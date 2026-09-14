@@ -4553,13 +4553,13 @@ window.renderPortfoliosFromCloudData=function(){
   if(!CLOUD_PORTFOLIO_DATA||!CLOUD_PORTFOLIO_DATA.portfolios.length) return;
   el("portfolioResultsWrap").style.display="block";
 
-  // Frontiera Efficiente e backtest a 2 anni richiedono TUTTO lo storico
-  // prezzi (non lo salviamo su cloud, sarebbe troppo pesante) — in modalità
-  // "solo cloud" (dopo un refresh, senza ricalcolo fresco) mostriamo un
-  // messaggio chiaro invece di lasciare un riquadro vuoto/nero.
-  const placeholderMsg=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Questo grafico richiede un ricalcolo fresco (serve tutto lo storico prezzi, che non salviamo su cloud per non appesantire il database).<br><br><button class="btn primary" style="font-size:11px;" onclick="buildOptimalPortfolio()">🎯 Costruisci Portafoglio</button></div>`;
-  el("frontierChartPlaceholder").innerHTML=placeholderMsg;
-  el("backtestChartPlaceholder").innerHTML=placeholderMsg;
+  // La Frontiera Efficiente richiede DAVVERO un nuovo calcolo (è la natura
+  // di quel grafico — l'insieme dei portafogli ottimali, non esiste finché
+  // non lo si ricalcola). L'equity a 2 anni invece può essere costruita in
+  // sicurezza sui titoli GIÀ SALVATI (senza toccare le rotazioni Sell→Buy
+  // fatte dal job notturno) — due pulsanti diversi, azioni diverse.
+  el("frontierChartPlaceholder").innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Questo grafico richiede un nuovo calcolo (l'insieme dei portafogli ottimali non esiste finché non lo ricalcoli). ⚠️ Genera solo una PROPOSTA — non tocca i portafogli salvati finché non premi anche "Salva su Cloud".<br><br><button class="btn primary" style="font-size:11px;" onclick="buildOptimalPortfolio()">🎯 Costruisci Portafoglio (proposta nuova)</button></div>`;
+  el("backtestChartPlaceholder").innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Mostra come si sarebbero comportati i titoli che hai GIÀ nei portafogli — in sicurezza, non li cambia.<br><br><button class="btn primary" style="font-size:11px;" onclick="viewBacktestForCurrentHoldings()">📈 Vedi Andamento Titoli Attuali</button></div>`;
   el("frontierChart").style.display="none";
   el("portfolioEquityChart").style.display="none";
 
@@ -4579,6 +4579,55 @@ window.renderPortfoliosFromCloudData=function(){
   el("portfolioCardsWrap").innerHTML=cardsHtml;
   const firstName=CLOUD_PORTFOLIO_DATA.portfolios[0]?.portfolio_name;
   if(firstName) renderPortfolioDetailTable(firstName);
+};
+
+// Mostra l'andamento a 2 anni dei titoli GIÀ SALVATI nei portafogli — a
+// differenza di "Costruisci Portafoglio", questa funzione NON ottimizza
+// nulla e NON tocca LAST_PORTFOLIO_RESULT: legge solo i pesi attuali dal
+// cloud e scarica i prezzi per disegnare il grafico. Sicura da premere
+// quante volte vuoi, non rischia di far sparire le rotazioni Sell→Buy
+// fatte dal job notturno.
+window.viewBacktestForCurrentHoldings=async function(){
+  if(!CLOUD_PORTFOLIO_DATA||!CLOUD_PORTFOLIO_DATA.portfolios.length) return;
+  const statusEl=el("cloudEquityStatus");
+  if(statusEl) statusEl.textContent="⏳ Scarico 2 anni di storico prezzi per i titoli attuali (NON modifica i portafogli)...";
+
+  const allTickersSet=new Set();
+  CLOUD_PORTFOLIO_DATA.portfolios.forEach(p=>(p.holdings||[]).forEach(h=>allTickersSet.add(h.ticker)));
+  const tickers=[...allTickersSet];
+  if(tickers.length===0){ if(statusEl) statusEl.textContent="⚠️ Nessun titolo nei portafogli salvati."; return; }
+
+  const priceData=await fetchPriceHistoryForTickers(tickers,(done,total,ticker)=>{
+    if(statusEl) statusEl.textContent=`⏳ Scarico storico (${done}/${total}): ${ticker}...`;
+  });
+  const validTickers=tickers.filter(t=>priceData[t]);
+  if(validTickers.length===0){ if(statusEl) statusEl.textContent="❌ Nessun dato di prezzo valido per i titoli attuali."; return; }
+
+  el("backtestChartPlaceholder").innerHTML="";
+  el("portfolioEquityChart").style.display="";
+  if(PORTFOLIO_EQUITY_CHART) PORTFOLIO_EQUITY_CHART.destroy();
+
+  const eqDatasets=CLOUD_PORTFOLIO_DATA.portfolios.map(p=>{
+    const weights=validTickers.map(t=>{
+      const h=(p.holdings||[]).find(x=>x.ticker===t);
+      return h?h.weight:0;
+    });
+    const curve=computeBacktestEquity(priceData,weights,validTickers);
+    const col=PORTFOLIO_COLORS[p.portfolio_name]||"#4fa3ff";
+    return { label:p.portfolio_name, data:curve.map(pt=>pt.value), borderColor:col, backgroundColor:col, borderWidth:p.portfolio_name==="Bilanciato"?2.5:1.5, pointRadius:0, tension:0.1 };
+  });
+  const eqLabels=(()=>{ const t=validTickers[0]; const minLen=Math.min(...validTickers.map(tk=>priceData[tk].closes.length)); return priceData[t].dates.slice(-minLen).map(d=>new Date(d).toISOString().slice(0,10)); })();
+  PORTFOLIO_EQUITY_CHART=new Chart(el("portfolioEquityChart").getContext("2d"),{
+    type:"line",
+    data:{labels:eqLabels, datasets:eqDatasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+        y:{title:{display:true,text:"Valore (base 100)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+      }}
+  });
+  if(statusEl) statusEl.textContent=`✅ Andamento calcolato su ${validTickers.length} titoli attuali (nessuna modifica ai portafogli salvati).`;
 };
 
 function renderCloudEquityChart(){
