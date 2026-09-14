@@ -3678,7 +3678,22 @@ window.loadWatchlistFile=function(event){
         // formattazione della cella: percentuali, valute, ecc.), non il
         // numero "grezzo" interno — altrimenti una cella percentuale tipo
         // "27,41%" arriverebbe come 0.2741288144231382, illeggibile.
-        const json=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:"",raw:false});
+        // Alcuni export (come questo) hanno righe di titolo/note PRIMA delle
+        // vere intestazioni — cerchiamo la prima riga che contiene "Ticker"
+        // o "Symbol" come valore di una cella, invece di assumere sempre
+        // che sia la riga 1 (altrimenti leggeremmo intestazioni finte).
+        const rawRows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,defval:"",raw:false});
+        const headerRowIdx=rawRows.findIndex(row=>row.some(cell=>{
+          const c=String(cell).trim().toLowerCase();
+          return c==="ticker"||c==="symbol";
+        }));
+        if(headerRowIdx===-1) return; // nessuna intestazione riconoscibile in questo foglio
+        const headers=rawRows[headerRowIdx].map(hdr=>String(hdr).trim());
+        const json=rawRows.slice(headerRowIdx+1).map(row=>{
+          const obj={};
+          headers.forEach((hdr,i)=>{ if(hdr) obj[hdr]=row[i]!=null?row[i]:""; });
+          return obj;
+        });
         json.forEach(row=>{
           const keys=Object.keys(row);
           const tickerKey=keys.find(k=>k.trim().toLowerCase()==="ticker"||k.trim().toLowerCase()==="symbol");
@@ -3688,7 +3703,7 @@ window.loadWatchlistFile=function(event){
           // Finviz a volte incolla "GME logoGME" nella cella ticker — ripuliamo
           ticker=ticker.replace(/logo.*$/i,"").replace(/\s+[a-z].*$/,"").trim().toUpperCase();
           if(!ticker) return;
-          const companyKey=keys.find(k=>/company|name/i.test(k));
+          const companyKey=keys.find(k=>/company|name|nome/i.test(k));
           const sectorKey=keys.find(k=>/^sector$/i.test(k));
           const industryKey=keys.find(k=>/^industry$/i.test(k));
           const countryKey=keys.find(k=>/^country$/i.test(k));
