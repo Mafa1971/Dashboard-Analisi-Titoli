@@ -2456,7 +2456,7 @@ window.loadQuickRatios=async function(){
         beta: dk.beta?.raw ?? null,
         targetPrice: fd.targetMeanPrice?.raw ?? null
       };
-      if(r.assetProfile?.sector) STOCK_SECTOR=r.assetProfile.sector;
+      if(r.assetProfile?.sector){ STOCK_SECTOR=r.assetProfile.sector; updateHistorySector(STOCK.ticker, STOCK_SECTOR); }
       // Se Yahoo risponde ma con TUTTI i campi vuoti, non è utile: forziamo il fallback
       if(Object.values(data).every(v=>v==null)) data=null; else source="Yahoo (gratis)";
     }
@@ -4282,11 +4282,15 @@ window.buildOptimalPortfolio=async function(){
   el("portfolioStatus").textContent="⏳ Calcolo rendimenti, volatilità e correlazioni...";
   const {tickers,returns}=alignAndComputeReturns(priceData);
   const {mu,cov}=computeMuAndCov(tickers,returns);
-  // Il Settore non è salvato nello Storico (non lo calcoliamo noi) — se il
-  // ticker capita di essere ANCHE in Watchlist lo recuperiamo da lì come
-  // bonus, altrimenti resta "N/D" e il vincolo di diversificazione settoriale
-  // si applica solo dove il dato è disponibile.
-  const sectorOf=tickers.map(t=>WATCHLIST.find(w=>w.ticker===t)?.sector||"N/D");
+  // Il Settore, ora, si cerca PRIMA nello Storico (catturato da Yahoo
+  // quando carichi il Bilancio — più affidabile perché non richiede che tu
+  // l'abbia aggiunto a mano in Watchlist), e solo come riserva nella
+  // Watchlist stessa. Se manca in entrambi, resta "N/D".
+  const sectorOf=tickers.map(t=>{
+    const fromHistory=scoreFiltered.find(h=>h.ticker===t)?.sector;
+    if(fromHistory) return fromHistory;
+    return WATCHLIST.find(w=>w.ticker===t)?.sector||"N/D";
+  });
 
   el("portfolioStatus").textContent="⏳ Traccio la frontiera efficiente...";
   const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
@@ -4616,6 +4620,14 @@ function saveAnalysisToHistory(totalReturn){
   const filtered=hist.filter(h=>h.ticker!==entry.ticker);
   filtered.push(entry);
   saveHistoryArr(filtered);
+}
+function updateHistorySector(ticker,sector){
+  // Salva il Settore (catturato da Yahoo durante il caricamento Bilancio)
+  // nella riga storico esistente — fonte più affidabile del settore in
+  // Watchlist, perché non richiede che l'utente l'abbia aggiunto lì a mano.
+  const hist=loadAnalysisHistory();
+  const idx=hist.findIndex(h=>h.ticker===ticker);
+  if(idx>=0 && hist[idx].sector!==sector){ hist[idx].sector=sector; saveHistoryArr(hist); }
 }
 function updateHistoryScore(ticker,score,components){
   // Aggiorna il punteggio E il dettaglio dei componenti nella riga storico
