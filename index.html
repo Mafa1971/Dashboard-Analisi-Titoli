@@ -750,11 +750,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div id="portfolioResultsWrap" style="display:none;">
           <div class="panel">
             <div class="panel-title">📈 FRONTIERA EFFICIENTE</div>
+            <div id="frontierChartPlaceholder"></div>
             <div style="height:320px;"><canvas id="frontierChart"></canvas></div>
           </div>
           <div class="panel">
             <div class="panel-title">📊 EQUITY RETROATTIVA (ultimi 2 anni, pesi attuali)</div>
             <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Se avessi tenuto ESATTAMENTE questi pesi per gli ultimi 2 anni (dati settimanali) — base 100 all'inizio del periodo. Non è un backtest storico con ribilanciamenti, solo un'indicazione di come si sarebbe comportata questa combinazione.</div>
+            <div id="backtestChartPlaceholder"></div>
             <div style="height:320px;"><canvas id="portfolioEquityChart"></canvas></div>
           </div>
           <div class="panel">
@@ -4334,6 +4336,12 @@ window.renderPortfolioResults=function(){
   const r=LAST_PORTFOLIO_RESULT;
   if(!r) return;
   el("portfolioResultsWrap").style.display="block";
+  // Rimuove l'eventuale messaggio "serve un ricalcolo fresco" e ripristina
+  // i canvas, dato che stiamo per disegnarci sopra dati veri e freschi.
+  el("frontierChartPlaceholder").innerHTML="";
+  el("backtestChartPlaceholder").innerHTML="";
+  el("frontierChart").style.display="";
+  el("portfolioEquityChart").style.display="";
 
   // Grafico frontiera: dispersione rischio/rendimento, con i 3 portafogli evidenziati
   const ctx=el("frontierChart");
@@ -4513,6 +4521,17 @@ window.loadPortfoliosFromCloud=async function(){
 window.renderPortfoliosFromCloudData=function(){
   if(!CLOUD_PORTFOLIO_DATA||!CLOUD_PORTFOLIO_DATA.portfolios.length) return;
   el("portfolioResultsWrap").style.display="block";
+
+  // Frontiera Efficiente e backtest a 2 anni richiedono TUTTO lo storico
+  // prezzi (non lo salviamo su cloud, sarebbe troppo pesante) — in modalità
+  // "solo cloud" (dopo un refresh, senza ricalcolo fresco) mostriamo un
+  // messaggio chiaro invece di lasciare un riquadro vuoto/nero.
+  const placeholderMsg=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Questo grafico richiede un ricalcolo fresco (serve tutto lo storico prezzi, che non salviamo su cloud per non appesantire il database).<br><br><button class="btn primary" style="font-size:11px;" onclick="buildOptimalPortfolio()">🎯 Costruisci Portafoglio</button></div>`;
+  el("frontierChartPlaceholder").innerHTML=placeholderMsg;
+  el("backtestChartPlaceholder").innerHTML=placeholderMsg;
+  el("frontierChart").style.display="none";
+  el("portfolioEquityChart").style.display="none";
+
   let cardsHtml="";
   CLOUD_PORTFOLIO_DATA.portfolios.forEach(p=>{
     const col=PORTFOLIO_COLORS[p.portfolio_name]||"#4fa3ff";
