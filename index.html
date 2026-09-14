@@ -778,6 +778,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div id="portfolioCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"></div>
           </div>
           <div class="panel">
+            <div class="panel-title">🔄 STORICO SOSTITUZIONI (Sell → Buy)</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni volta che il job notturno sostituisce un titolo Sell/Strong Sell con un candidato migliore, la sostituzione viene registrata qui — con data, portafoglio, titolo uscito/entrato e il rating che ha innescato il cambio.</div>
+            <div id="portfolioSwapsWrap"><div class="empty-state"><p>Nessuna sostituzione ancora registrata.</p></div></div>
+          </div>
+          <div class="panel">
             <div class="panel-title">📋 DETTAGLIO PESI E QUANTITÀ (con rating tecnico dal cloud)</div>
             <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
               <button class="btn ghost" style="font-size:10px;" onclick="renderPortfolioDetailTable('Minima Volatilità')">Minima Volatilità</button>
@@ -4510,14 +4515,36 @@ window.loadPortfoliosFromCloud=async function(){
     const data=await res.json();
     if(!res.ok||data.error){ if(statusEl) statusEl.textContent="❌ Errore: "+(data.error||"status "+res.status); return; }
     CLOUD_PORTFOLIO_DATA=data;
+    if(!LAST_PORTFOLIO_RESULT) renderPortfoliosFromCloudData(); // rende visibile il contenitore PRIMA di disegnare il grafico, altrimenti Chart.js fallisce su un canvas a dimensione zero
+    if(LAST_PORTFOLIO_RESULT || (data.portfolios&&data.portfolios.length)) el("portfolioResultsWrap").style.display="block";
     renderCloudEquityChart();
     renderRebalanceBanner();
-    if(!LAST_PORTFOLIO_RESULT) renderPortfoliosFromCloudData(); // se non c'è già un calcolo fresco in questa sessione, mostra l'ultimo salvato
+    renderPortfolioSwaps();
     if(statusEl) statusEl.textContent = data.equity.length ? `✅ ${data.equity.length} punti equity, ${data.ratings.length} rating caricati.` : "⚠️ Nessun dato equity ancora — il job notturno non è ancora passato, o i portafogli non sono ancora stati salvati.";
   }catch(e){
     if(statusEl) statusEl.textContent="❌ Errore di rete: "+e.message;
   }
 };
+
+function renderPortfolioSwaps(){
+  const wrap=el("portfolioSwapsWrap");
+  if(!wrap||!CLOUD_PORTFOLIO_DATA) return;
+  const swaps=CLOUD_PORTFOLIO_DATA.swaps||[];
+  if(swaps.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Nessuna sostituzione ancora registrata.</p></div>`; return; }
+  const ratingColor={"Strong Buy":"#00d4b8","Buy":"#7fd99a","Neutral":"#ffd23f","Sell":"#ff9a7f","Strong Sell":"#ff6b6b"};
+  let h=`<table><tr><th>Data</th><th>Portafoglio</th><th>Uscito</th><th>Motivo</th><th>Entrato</th></tr>`;
+  swaps.forEach(s=>{
+    h+=`<tr>
+      <td style="font-size:11px;">${s.date}</td>
+      <td style="font-size:11px;">${s.portfolio_name}</td>
+      <td style="font-weight:700;color:#ff6b6b;">${s.old_ticker}</td>
+      <td style="font-size:10px;color:${ratingColor[s.old_rating]||'var(--dim)'};">${s.old_rating}</td>
+      <td style="font-weight:700;color:#00d4b8;">→ ${s.new_ticker}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  wrap.innerHTML=h;
+}
 
 // Mostra card e dettaglio dall'ULTIMO SALVATAGGIO su cloud, senza bisogno
 // di rifare il calcolo pesante — così i portafogli restano visibili anche
