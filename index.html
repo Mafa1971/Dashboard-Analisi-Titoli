@@ -4558,7 +4558,7 @@ window.renderPortfoliosFromCloudData=function(){
   // non lo si ricalcola). L'equity a 2 anni invece può essere costruita in
   // sicurezza sui titoli GIÀ SALVATI (senza toccare le rotazioni Sell→Buy
   // fatte dal job notturno) — due pulsanti diversi, azioni diverse.
-  el("frontierChartPlaceholder").innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Questo grafico richiede un nuovo calcolo (l'insieme dei portafogli ottimali non esiste finché non lo ricalcoli). ⚠️ Genera solo una PROPOSTA — non tocca i portafogli salvati finché non premi anche "Salva su Cloud".<br><br><button class="btn primary" style="font-size:11px;" onclick="buildOptimalPortfolio()">🎯 Costruisci Portafoglio (proposta nuova)</button></div>`;
+  el("frontierChartPlaceholder").innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Due opzioni:<br><br><button class="btn primary" style="font-size:11px;" onclick="viewBacktestForCurrentHoldings()">📍 Vedi Posizione Portafogli Attuali (sicuro, non li cambia)</button><br><br>oppure<br><br><button class="btn ghost" style="font-size:11px;" onclick="buildOptimalPortfolio()">🎯 Costruisci Portafoglio (proposta nuova, richiede poi "Salva su Cloud" per diventare effettiva)</button></div>`;
   el("backtestChartPlaceholder").innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--dim);font-size:11px;">📊 Mostra come si sarebbero comportati i titoli che hai GIÀ nei portafogli — in sicurezza, non li cambia.<br><br><button class="btn primary" style="font-size:11px;" onclick="viewBacktestForCurrentHoldings()">📈 Vedi Andamento Titoli Attuali</button></div>`;
   el("frontierChart").style.display="none";
   el("portfolioEquityChart").style.display="none";
@@ -4607,6 +4607,37 @@ window.viewBacktestForCurrentHoldings=async function(){
   el("portfolioEquityChart").style.display="";
   if(PORTFOLIO_EQUITY_CHART) PORTFOLIO_EQUITY_CHART.destroy();
 
+  // Rischio/rendimento di ciascun portafoglio ATTUALE (per gli 8 punti sul
+  // grafico Frontiera) — stessa formula usata per costruirli, ma qui solo
+  // per POSIZIONARLI, non per ottimizzare/proporne di nuovi.
+  const {tickers:retTickers,returns}=alignAndComputeReturns(priceData);
+  const {mu,cov}=computeMuAndCov(retTickers,returns);
+  el("frontierChartPlaceholder").innerHTML="";
+  el("frontierChart").style.display="";
+  if(PORTFOLIO_FRONTIER_CHART) PORTFOLIO_FRONTIER_CHART.destroy();
+  const frontierDatasets=CLOUD_PORTFOLIO_DATA.portfolios.map(p=>{
+    const weights=retTickers.map(t=>{
+      const h=(p.holdings||[]).find(x=>x.ticker===t);
+      return h?h.weight:0;
+    });
+    const covW=matVecMul(cov,weights);
+    const variance=weights.reduce((s,wi,i)=>s+wi*covW[i],0);
+    const volatility=Math.sqrt(Math.max(0,variance));
+    const expectedReturn=weights.reduce((s,wi,i)=>s+wi*mu[i],0);
+    const col=PORTFOLIO_COLORS[p.portfolio_name]||"#4fa3ff";
+    return { label:p.portfolio_name, data:[{x:volatility*100,y:expectedReturn*100}], backgroundColor:col, borderColor:col, pointRadius:8, showLine:false };
+  });
+  PORTFOLIO_FRONTIER_CHART=new Chart(el("frontierChart").getContext("2d"),{
+    type:"scatter",
+    data:{datasets:frontierDatasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+      scales:{
+        x:{title:{display:true,text:"Volatilità Annua (%)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}},
+        y:{title:{display:true,text:"Rendimento Atteso Annuo (%)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+      }}
+  });
+
   const eqDatasets=CLOUD_PORTFOLIO_DATA.portfolios.map(p=>{
     const weights=validTickers.map(t=>{
       const h=(p.holdings||[]).find(x=>x.ticker===t);
@@ -4627,7 +4658,7 @@ window.viewBacktestForCurrentHoldings=async function(){
         y:{title:{display:true,text:"Valore (base 100)",color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
       }}
   });
-  if(statusEl) statusEl.textContent=`✅ Andamento calcolato su ${validTickers.length} titoli attuali (nessuna modifica ai portafogli salvati).`;
+  if(statusEl) statusEl.textContent=`✅ Frontiera e andamento calcolati su ${validTickers.length} titoli attuali (nessuna modifica ai portafogli salvati).`;
 };
 
 function renderCloudEquityChart(){
