@@ -4297,25 +4297,62 @@ window.buildOptimalPortfolio=async function(){
     return WATCHLIST.find(w=>w.ticker===t)?.sector||"N/D";
   });
 
-  el("portfolioStatus").textContent="⏳ Traccio la frontiera efficiente...";
-  const frontier=traceFrontier(mu,cov,sectorOf,maxWeight,maxSectorWeight);
-  const selected=selectPortfolios(frontier);
-  selected["Equal Weight"]=buildEqualWeightPortfolio(mu,cov,tickers);
-  selected["Risk Parity"]=buildRiskParityPortfolio(mu,cov,tickers);
-  const scoreWeighted=buildScoreWeightedPortfolio(mu,cov,tickers,scoreFiltered);
-  if(scoreWeighted) selected["Score-Weighted"]=scoreWeighted;
-  const momentum=buildMomentumPortfolio(mu,cov,tickers,priceData);
-  if(momentum) selected["Momentum"]=momentum;
-  const comaPortfolio=buildComaPortfolio(mu,cov,tickers);
-  if(comaPortfolio) selected["Coma"]=comaPortfolio;
-  else el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — verrà ridisegnato con dati nostri (Piotroski/rendimento) nel prossimo passo.`;
+  // Costruzione SEQUENZIALE: ogni portafoglio, uno alla volta, esclude i
+  // titoli già presi dai portafogli costruiti prima di lui — così nessun
+  // titolo si ripete tra portafogli diversi. Ordine dal più "specializzato"
+  // (pool di titoli più ristretto) al più generico, che si accontenta di
+  // quello che resta.
+  el("portfolioStatus").textContent="⏳ Costruisco gli 8 portafogli (titoli esclusivi, nessuna sovrapposizione)...";
+  const buildOrder=["Coma","Score-Weighted","Momentum","Minima Volatilità","Massimo Sharpe","Bilanciato","Risk Parity","Equal Weight"];
+  const usedTickers=new Set();
+  const selected={};
+  let sharedFrontier=null; // solo per disegnare la curva di sfondo nel grafico
+
+  function expandWeights(subWeights,subTickers){
+    const map={}; subTickers.forEach((t,i)=>{ map[t]=subWeights[i]; });
+    return tickers.map(t=>map[t]||0);
+  }
+
+  buildOrder.forEach(name=>{
+    const idx=tickers.map((t,i)=>i).filter(i=>!usedTickers.has(tickers[i]));
+    if(idx.length<3) return; // troppo pochi titoli liberi rimasti per questo tipo
+    const subTickers=idx.map(i=>tickers[i]);
+    const subMu=idx.map(i=>mu[i]);
+    const subCov=idx.map(i=>idx.map(j=>cov[i][j]));
+    const subSectorOf=idx.map(i=>sectorOf[i]);
+
+    let portfolio=null;
+    if(name==="Coma") portfolio=buildComaPortfolio(subMu,subCov,subTickers);
+    else if(name==="Score-Weighted") portfolio=buildScoreWeightedPortfolio(subMu,subCov,subTickers,scoreFiltered);
+    else if(name==="Momentum") portfolio=buildMomentumPortfolio(subMu,subCov,subTickers,priceData);
+    else if(name==="Equal Weight") portfolio=buildEqualWeightPortfolio(subMu,subCov,subTickers);
+    else if(name==="Risk Parity") portfolio=buildRiskParityPortfolio(subMu,subCov,subTickers);
+    else { // Minima Volatilità, Massimo Sharpe, Bilanciato — dalla frontiera efficiente del sotto-universo rimasto
+      const subFrontier=traceFrontier(subMu,subCov,subSectorOf,maxWeight,maxSectorWeight);
+      if(!sharedFrontier) sharedFrontier=subFrontier;
+      const subSelected=selectPortfolios(subFrontier);
+      portfolio=subSelected[name];
+    }
+    if(!portfolio) return;
+
+    // Riporta i pesi sull'universo COMPLETO (zero per i titoli esclusi/di
+    // altri portafogli) — così tutto il resto del codice (grafici, tabelle,
+    // salvataggio cloud) continua a funzionare esattamente come prima,
+    // senza bisogno di adattarlo a "sotto-universi" diversi per portafoglio.
+    const expandedWeights=expandWeights(portfolio.weights,subTickers);
+    selected[name]={...portfolio,weights:expandedWeights};
+    const sparse=sparsifyPortfolio(expandedWeights,tickers,maxStocks);
+    sparse.forEach(s=>usedTickers.add(s.ticker));
+  });
+
+  if(!selected["Coma"]) el("portfolioStatus").innerHTML+=`<br>⚠️ Portafoglio "Coma" non costruito — nessun titolo Coma disponibile (o già usato da un portafoglio precedente in ordine).`;
 
   const portfolios={};
   Object.entries(selected).forEach(([name,p])=>{ portfolios[name]={...p, sparse:sparsifyPortfolio(p.weights,tickers,maxStocks)}; });
 
-  LAST_PORTFOLIO_RESULT={frontier,portfolios,priceData,budget,tickers,sectorOf};
+  LAST_PORTFOLIO_RESULT={frontier:sharedFrontier||[],portfolios,priceData,budget,tickers,sectorOf};
   renderPortfolioResults();
-  el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${universeTickers.length} titoli dello Storico con dati validi (${universeTickers.length-validTickers.length} saltati per dati di prezzo insufficienti).`;
+  el("portfolioStatus").innerHTML=`✅ Portafoglio costruito su ${validTickers.length}/${universeTickers.length} titoli dello Storico con dati validi (${universeTickers.length-validTickers.length} saltati per dati di prezzo insufficienti). Titoli esclusivi tra i portafogli — nessuna sovrapposizione.`;
 };
 
 // Equity retroattiva: "se avessi tenuto ESATTAMENTE questi pesi per gli
