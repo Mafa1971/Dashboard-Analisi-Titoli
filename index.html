@@ -4466,7 +4466,7 @@ window.renderPortfolioDetailTable=function(name){
   if(r&&r.portfolios[name]){
     const p=r.portfolios[name];
     const budget=r.budget;
-    let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th><th>Rating (dal cloud)</th></tr>`;
+    let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo</th><th>Importo</th><th>Azioni (circa)</th><th>Rating (dal cloud)</th><th></th></tr>`;
     p.sparse.forEach(s=>{
       const price=r.priceData[s.ticker]?.closes.slice(-1)[0];
       const dollars=budget*s.weight;
@@ -4480,6 +4480,7 @@ window.renderPortfolioDetailTable=function(name){
         <td>${dollars.toFixed(0)}</td>
         <td>${shares!=null?shares.toFixed(2):"N/D"}</td>
         <td>${ratingCell(s.ticker)}</td>
+        <td><a href="${getTVUrl(s.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TV</a></td>
       </tr>`;
     });
     h+="</table>";
@@ -4491,7 +4492,7 @@ window.renderPortfolioDetailTable=function(name){
   // quantità di allora (etichettati come tali), non prezzi live.
   const cloudP=(CLOUD_PORTFOLIO_DATA?.portfolios||[]).find(p=>p.portfolio_name===name);
   if(!cloudP){ el("portfolioDetailWrap").innerHTML=`<div class="empty-state"><p>Nessun dato per "${name}" — costruisci un portafoglio o salvane uno su cloud.</p></div>`; return; }
-  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo (al salvataggio)</th><th>Azioni</th><th>Rating (dal cloud)</th></tr>`;
+  let h=`<table><tr><th>Ticker</th><th>Settore</th><th>Peso</th><th>Prezzo (al salvataggio)</th><th>Azioni</th><th>Rating (dal cloud)</th><th></th></tr>`;
   (cloudP.holdings||[]).forEach(hd=>{
     h+=`<tr>
       <td style="font-weight:700;color:#4fa3ff;">${hd.ticker}</td>
@@ -4500,6 +4501,7 @@ window.renderPortfolioDetailTable=function(name){
       <td>${hd.entry_price!=null?hd.entry_price.toFixed(2):"N/D"}</td>
       <td>${hd.shares!=null?hd.shares.toFixed(2):"N/D"}</td>
       <td>${ratingCell(hd.ticker)}</td>
+      <td><a href="${getTVUrl(hd.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TV</a></td>
     </tr>`;
   });
   h+="</table>";
@@ -4839,6 +4841,7 @@ window.renderHistoryTab=function(){
       <td>${r.sessions}</td>
       <td style="font-size:10px;color:var(--dim);">${r.periodStart} → ${r.periodEnd}</td>
       <td style="white-space:nowrap;">
+        <a href="${getTVUrl(r.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TV</a>
         <button class="btn ghost" style="font-size:10px;padding:3px 8px;" onclick="fullReanalyzeFromHistory('${r.ticker}')">↻ Rianalizza Tutto</button>
         <button class="icon-btn" style="background:none;border:none;color:#ffd23f;cursor:pointer;font-size:13px;padding:2px 6px;" onclick="generatePdfReport('${r.ticker}')" title="Genera PDF di questo titolo">📄</button>
         <button class="icon-btn" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:14px;padding:2px 6px;" onclick="deleteHistoryEntry('${r.ticker}')" title="Elimina questa riga">✕</button>
