@@ -779,7 +779,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
           <div class="panel">
             <div class="panel-title">🔄 STORICO SOSTITUZIONI (Sell → Buy)</div>
-            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni volta che il job notturno sostituisce un titolo Sell/Strong Sell con un candidato migliore, la sostituzione viene registrata qui — con data, portafoglio, titolo uscito/entrato e il rating che ha innescato il cambio.</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ogni volta che il job notturno sostituisce un titolo Sell/Strong Sell con un candidato migliore, la sostituzione viene registrata qui — con data, portafoglio, titolo uscito/entrato e il rating che ha innescato il cambio. Le righe più vecchie di 30 giorni vengono rimosse automaticamente ogni notte, per non far crescere la lista all'infinito — scarica il CSV prima se vuoi conservarle più a lungo.</div>
+            <button class="btn ghost" style="font-size:10px;margin-bottom:10px;" onclick="downloadSwapsCsv()">⬇️ Scarica CSV</button>
             <div id="portfolioSwapsWrap"><div class="empty-state"><p>Nessuna sostituzione ancora registrata.</p></div></div>
           </div>
           <div class="panel">
@@ -4584,6 +4585,23 @@ function renderPortfolioSwaps(){
   h+="</table>";
   wrap.innerHTML=h;
 }
+
+window.downloadSwapsCsv=function(){
+  const swaps=CLOUD_PORTFOLIO_DATA?.swaps||[];
+  if(swaps.length===0){ alert("Nessuna sostituzione da scaricare."); return; }
+  const header=["Data","Portafoglio","Titolo Uscito","Motivo (Rating)","Titolo Entrato"];
+  const rows=swaps.map(s=>[s.date,s.portfolio_name,s.old_ticker,s.old_rating,s.new_ticker]);
+  const csv=[header,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=`storico_sostituzioni_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
 // Mostra card e dettaglio dall'ULTIMO SALVATAGGIO su cloud, senza bisogno
 // di rifare il calcolo pesante — così i portafogli restano visibili anche
