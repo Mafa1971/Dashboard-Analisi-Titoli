@@ -1694,6 +1694,37 @@ function computeVolumeProfile(closes,volumes,buckets=24){
     vaHigh:min+(hi+1)*bucketSize, vaLow:min+lo*bucketSize };
 }
 
+// POC "dal Massimo Storico" — volume profile calcolato SOLO dal giorno del
+// massimo storico in poi (non sull'intero storico) — utile per titoli in
+// forte calo dal picco (es. i candidati "Coma"): dice dove si è
+// concentrato il volume DURANTE il crollo, non in anni di prezzi ormai
+// irrilevanti prima del picco.
+function computeVolumeProfileSincePeak(highs,closes,volumes,buckets=24){
+  if(!highs||!closes||!volumes||highs.length<5) return null;
+  let peakIdx=0, peakVal=-Infinity;
+  highs.forEach((h,i)=>{ if(h!=null&&h>peakVal){ peakVal=h; peakIdx=i; } });
+  return computeVolumeProfile(closes.slice(peakIdx),volumes.slice(peakIdx),buckets);
+}
+
+// Anchored VWAP dall'ultimo swing low significativo — riferimento utile
+// quando il prezzo è sui MASSIMI (nessuna resistenza sopra da usare come
+// riferimento classico stile POC): il prezzo medio ponderato per volume di
+// chi è entrato in QUESTO specifico movimento, dal suo punto di partenza —
+// tende a fare da calamita/supporto nei pullback anche senza uno storico
+// di prezzo sopra da analizzare.
+function computeAnchoredVWAP(highs,lows,closes,volumes,anchorIdx){
+  if(anchorIdx==null||anchorIdx<0||anchorIdx>=closes.length) return null;
+  let sumPV=0, sumV=0;
+  for(let i=anchorIdx;i<closes.length;i++){
+    if(closes[i]==null||volumes[i]==null||highs[i]==null||lows[i]==null) continue;
+    const typicalPrice=(highs[i]+lows[i]+closes[i])/3; // prezzo tipico, standard per il VWAP — più rappresentativo del solo Close
+    sumPV+=typicalPrice*volumes[i];
+    sumV+=volumes[i];
+  }
+  if(sumV===0) return null;
+  return sumPV/sumV;
+}
+
 function drawVolumeProfile(canvasId,profile){
   const canvas=el(canvasId);
   if(!canvas) return;
@@ -3386,7 +3417,19 @@ Sii diretto, numeri concreti, evita frasi vaghe.`;
     // quasi irrilevante — quello recente è molto più utile per l'operatività.
     const recentN=Math.min(250,STOCK.closes.length-1);
     const vpRecent=computeVolumeProfile(STOCK.closes.slice(-recentN),STOCK.volumes.slice(-recentN),24);
+    // POC dal MASSIMO STORICO ad oggi: dove si è concentrato il volume
+    // DURANTE il calo dal picco — pensato per titoli in forte drawdown
+    // (es. candidati Coma), dove il POC sull'intero storico è dominato da
+    // anni di prezzi pre-picco ormai irrilevanti.
+    const vpSincePeak=computeVolumeProfileSincePeak(STOCK.highs,STOCK.closes,STOCK.volumes,24);
     const price=STOCK.closes[STOCK.closes.length-1];
+    // Anchored VWAP dall'ultimo swing low: riferimento utile quando il
+    // prezzo è sui MASSIMI storici, dove il POC classico non ha "storico
+    // sopra" da analizzare — prezzo medio ponderato per volume di chi è
+    // entrato in QUESTO movimento specifico, dal suo punto di partenza.
+    const swForAnchor=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    const lastSwingLow=swForAnchor.lows.length?swForAnchor.lows.reduce((a,b)=>b.idx>a.idx?b:a):null;
+    const anchoredVWAP=lastSwingLow?computeAnchoredVWAP(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,lastSwingLow.idx):null;
     const piv=calcSupportResistancePivot(STOCK.closes,STOCK.highs,STOCK.lows,60);
     const sw=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
     const swingHighsAbove=sw.highs.filter(p=>p.price>price).map(p=>p.price.toFixed(2));
@@ -3410,6 +3453,8 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - ATR: ${l.atr!=null?l.atr.toFixed(2):"N/D"} (usalo SOLO per lo Stop Loss, mai per i target — vedi regola sotto)
 - POC (Volume Profile, storico completo): ${vp?vp.poc.toFixed(2):"N/D"} — livello a lungo termine, può essere lontano dal prezzo su titoli con anni di trend
 - POC (Volume Profile, ultimi ${recentN}gg — PIÙ RILEVANTE per l'operatività): ${vpRecent?vpRecent.poc.toFixed(2):"N/D"}, Value Area recente: ${vpRecent?vpRecent.vaLow.toFixed(2)+" - "+vpRecent.vaHigh.toFixed(2):"N/D"}
+- POC dal Massimo Storico ad oggi (dove si è concentrato il volume DURANTE il calo dal picco — utile per titoli in forte drawdown): ${vpSincePeak?vpSincePeak.poc.toFixed(2):"N/D"}
+- Anchored VWAP dall'ultimo swing low (prezzo medio ponderato per volume di chi è entrato in questo movimento — usalo come riferimento SOLO se il prezzo è vicino ai massimi, dove il POC classico non ha storico sopra da analizzare): ${anchoredVWAP!=null?anchoredVWAP.toFixed(2):"N/D"}
 - Value Area (storico completo): ${vp?vp.vaLow.toFixed(2)+" - "+vp.vaHigh.toFixed(2):"N/D"}
 - Pivot Points (ultimi 60gg): Pivot ${piv?piv.pivot.toFixed(2):"N/D"}, R1 ${piv?piv.r1.toFixed(2):"N/D"}, S1 ${piv?piv.s1.toFixed(2):"N/D"}
 - Massimo 52 settimane: ${high52w.toFixed(2)} | Minimo 52 settimane: ${low52w.toFixed(2)}
