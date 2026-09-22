@@ -142,6 +142,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkSwing" checked onchange="renderICTOverlays()"> <span style="color:#ffd23f;">■</span> Swing H/L</label>
             <label class="chk"><input type="checkbox" id="chkFVG" checked onchange="renderICTOverlays()"> <span style="color:#c77dff;">■</span> FVG</label>
             <label class="chk"><input type="checkbox" id="chkPOC" checked onchange="renderICTOverlays()"> <span style="color:#ff3d71;">■</span> POC</label>
+            <label class="chk"><input type="checkbox" id="chkPOCSincePeak" onchange="renderICTOverlays()"> <span style="color:#ff8fab;">■</span> POC dal Massimo Storico</label>
+            <label class="chk"><input type="checkbox" id="chkAnchoredVWAP" onchange="renderICTOverlays()"> <span style="color:#4dd0e1;">■</span> Anchored VWAP</label>
             <label class="chk"><input type="checkbox" id="chkSwingStruct" checked onchange="renderICTOverlays()"> <span style="color:#089981;">■</span> Struttura Swing (BOS/CHoCH)</label>
             <label class="chk"><input type="checkbox" id="chkInternalStruct" onchange="renderICTOverlays()"> <span style="color:#3179f5;">■</span> Struttura Internal (BOS/CHoCH)</label>
             <label class="chk"><input type="checkbox" id="chkTrendline" checked onchange="renderICTOverlays()"> <span style="color:#f9c74f;">■</span> Trendline</label>
@@ -1517,6 +1519,22 @@ window.renderICTOverlays=function(){
   if(el("chkPOC").checked){
     const poc=calcPOCSimple(STOCK.closes,STOCK.volumes);
     if(poc) window._pocLine=candleSeries.createPriceLine({price:poc,color:"#ff3d71",lineWidth:2,lineStyle:0,axisLabelVisible:true,title:"POC"});
+  }
+  // POC dal Massimo Storico — dove si è concentrato il volume DURANTE il
+  // calo dal picco, utile per titoli in forte drawdown (es. Coma).
+  if(window._pocSincePeakLine){ try{ candleSeries.removePriceLine(window._pocSincePeakLine); }catch(e){} window._pocSincePeakLine=null; }
+  if(el("chkPOCSincePeak")?.checked){
+    const vpSincePeak=computeVolumeProfileSincePeak(STOCK.highs,STOCK.closes,STOCK.volumes,24);
+    if(vpSincePeak) window._pocSincePeakLine=candleSeries.createPriceLine({price:vpSincePeak.poc,color:"#ff8fab",lineWidth:2,lineStyle:2,axisLabelVisible:true,title:"POC dal Max"});
+  }
+  // Anchored VWAP dall'ultimo swing low — riferimento utile quando il
+  // prezzo è sui massimi, dove il POC classico non ha storico sopra da analizzare.
+  if(window._anchoredVwapLine){ try{ candleSeries.removePriceLine(window._anchoredVwapLine); }catch(e){} window._anchoredVwapLine=null; }
+  if(el("chkAnchoredVWAP")?.checked){
+    const swForVwap=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+    const lastLow=swForVwap.lows.length?swForVwap.lows.reduce((a,b)=>b.idx>a.idx?b:a):null;
+    const vwap=lastLow?computeAnchoredVWAP(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,lastLow.idx):null;
+    if(vwap!=null) window._anchoredVwapLine=candleSeries.createPriceLine({price:vwap,color:"#4dd0e1",lineWidth:2,lineStyle:2,axisLabelVisible:true,title:"Anchored VWAP"});
   }
   drawICTCanvasOverlay();
 };
