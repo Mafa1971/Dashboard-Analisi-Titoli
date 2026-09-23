@@ -361,8 +361,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
         <div class="panel">
           <div class="panel-title">🎯 FAIR VALUE & SOLIDITÀ</div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:10px;color:var(--dim);">Rendimento obbligazioni corporate AAA attuale (%, serve alla formula di Graham):
+              <input type="number" id="grahamYInput" value="5.0" min="0.1" max="20" step="0.1" style="width:60px;" onchange="if(LAST_FUND_ROWS) renderFairValueSolidity(LAST_FUND_ROWS);">
+            </label>
+          </div>
           <div class="cards" id="fairValueCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
-          <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF e Peter Lynch dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
+          <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF, Peter Lynch e Graham dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
           <div style="height:220px;"><canvas id="altmanChart"></canvas></div>
           <div id="altmanInfo" style="margin-top:10px;font-size:12px;"></div>
         </div>
@@ -2798,6 +2803,14 @@ window.renderFairValueSolidity=function(rows){
   const eps=last.eps;
   const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*Math.max(earningsGrowthPct,0) : null;
 
+  // Graham: V = EPS × (8,5 + 2g) × 4,4 / Y
+  // 8,5 = multiplo P/E "base" per un'azienda a crescita zero (fisso, storico)
+  // g = crescita attesa degli utili % (stessa proxy usata per Lynch)
+  // 4,4 = rendimento AAA nel 1962, l'anno in cui Graham ideò la formula (fisso, storico)
+  // Y = rendimento AAA ATTUALE, inserito dall'utente (non abbiamo una fonte dati live per questo)
+  const grahamY=parseFloat(el("grahamYInput")?.value)||5.0;
+  const grahamFV = (eps!=null && earningsGrowthPct!=null && eps>0) ? eps*(8.5+2*Math.max(earningsGrowthPct,0))*4.4/grahamY : null;
+
   // DCF semplificato: proiettiamo il FCF per azione a 5 anni con la crescita
   // storica media (cap 15%/anno per prudenza), sconto al 9%, no valore terminale
   // oltre l'orizzonte per semplicità — è una stima MOLTO approssimativa.
@@ -2812,7 +2825,7 @@ window.renderFairValueSolidity=function(rows){
     dcfFV=sum+terminal;
   }
 
-  const fvValues=[lynchFV,dcfFV].filter(v=>v!=null && v>0);
+  const fvValues=[lynchFV,dcfFV,grahamFV].filter(v=>v!=null && v>0);
   const avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
   LAST_FAIR_VALUE={avgFV,upsidePct};
@@ -2820,6 +2833,7 @@ window.renderFairValueSolidity=function(rows){
   const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fairValueCardsWrap").innerHTML=
     card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
+    card("Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--","var(--txt)")+
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
     card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
     card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b");
