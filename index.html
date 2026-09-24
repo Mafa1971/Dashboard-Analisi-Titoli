@@ -189,6 +189,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <select id="vpMode" onchange="onVpModeChange()">
                   <option value="days">Ultimi N giorni</option>
                   <option value="cycle">Ciclo rilevato (zigzag)</option>
+                  <option value="sincepeak" id="vpSincePeakOption" disabled>Dal Massimo Storico</option>
                 </select>
                 <select id="vpDays" onchange="renderVolumeProfileCustom()">
                   <option value="60">60 giorni</option>
@@ -1780,6 +1781,17 @@ function renderVolumeProfiles(){
   const fullProfile=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
   drawVolumeProfile("vpFullCanvas",fullProfile);
   el("vpFullInfo").innerHTML = fullProfile ? `POC: <strong style="color:#ff3d71;">${STOCK.currency} ${fullProfile.poc.toFixed(2)}</strong> | Value Area: ${fullProfile.vaLow.toFixed(2)} — ${fullProfile.vaHigh.toFixed(2)} (68% del volume)` : "";
+  // La modalità "Dal Massimo Storico" ha senso solo se il titolo ha
+  // davvero corretto in modo significativo dal suo picco (>10%) — altrimenti
+  // coinciderebbe quasi con il POC storico completo, senza aggiungere nulla.
+  const highAllTime=Math.max(...STOCK.highs.filter(v=>v!=null));
+  const priceNow=STOCK.closes[STOCK.closes.length-1];
+  const drawdownFromPeak=(priceNow-highAllTime)/highAllTime; // negativo
+  const opt=el("vpSincePeakOption");
+  if(opt){
+    if(drawdownFromPeak<=-0.10){ opt.disabled=false; opt.textContent=`Dal Massimo Storico (${(drawdownFromPeak*100).toFixed(0)}%)`; }
+    else { opt.disabled=true; opt.textContent="Dal Massimo Storico (serve calo >10%)"; if(el("vpMode").value==="sincepeak") el("vpMode").value="days"; }
+  }
   renderVolumeProfileCustom();
 }
 window.onVpModeChange=function(){
@@ -1804,6 +1816,11 @@ window.renderVolumeProfileCustom=function(){
     const n=parseInt(el("vpDays").value);
     closesSlice=STOCK.closes.slice(-n); volumesSlice=STOCK.volumes.slice(-n);
     label=`Ultimi ${n} giorni`;
+  } else if(mode==="sincepeak"){
+    let peakIdx=0, peakVal=-Infinity;
+    STOCK.highs.forEach((h,i)=>{ if(h!=null&&h>peakVal){ peakVal=h; peakIdx=i; } });
+    closesSlice=STOCK.closes.slice(peakIdx); volumesSlice=STOCK.volumes.slice(peakIdx);
+    label=`Dal Massimo Storico (${STOCK.dates[peakIdx].toLocaleDateString("it-IT")} → oggi)`;
   } else {
     if(!LAST_CYCLES || LAST_CYCLES.swings.length===0){ drawVolumeProfile("vpCustomCanvas",null); el("vpCustomInfo").textContent="Nessun ciclo rilevato — vai al tab Grafico e controlla la soglia cicli."; return; }
     const idx=parseInt(el("vpCycle").value||"0");
