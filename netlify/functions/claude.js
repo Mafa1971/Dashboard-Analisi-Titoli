@@ -69,6 +69,21 @@ exports.handler = async function (event) {
 
     const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
 
+    // Se il modello non ha prodotto alcun testo (capita quando finisce il
+    // budget di max_tokens prima di scrivere la risposta vera e propria, o
+    // più raramente per altri motivi lato Anthropic), NON impostiamo "error"
+    // qui: il client fa un retry automatico (con più token) solo quando sia
+    // text che error arrivano vuoti — se mettessimo un errore esplicito il
+    // retry non scatterebbe più. Esponiamo solo "stopReason" come diagnostica,
+    // così il messaggio finale (dopo l'eventuale retry) può spiegare la causa.
+    if (!text) {
+      return {
+        statusCode: 200,
+        headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "", stopReason: data.stop_reason || null })
+      };
+    }
+
     return {
       statusCode: 200,
       headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" },
