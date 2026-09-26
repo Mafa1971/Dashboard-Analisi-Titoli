@@ -672,6 +672,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
           </div>
           <div class="panel">
+            <div class="panel-title">📌 QUADRO CONSOLIDATO (dalle altre tab: Score, Rischio, Bilancio, Volume)</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">I dati più rilevanti calcolati altrove nel sito, riuniti qui per capire se comprare/tenere/evitare — senza dover girare tab per tab. Calcolo istantaneo, nessuna chiamata AI.</div>
+            <div id="stratConsolidatedWrap"></div>
+          </div>
+          <div class="panel">
             <div class="panel-title">💰 POSITION SIZING — 3 TRANCHE SU BUDGET TOTALE</div>
             <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Divide il budget su 3 punti d'ingresso (Entry attuale, Zona A retest, Zona B breakout) usando i livelli reali già calcolati sopra — calcola quante azioni comprare a ciascun prezzo e il prezzo medio di carico finale.</div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
@@ -3522,43 +3527,12 @@ Sii diretto, numeri concreti, evita frasi vaghe.`;
     const highAllTime=Math.max(...STOCK.highs.filter(v=>v!=null));
     const lowAllTime=Math.min(...STOCK.lows.filter(v=>v!=null));
 
-    // ── CONSOLIDAMENTO: i pezzi più importanti delle ALTRE tab, portati qui
-    // così la Strategia risponde da sola a "comprare o no, adesso" invece di
-    // lasciare Score/Fondamentali/Rischio isolati in tab separate ────────
-    const nD=STOCK.closes.length;
-    // 1) Correzione/rimbalzo RECENTE rispetto al trend di fondo — uno score
-    // storico alto non dice se il prezzo sta ritracciando proprio ora.
-    const chg10=nD>10?((STOCK.closes[nD-1]-STOCK.closes[nD-11])/STOCK.closes[nD-11]*100):null;
-    const chg20=nD>20?((STOCK.closes[nD-1]-STOCK.closes[nD-21])/STOCK.closes[nD-21]*100):null;
-    // 2) Prezzo vs POC/VWAP — sopra o sotto, non solo il numero nudo
-    const vsLevel=(label,val)=> val==null?null:`${label}: prezzo ${price>=val?"SOPRA":"SOTTO"} di ${Math.abs((price-val)/val*100).toFixed(1)}% (livello ${val.toFixed(2)})`;
-    const priceVsLevels=[
-      vsLevel("POC storico",vp?.poc),
-      vsLevel(`POC ultimi ${recentN}gg`,vpRecent?.poc),
-      vsLevel("POC dal Massimo Storico",vpSincePeak?.poc),
-      vsLevel("Anchored VWAP",anchoredVWAP)
-    ].filter(Boolean);
-    // 3) Volumi in tendenza (ultimi 10gg vs i 10gg precedenti), non solo
-    // l'istantanea dell'ultimo giorno che guarda già lo score Volume
-    const vol=STOCK.volumes;
-    const volLast10=vol.slice(-10).filter(v=>v!=null), volPrev10=vol.slice(-20,-10).filter(v=>v!=null);
-    const avgVolLast10=volLast10.length?volLast10.reduce((a,b)=>a+b,0)/volLast10.length:null;
-    const avgVolPrev10=volPrev10.length?volPrev10.reduce((a,b)=>a+b,0)/volPrev10.length:null;
-    const volTrendPct=(avgVolLast10!=null&&avgVolPrev10)?((avgVolLast10-avgVolPrev10)/avgVolPrev10*100):null;
-    // 4) Fondamentali come filtro sì/no: Stock Quant Score salvato, Piotroski
-    // coi singoli segnali (non solo il totale), Altman Z, Fair Value upside
-    const histEntry=loadAnalysisHistory().find(h=>h.ticker===STOCK.ticker);
-    const quantScore=histEntry?.stockScore??null;
-    const fundGate=(()=>{
-      if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return null;
-      const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
-      const piotroski=computePiotroskiForYear(last,prev);
-      const failedSignals=piotroski?piotroski.signals.filter(s=>!s.pass).map(s=>s.label):[];
-      return { piotroski, failedSignals };
-    })();
-    // 5) Volatilità Annua — per tarare quanto deve essere largo uno stop
-    // "normale" per QUESTO titolo, invece di un 1.5×ATR uguale per tutti
-    const volAnnua=calcVolatility(calcDailyReturns(STOCK.closes));
+    // Quadro consolidato (Score, Rischio, Fondamentali, Volume) — le stesse
+    // card già visibili sopra nella tab: qui bastano riassunte in poche righe,
+    // il dettaglio l'utente lo vede già a schermo senza bisogno che l'AI lo
+    // riscriva per esteso (tiene il prompt/output leggeri, meno rischio di
+    // finire i token o il tempo massimo della function).
+    const ctx=computeStrategyContext();
 
     prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
@@ -3584,12 +3558,10 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}, rischio ${s.riskPct!=null?s.riskPct.toFixed(1)+"%":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
-- Stock Quant Score (0-100, calcolato dall'utente su tutte le aree del sito): ${quantScore!=null?quantScore+"/100":"N/D — non ancora calcolato per questo titolo"}
-- Volatilità Annua (per capire se lo stop attuale è stretto o largo rispetto a QUESTO titolo, non uno standard uguale per tutti): ${volAnnua!=null?volAnnua.toFixed(1)+"%":"N/D"}
-- Variazione prezzo ultimi 10gg: ${chg10!=null?fmtPct(chg10):"N/D"} | ultimi 20gg: ${chg20!=null?fmtPct(chg20):"N/D"} — usali per capire se il prezzo sta CORREGGENDO proprio ora rispetto al trend di fondo (Score/Trend possono essere alti ma il prezzo ritracciare nel breve, o viceversa)
-- Prezzo vs livelli di volume (sopra/sotto, non solo il numero): ${priceVsLevels.length?priceVsLevels.join(" | "):"N/D"}
-- Tendenza Volumi (media ultimi 10gg vs media 10gg precedenti): ${volTrendPct!=null?(volTrendPct>=0?"+":"")+volTrendPct.toFixed(0)+"% "+(volTrendPct>10?"(in aumento — conferma il movimento)":volTrendPct<-10?"(in calo — movimento meno convinto)":"(stabili)"):"N/D"}
-${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=fundGate?.piotroski; const zTxt=LAST_ALTMAN_Z!=null?(LAST_ALTMAN_Z>2.99?"sicura":LAST_ALTMAN_Z>1.81?"grigia — attenzione":"a rischio"):"N/D"; const fvTxt=LAST_FAIR_VALUE?.upsidePct!=null?(LAST_FAIR_VALUE.upsidePct>=0?"sottovalutato":"sopravvalutato")+" del "+Math.abs(LAST_FAIR_VALUE.upsidePct).toFixed(0)+"% vs Fair Value":"N/D"; return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}${fundGate?.failedSignals?.length?" (segnali NON superati: "+fundGate.failedSignals.join("; ")+")":""}, Altman Z-Score: zona ${zTxt}, Prezzo ${fvTxt}.`; })()}
+- Stock Quant Score: ${ctx.quantScore!=null?ctx.quantScore+"/100":"N/D"} | Volatilità Annua: ${ctx.volAnnua!=null?ctx.volAnnua.toFixed(1)+"%":"N/D"} (tara quanto deve essere largo lo stop per QUESTO titolo)
+- Var. prezzo 10gg: ${ctx.chg10!=null?fmtPct(ctx.chg10):"N/D"} | 20gg: ${ctx.chg20!=null?fmtPct(ctx.chg20):"N/D"} (dice se sta correggendo/rimbalzando PROPRIO ORA rispetto al trend di fondo)
+- Prezzo vs livelli volume: ${ctx.levels.length?ctx.levels.map(x=>`${x.label} ${x.above?"SOPRA":"SOTTO"} ${Math.abs(x.distPct).toFixed(1)}%`).join(", "):"N/D"} | Tendenza Volumi 10gg: ${ctx.volTrendPct!=null?(ctx.volTrendPct>=0?"+":"")+ctx.volTrendPct.toFixed(0)+"%":"N/D"}
+- Fondamentali: Piotroski ${ctx.fundGate?.piotroski?ctx.fundGate.piotroski.score+"/9":"N/D"}${ctx.fundGate?.failedSignals?.length?" (falliti: "+ctx.fundGate.failedSignals.join("; ")+")":""}, Altman Z ${ctx.altmanZ!=null?ctx.altmanZ.toFixed(2)+" ("+(ctx.altmanZ>2.99?"sicura":ctx.altmanZ>1.81?"grigia":"a rischio")+")":"N/D"}, Fair Value ${ctx.fairValue?.upsidePct!=null?(ctx.fairValue.upsidePct>=0?"+":"")+ctx.fairValue.upsidePct.toFixed(0)+"%":"N/D"}
 ${(()=>{
   const lines=[];
   const addZoneLines=(res,label)=>{
@@ -3606,7 +3578,7 @@ REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali e
 STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
 
 📊 Analisi Tecnica
-3 frasi: 1) trend di fondo + momentum; 2) se il prezzo sta CORREGGENDO/rimbalzando proprio ora rispetto a quel trend (usa variazione 10/20gg — uno Score alto con prezzo in ritracciamento va detto esplicitamente, così come un rimbalzo dentro un trend debole); 3) dove siamo rispetto a POC/VWAP e se i volumi confermano (in aumento) o no (in calo) il movimento.
+2 frasi: trend+momentum+se sta correggendo/rimbalzando ora (var. 10/20gg); posizione vs POC/VWAP e se i volumi confermano.
 
 🎯 Supporti/Resistenze
 Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendline, 52w). Solo dati in lista.
@@ -3615,7 +3587,7 @@ Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendlin
 1 approccio per la direzione migliore, zona+condizione+Stop+max 2 Target con R/R. Se la Zona B ha un pattern non ancora rotto, usa la metodologia rottura-confermata-poi-ritest (stesso prezzo per entrambe le fasi, vedi dati sopra), non un ingresso secco sulla prima candela di rottura. Poi l'altra direzione in 1 riga.
 
 ⚠️ Rischio
-Stop, invalidazione principale, e se lo stop è stretto o largo rispetto alla Volatilità Annua del titolo (es. rischio 5% su un titolo al 50% di volatilità annua è normale, sullo stesso 5% con un titolo al 15% è già ampio). Poi 1 riga su fondamentali (Piotroski/Altman Z/Fair Value): se dicono "sì puoi comprarlo" o "occhio, qualcosa non torna" a prescindere dal setup tecnico.
+Stop e invalidazione in 1 riga (dì se è stretto/largo vs Volatilità Annua). Poi 1 riga: fondamentali ok o "occhio" (Piotroski/Altman/Fair Value).
 
 🔗 Markov
 1 frase: cosa dice lo score Markov, coerente o no col resto.
@@ -7076,6 +7048,85 @@ function computeApproachZones(direction){
 }
 
 let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null;
+// Quadro consolidato: i pezzi più importanti delle ALTRE tab (Score, Rischio,
+// Bilancio/Fondamentali, Volume Profile) portati nella Strategia, sia per le
+// card visibili sia per il prompt della Strategia AI — un solo posto dove
+// calcolarli evita di doverli scrivere due volte.
+function computeStrategyContext(){
+  if(!STOCK) return null;
+  const price=STOCK.closes[STOCK.closes.length-1];
+  const nD=STOCK.closes.length;
+  const vp=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
+  const recentN=Math.min(250,STOCK.closes.length-1);
+  const vpRecent=computeVolumeProfile(STOCK.closes.slice(-recentN),STOCK.volumes.slice(-recentN),24);
+  const vpSincePeak=computeVolumeProfileSincePeak(STOCK.highs,STOCK.closes,STOCK.volumes,24);
+  const swForAnchor=calcSwingsICT(STOCK.highs,STOCK.lows,STOCK.dates,5);
+  const lastSwingLow=swForAnchor.lows.length?swForAnchor.lows.reduce((a,b)=>b.idx>a.idx?b:a):null;
+  const anchoredVWAP=lastSwingLow?computeAnchoredVWAP(STOCK.highs,STOCK.lows,STOCK.closes,STOCK.volumes,lastSwingLow.idx):null;
+
+  const chg10=nD>10?((STOCK.closes[nD-1]-STOCK.closes[nD-11])/STOCK.closes[nD-11]*100):null;
+  const chg20=nD>20?((STOCK.closes[nD-1]-STOCK.closes[nD-21])/STOCK.closes[nD-21]*100):null;
+
+  const levels=[
+    {label:"POC storico",val:vp?.poc},
+    {label:`POC ${recentN}gg`,val:vpRecent?.poc},
+    {label:"POC dal Massimo",val:vpSincePeak?.poc},
+    {label:"Anchored VWAP",val:anchoredVWAP}
+  ].filter(l=>l.val!=null).map(l=>({...l,above:price>=l.val,distPct:(price-l.val)/l.val*100}));
+
+  const vol=STOCK.volumes;
+  const volLast10=vol.slice(-10).filter(v=>v!=null), volPrev10=vol.slice(-20,-10).filter(v=>v!=null);
+  const avgVolLast10=volLast10.length?volLast10.reduce((a,b)=>a+b,0)/volLast10.length:null;
+  const avgVolPrev10=volPrev10.length?volPrev10.reduce((a,b)=>a+b,0)/volPrev10.length:null;
+  const volTrendPct=(avgVolLast10!=null&&avgVolPrev10)?((avgVolLast10-avgVolPrev10)/avgVolPrev10*100):null;
+
+  const histEntry=loadAnalysisHistory().find(h=>h.ticker===STOCK.ticker);
+  const quantScore=histEntry?.stockScore??null;
+
+  let fundGate=null;
+  if(LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2){
+    const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+    const piotroski=computePiotroskiForYear(last,prev);
+    fundGate={ piotroski, failedSignals: piotroski?piotroski.signals.filter(s=>!s.pass).map(s=>s.label):[] };
+  }
+
+  const volAnnua=calcVolatility(calcDailyReturns(STOCK.closes));
+
+  return { price, chg10, chg20, levels, volTrendPct, quantScore, fundGate, volAnnua,
+    altmanZ: LAST_ALTMAN_Z, fairValue: LAST_FAIR_VALUE };
+}
+
+// Card visibili nella tab Strategia col quadro consolidato — calcolo
+// istantaneo (nessuna chiamata AI), sempre disponibile appena premi
+// "Calcola Strategia", indipendentemente dal fatto che tu chieda o meno
+// un commento a Warren AI.
+function renderStrategyConsolidated(){
+  const ctx=computeStrategyContext();
+  const wrap=el("stratConsolidatedWrap");
+  if(!wrap) return;
+  if(!ctx){ wrap.innerHTML=""; return; }
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+
+  let h=`<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">`;
+  h+=card("Stock Quant Score", ctx.quantScore!=null?ctx.quantScore+"/100":"N/D", ctx.quantScore>=70?"#00d4b8":ctx.quantScore>=50?"#ffd23f":ctx.quantScore!=null?"#ff6b6b":"var(--dim)", ctx.quantScore>=85);
+  h+=card("Var. 10gg", ctx.chg10!=null?fmtPct(ctx.chg10):"N/D", ctx.chg10>=0?"#00d4b8":"#ff6b6b");
+  h+=card("Var. 20gg", ctx.chg20!=null?fmtPct(ctx.chg20):"N/D", ctx.chg20>=0?"#00d4b8":"#ff6b6b");
+  h+=card("Volatilità Annua", ctx.volAnnua!=null?ctx.volAnnua.toFixed(1)+"%":"N/D", ctx.volAnnua<20?"#00d4b8":ctx.volAnnua<35?"#ffd23f":"#ff9f1c");
+  h+=card("Tendenza Volumi (10gg)", ctx.volTrendPct!=null?(ctx.volTrendPct>=0?"+":"")+ctx.volTrendPct.toFixed(0)+"%":"N/D", ctx.volTrendPct>10?"#00d4b8":ctx.volTrendPct<-10?"#ff6b6b":"var(--dim)", ctx.volTrendPct>10);
+  if(ctx.altmanZ!=null) h+=card("Altman Z-Score", ctx.altmanZ.toFixed(2), ctx.altmanZ>2.99?"#00d4b8":ctx.altmanZ>1.81?"#ffd23f":"#ff6b6b", ctx.altmanZ>2.99);
+  if(ctx.fairValue?.upsidePct!=null) h+=card("Prezzo vs Fair Value", (ctx.fairValue.upsidePct>=0?"+":"")+ctx.fairValue.upsidePct.toFixed(0)+"%", ctx.fairValue.upsidePct>0?"#00d4b8":"#ff6b6b", ctx.fairValue.upsidePct>=20);
+  if(ctx.fundGate?.piotroski) h+=card("Piotroski F-Score", ctx.fundGate.piotroski.score+"/9", ctx.fundGate.piotroski.score>=7?"#00d4b8":ctx.fundGate.piotroski.score>=4?"#ffd23f":"#ff6b6b", ctx.fundGate.piotroski.score>=7);
+  h+="</div>";
+
+  if(ctx.levels.length){
+    h+=`<div style="margin-top:4px;font-size:11px;color:var(--dim);">Prezzo vs livelli di volume: ${ctx.levels.map(l=>`<strong style="color:${l.above?'#00d4b8':'#ff6b6b'};">${l.label} ${l.above?"▲":"▼"} ${Math.abs(l.distPct).toFixed(1)}%</strong>`).join(" &nbsp;|&nbsp; ")}</div>`;
+  }
+  if(ctx.fundGate?.failedSignals?.length){
+    h+=`<div style="margin-top:8px;font-size:11px;color:#ff9f1c;">⚠️ Piotroski — segnali NON superati: ${ctx.fundGate.failedSignals.join(", ")}</div>`;
+  }
+  wrap.innerHTML=h;
+}
+
 window.calcStrategy=function(){
   if(!STOCK){ el("stratStatus").textContent="Analizza prima un titolo"; return; }
   const horizon=el("stratHorizon").value;
@@ -7119,6 +7170,7 @@ window.calcStrategy=function(){
 
   el("stratResultsWrap").style.display="block";
   el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
+  renderStrategyConsolidated();
   drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
   calcPositionSizing(); // aggiorna anche il position sizing con i nuovi livelli
   if(LAST_STOCK_SCORE) renderVerdict(); // aggiorna il verdetto se lo Score era già stato calcolato prima
