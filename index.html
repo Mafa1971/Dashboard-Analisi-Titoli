@@ -557,9 +557,21 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <option value="126">6 mesi</option>
               </select>
             </label>
+            <label style="font-size:11px;color:var(--dim);">Correlazione minima:
+              <select id="patMinCorr">
+                <option value="0.50">50% (più risultati, meno rigoroso)</option>
+                <option value="0.60">60%</option>
+                <option value="0.65" selected>65% (consigliato)</option>
+                <option value="0.70">70%</option>
+                <option value="0.75">75%</option>
+                <option value="0.80">80%</option>
+                <option value="0.85">85% (solo match quasi identici)</option>
+              </select>
+            </label>
             <button class="btn primary" onclick="runPatternSearch()">🔍 CERCA PATTERN SIMILI</button>
           </div>
           <div id="patStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="patSampleWarning" style="display:none;font-size:11px;color:#ff9f1c;background:rgba(255,159,28,0.1);border:1px solid rgba(255,159,28,0.3);border-radius:8px;padding:8px 12px;margin-bottom:10px;"></div>
         </div>
 
         <div id="patResultsWrap" style="display:none;">
@@ -5306,23 +5318,29 @@ window.runPatternSearch=async function(){
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const queryLen=parseInt(el("patQueryLen").value);
   const forwardLen=parseInt(el("patForwardLen").value);
+  const minCorr=parseFloat(el("patMinCorr")?.value)||0.65;
   el("patStatus").textContent="⏳ Ricerca pattern simili nello storico...";
   el("patResultsWrap").style.display="none";
+  el("patSampleWarning").style.display="none";
 
   await new Promise(r=>setTimeout(r,30)); // lascia respirare la UI prima del calcolo (può essere pesante su storici lunghi)
-  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15,0.75);
+  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15,minCorr);
   LAST_PATTERN_RESULT = result;
   if(!result){
     el("patStatus").textContent="❌ Storico insufficiente per questa combinazione di lunghezze — prova con periodi più corti o carica più storico (tab Grafico → Ultimi N anni).";
     return;
   }
   if(result.matches.length===0){
-    el("patStatus").textContent=`⚠️ Nessun pattern storico sufficientemente simile (correlazione minima richiesta ${(result.minCorr*100).toFixed(0)}%) — il match migliore disponibile era solo al ${result.bestAvailableCorr!=null?(result.bestAvailableCorr*100).toFixed(0):"--"}%. Questo titolo non ha analogie storiche solide per questo pattern, prova con una lunghezza diversa.`;
+    el("patStatus").textContent=`⚠️ Nessun pattern storico sufficientemente simile (correlazione minima richiesta ${(result.minCorr*100).toFixed(0)}%) — il match migliore disponibile era solo al ${result.bestAvailableCorr!=null?(result.bestAvailableCorr*100).toFixed(0):"--"}%. Abbassa la soglia "Correlazione minima" qui sopra per vedere match più deboli, oppure prova una lunghezza diversa.`;
     el("patResultsWrap").style.display="none";
     return;
   }
   el("patStatus").textContent=`✅ Trovati ${result.matches.length}${result.matches.length<8?` (su un massimo di 8)`:""} match storici con correlazione ≥${(result.minCorr*100).toFixed(0)}% (media ${(result.avgCorr*100).toFixed(0)}%, su ${result.totalCandidates} periodi storici esaminati)`;
   el("patResultsWrap").style.display="block";
+  if(result.matches.length<3){
+    el("patSampleWarning").style.display="block";
+    el("patSampleWarning").innerHTML=`⚠️ <strong>Campione molto piccolo (${result.matches.length} match${result.matches.length===1?"":"i"})</strong> — con così pochi casi storici, probabilità e correlazione media non sono statisticamente affidabili. Trattalo come uno spunto, non come un segnale. Prova ad abbassare la soglia "Correlazione minima" per vedere se emergono altri casi (meno simili ma più numerosi).`;
+  }
 
   // Grafico: query (linea gialla) + proiezioni avanti (most correlated, avg long, avg short)
   const labels=[]; 
