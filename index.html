@@ -5238,7 +5238,7 @@ function pearsonSimple(a,b){
 }
 function normalizeSeries(closes){ const base=closes[0]; return closes.map(c=>(c-base)/base*100); }
 
-function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDays=15){
+function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDays=15,minCorr=0.75){
   const n=closes.length;
   if(n<queryLen*3) return null;
   const queryStart=n-queryLen;
@@ -5254,13 +5254,23 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
     candidates.push({start, end:start+queryLen-1, corr});
   }
   if(candidates.length===0) return null;
+  const totalCandidates=candidates.length;
   candidates.sort((a,b)=>b.corr-a.corr);
 
+  // Soglia minima di correlazione: senza questo filtro la funzione riempiva
+  // SEMPRE gli slot fino a topK anche pescando match mediocri (es. 40-50%
+  // di correlazione) pur di arrivare a 8 — dando la falsa impressione che
+  // esistano sempre 8 analogie storiche solide. Ora, se lo storico non offre
+  // abbastanza pattern realmente simili, ne vengono restituiti meno di 8
+  // (anche zero).
+  const strongCandidates=candidates.filter(c=>c.corr>=minCorr);
+
   const picked=[];
-  for(const c of candidates){
+  for(const c of strongCandidates){
     if(picked.length>=topK) break;
     if(picked.every(p=>Math.abs(p.start-c.start)>minGapDays)) picked.push(c);
   }
+  const bestAvailableCorr=candidates[0]?.corr ?? null;
 
   picked.forEach(m=>{
     const fwdEndIdx=Math.min(n-1,m.end+forwardLen);
@@ -5287,7 +5297,8 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
   }
 
   return { queryNorm, queryStart, matches:picked, bullish, bearish, probability, robustness, avgCorr,
-    avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null };
+    avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null,
+    minCorr, bestAvailableCorr, totalCandidates };
 }
 
 let patChartObj=null;
@@ -5299,13 +5310,18 @@ window.runPatternSearch=async function(){
   el("patResultsWrap").style.display="none";
 
   await new Promise(r=>setTimeout(r,30)); // lascia respirare la UI prima del calcolo (può essere pesante su storici lunghi)
-  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15);
+  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15,0.75);
   LAST_PATTERN_RESULT = result;
   if(!result){
     el("patStatus").textContent="❌ Storico insufficiente per questa combinazione di lunghezze — prova con periodi più corti o carica più storico (tab Grafico → Ultimi N anni).";
     return;
   }
-  el("patStatus").textContent=`✅ Trovati ${result.matches.length} match storici (correlazione media ${(result.avgCorr*100).toFixed(0)}%)`;
+  if(result.matches.length===0){
+    el("patStatus").textContent=`⚠️ Nessun pattern storico sufficientemente simile (correlazione minima richiesta ${(result.minCorr*100).toFixed(0)}%) — il match migliore disponibile era solo al ${result.bestAvailableCorr!=null?(result.bestAvailableCorr*100).toFixed(0):"--"}%. Questo titolo non ha analogie storiche solide per questo pattern, prova con una lunghezza diversa.`;
+    el("patResultsWrap").style.display="none";
+    return;
+  }
+  el("patStatus").textContent=`✅ Trovati ${result.matches.length}${result.matches.length<8?` (su un massimo di 8)`:""} match storici con correlazione ≥${(result.minCorr*100).toFixed(0)}% (media ${(result.avgCorr*100).toFixed(0)}%, su ${result.totalCandidates} periodi storici esaminati)`;
   el("patResultsWrap").style.display="block";
 
   // Grafico: query (linea gialla) + proiezioni avanti (most correlated, avg long, avg short)
