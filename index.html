@@ -3226,15 +3226,19 @@ function mdToHtml(text){
 
 let aiChatMessages=[];
 
-// Chiamata condivisa verso la function claude.js, con UN retry automatico
-// e silenzioso se la prima risposta arriva vuota (nessun errore esplicito,
-// ma nemmeno testo). Causa più comune: il prompt richiesto (es. Strategia,
-// con le sue 6 sezioni) è troppo articolato per il tetto di token impostato,
-// e il modello finisce il budget prima di scrivere il testo vero e proprio
-// (stop_reason "max_tokens" con contenuto ancora vuoto). Per questo, se il
-// primo tentativo torna vuoto E aveva un maxTokens limitato, il retry alza
-// il tetto invece di limitarsi a riprovare uguale. Ritorna sempre
-// {text, error} — error è null se è andata bene.
+// Chiamata condivisa verso la function claude.js, con UN retry automatico.
+// Due cause diverse di fallimento richiedono correzioni OPPOSTE sul retry:
+// 1) risposta arrivata ma VUOTA (data={text:""}, nessuna eccezione) — il
+//    modello ha esaurito il budget di token prima di scrivere il testo:
+//    il retry deve alzare maxTokens.
+// 2) TIMEOUT/errore di rete (l'eccezione in attempt() scatta, es. 504 dal
+//    hard limit di 26s di Netlify) — qui il problema è il TEMPO, non i
+//    token: alzare maxTokens peggiora le cose (più token = più lento).
+//    Il retry deve invece ABBASSARE maxTokens per stare più comodi entro
+//    il limite di tempo. Prima i due casi venivano trattati uguali, ed è
+//    per questo che la Strategia (l'unico prompt che rischia il timeout)
+//    continuava a fallire anche al secondo tentativo.
+// Ritorna sempre {text, error} — error è null se è andata bene.
 async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
   async function attempt(mt){
     const res=await fetch("/.netlify/functions/claude",{
@@ -3246,20 +3250,16 @@ async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
     catch(e){ throw new Error(res.status>=500?"Timeout del server — riprova.":"Errore server ("+res.status+")"); }
     return data;
   }
-  // Il retry ora avviene SEMPRE (anche su un vero errore di rete/timeout,
-  // non solo su una risposta "vuota ma arrivata") — prima un timeout saltava
-  // subito all'errore finale senza nemmeno provare una seconda volta.
-  let data, lastErrMsg=null;
+  let data, lastErrMsg=null, wasTimeout=false;
   try{
     data=await attempt(maxTokens);
-  }catch(e){ lastErrMsg=e.message; data={}; }
+  }catch(e){ lastErrMsg=e.message; wasTimeout=/timeout/i.test(e.message); data={}; }
 
   if(!data.text && !data.error){
     await new Promise(r=>setTimeout(r,600)); // piccola pausa prima del retry
-    // se il budget di token era limitato, il retry ne chiede di più (tetto
-    // server a 3000) — la causa più probabile di una risposta vuota è
-    // proprio l'aver esaurito i token prima di scrivere testo.
-    const retryMaxTokens = maxTokens ? Math.min(maxTokens+800,3000) : maxTokens;
+    const retryMaxTokens = !maxTokens ? maxTokens
+      : wasTimeout ? Math.max(500,Math.round(maxTokens*0.6)) // timeout → meno token, più veloce
+      : Math.min(maxTokens+800,3000); // risposta vuota ma arrivata → più budget
     try{
       data=await attempt(retryMaxTokens);
     }catch(e){ lastErrMsg=e.message; data={}; }
@@ -3566,45 +3566,44 @@ ${(()=>{
   const lines=[];
   const addZoneLines=(res,label)=>{
     if(res.zoneA!=null) lines.push(`- ${label} Zona A (retest): ${res.zoneA.toFixed(2)}`);
-    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — confine ${res.patternBreakout.patternType}, NON ancora rotto: usa ESATTAMENTE questo valore sia come trigger di rottura CHE come livello di ritest successivo (metodologia corretta: attendi la chiusura oltre questo prezzo con volume, poi il ritorno/ritest verso lo stesso livello, entra lì — non sulla prima candela di rottura)`:""}: ${res.zoneB.toFixed(2)}`);
-    if(res.zoneC!=null) lines.push(`- ${label} Zona C (tranche più lontana): ${res.zoneC.toFixed(2)}`);
+    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — pattern ${res.patternBreakout.patternType} non rotto: stesso livello per breakout E ritest`:""}: ${res.zoneB.toFixed(2)}`);
+    if(res.zoneC!=null) lines.push(`- ${label} Zona C: ${res.zoneC.toFixed(2)}`);
   };
   addZoneLines(l,"LONG"); addZoneLines(s,"SHORT");
   return lines.join("\n");
 })()}
 
-REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali elencati sopra (mai entry±N×ATR o multipli del rischio). Per l'Entry Point usa PRIORITARIAMENTE le Zone A/B/C già calcolate sopra (sono i livelli ufficiali del sistema, coerenti con le card che l'utente vede) — non inventarne di alternativi. Se mancano livelli sufficienti, dillo invece di inventare. Verifica che Target≠Entry e che R/R=(Target-Entry)/(Entry-Stop) sia calcolato giusto.
+REGOLE: Target = uno dei livelli reali sopra (mai entry±N×ATR). Entry Point = Zone A/B/C sopra, non inventarne altre. R/R=(Target-Entry)/(Entry-Stop).
 
-STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
+IMPORTANTE — RISPOSTA BREVE: i numeri sono già visibili nelle card sopra la Strategia, qui servono SOLO le conclusioni operative, non ripetere i dati. Max ~130 parole totali, telegrafico, 5 sezioni con questi titoli esatti:
 
 📊 Analisi Tecnica
-2 frasi: trend+momentum+se sta correggendo/rimbalzando ora (var. 10/20gg); posizione vs POC/VWAP e se i volumi confermano.
+1 frase: trend+momentum+correzione/rimbalzo ora; 1 frase: POC/VWAP+volumi.
 
 🎯 Supporti/Resistenze
-Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendline, 52w). Solo dati in lista.
+Solo elenco livelli sopra/sotto, senza commento.
 
 ⏱ Entry Point
-1 approccio per la direzione migliore, zona+condizione+Stop+max 2 Target con R/R. Se la Zona B ha un pattern non ancora rotto, usa la metodologia rottura-confermata-poi-ritest (stesso prezzo per entrambe le fasi, vedi dati sopra), non un ingresso secco sulla prima candela di rottura. Poi l'altra direzione in 1 riga.
+Direzione migliore: zona+Stop+1-2 Target+R/R. Altra direzione in 1 riga.
 
 ⚠️ Rischio
-Stop e invalidazione in 1 riga (dì se è stretto/largo vs Volatilità Annua). Poi 1 riga: fondamentali ok o "occhio" (Piotroski/Altman/Fair Value).
-
-🔗 Markov
-1 frase: cosa dice lo score Markov, coerente o no col resto.
+1 riga: stop stretto/largo vs Volatilità Annua. 1 riga: fondamentali ok o "occhio".
 
 🏆 Giudizio
-1-2 frasi finali: piano migliore ora e livello chiave.
+1-2 frasi: piano migliore ora, livello chiave, e se Markov conferma o no.
 
-R/R sempre calcolato. Se manca un dato dillo, non inventarlo. Scrivi sempre le 6 sezioni, anche solo con "N/D" dove serve.`;
+Se manca un dato scrivi "N/D", non inventarlo. Scrivi sempre le 5 sezioni.`;
   }
 
   try{
-    // La Strategia ha il prompt più pesante di tutta l'app (6 sezioni
-    // strutturate) — le serve più budget di token delle altre tab, altrimenti
-    // rischia di finire i token prima di scrivere il testo (risposta vuota).
-    // Teniamo comunque un tetto più basso delle altre per stare comodi
-    // entro i 26s di timeout Netlify, invece di rischiare un 504.
-    const maxTok = tabName==="strategia" ? 2000 : null;
+    // La Strategia va spesso in timeout (504, hard limit Netlify 26s) con un
+    // tetto di token alto: generare 1500-2000 token di output richiede più
+    // tempo di quanto la function riesca a stare entro i 26s. La cura vera
+    // non è alzare il tetto (rimanda il problema, non lo risolve) ma chiedere
+    // una risposta molto più corta — i numeri li vede già l'utente nelle card
+    // "Quadro Consolidato" sopra, quindi il testo AI può limitarsi alle
+    // conclusioni. Tetto basso apposta: genera meno token, finisce prima.
+    const maxTok = tabName==="strategia" ? 900 : null;
     const { text, error } = await callClaudeAPI(prompt, null, maxTok);
     const answer=text||error;
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
