@@ -30,10 +30,15 @@ main{padding:16px 20px;max-width:1200px;margin:0 auto;padding-bottom:80px;}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px;}
 .panel-title{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;position:relative;transition:transform .15s ease;}
 .card .v{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;line-height:1;margin-bottom:3px;}
 .card .v2{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--red);margin-top:2px;}
 .card .l{font-size:9px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;}
+.card-hl{border-color:#00d4b8;background:linear-gradient(180deg,rgba(0,212,184,0.10),var(--panel) 70%);box-shadow:0 0 0 1px rgba(0,212,184,0.35),0 0 16px rgba(0,212,184,0.22);animation:cardHlPulse 2.4s ease-in-out infinite;}
+.card-hl .v{color:#00d4b8 !important;}
+.card-hl::after{content:'★';position:absolute;top:6px;right:8px;font-size:10px;color:#00d4b8;}
+@keyframes cardHlPulse{0%,100%{box-shadow:0 0 0 1px rgba(0,212,184,0.35),0 0 10px rgba(0,212,184,0.15);}50%{box-shadow:0 0 0 1px rgba(0,212,184,0.6),0 0 22px rgba(0,212,184,0.45);}}
+.box-hl{box-shadow:0 0 0 1px rgba(0,212,184,0.4),0 0 18px rgba(0,212,184,0.3) !important;animation:cardHlPulse 2.4s ease-in-out infinite;}
 input[type=text],input[type=number]{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-family:'Manrope',sans-serif;font-size:13px;outline:none;}
 select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:8px 12px;border-radius:8px;font-size:12px;}
 .empty-state{text-align:center;padding:36px 20px;color:var(--dim);}
@@ -1291,7 +1296,7 @@ function renderHero(totalReturn){
   const years=((STOCK.dates[STOCK.dates.length-1]-STOCK.dates[0])/86400000/365.25).toFixed(1);
   el("heroCards").innerHTML=`
     <div class="card"><div class="v" style="color:var(--gold);">${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}</div><div class="l">Prezzo Attuale</div></div>
-    <div class="card"><div class="v" style="color:${totalReturn>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(totalReturn)}</div><div class="l">Rendimento Periodo (${years}y)</div></div>
+    <div class="card${totalReturn>=20?' card-hl':''}"><div class="v" style="color:${totalReturn>=0?'#00d4b8':'#ff6b6b'};">${fmtPct(totalReturn)}</div><div class="l">Rendimento Periodo (${years}y)</div></div>
     <div class="card"><div class="v">${STOCK.dates.length}</div><div class="l">Sessioni Analizzate</div></div>`;
   el("hLastUpdate").textContent=new Date().toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
 }
@@ -2130,7 +2135,7 @@ function renderSeasonalForecastMedia(){
 
   // Card di confronto: dove siamo OGGI (ultimo giorno disponibile dell'anno corrente) vs ciascuna media nello stesso periodo
   const lastPt=currentCurve[currentCurve.length-1];
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   if(lastPt){
     let cardsHtml=card(`Anno Corrente (${currentYear}, YTD)`, fmtPct(lastPt.cumRet), lastPt.cumRet>=0?"#00d4b8":"#ff6b6b");
     avgSeries.forEach(s=>{
@@ -2353,9 +2358,9 @@ function renderWeeklySeasonality(dates,closes,years){
   const probPos = allWeekly.length ? (allWeekly.filter(v=>v>0).length/allWeekly.length*100) : null;
   let bestWn=null,worstWn=null,bestVal=-Infinity,worstVal=Infinity;
   weekNums.forEach(wn=>{ const v=avgByWeek[wn-1]; if(v==null) return; if(v>bestVal){bestVal=v;bestWn=wn;} if(v<worstVal){worstVal=v;worstWn=wn;} });
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("weeklyStatsWrap").innerHTML=`<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
-    ${card("% Settimane Positive", probPos!=null?probPos.toFixed(0)+"%":"--", probPos>=55?"#00d4b8":probPos>=45?"#ffd23f":"#ff6b6b")}
+    ${card("% Settimane Positive", probPos!=null?probPos.toFixed(0)+"%":"--", probPos>=55?"#00d4b8":probPos>=45?"#ffd23f":"#ff6b6b", probPos>=55)}
     ${card("Miglior Settimana", bestWn?"W"+bestWn+" ("+fmtPct(bestVal)+")":"--","#00d4b8")}
     ${card("Peggior Settimana", worstWn?"W"+worstWn+" ("+fmtPct(worstVal)+")":"--","#ff6b6b")}
   </div>`;
@@ -2407,7 +2412,7 @@ window.renderDailySeasonality=function(){
   for(let i=0;i<closes.length;i++) intraday.push((closes[i]-opens[i])/opens[i]*100);
   const avgOn=overnight.reduce((a,b)=>a+b,0)/overnight.length;
   const avgIn=intraday.reduce((a,b)=>a+b,0)/intraday.length;
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("overnightIntradayWrap").innerHTML=
     card("Rend. Medio Overnight (chiusura→apertura)", fmtPct(avgOn), avgOn>=0?"#00d4b8":"#ff6b6b")+
     card("Rend. Medio Intraday (apertura→chiusura)", fmtPct(avgIn), avgIn>=0?"#00d4b8":"#ff6b6b")+
@@ -2482,12 +2487,12 @@ window.renderRisk=function(){
   const sharpe=calcSharpe(returns), sortino=calcSortino(returns), vol=calcVolatility(returns), maxDD=calcMaxDrawdown(STOCK.closes);
   const beta = BENCH ? calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates) : null;
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
   el("riskCardsWrap").innerHTML=
-    card("Sharpe Ratio", sharpe!=null?sharpe.toFixed(2):"--", sharpe>1.5?"#00d4b8":sharpe>0.5?"#80ed99":sharpe>0?"#ffd23f":sharpe!=null?"#ff6b6b":"var(--dim)")+
-    card("Sortino Ratio", sortino!=null?sortino.toFixed(2):"--", sortino>2?"#00d4b8":sortino>1?"#80ed99":sortino>0.5?"#ffd23f":sortino!=null?"#ff6b6b":"var(--dim)")+
+    card("Sharpe Ratio", sharpe!=null?sharpe.toFixed(2):"--", sharpe>1.5?"#00d4b8":sharpe>0.5?"#80ed99":sharpe>0?"#ffd23f":sharpe!=null?"#ff6b6b":"var(--dim)", sharpe>1.5)+
+    card("Sortino Ratio", sortino!=null?sortino.toFixed(2):"--", sortino>2?"#00d4b8":sortino>1?"#80ed99":sortino>0.5?"#ffd23f":sortino!=null?"#ff6b6b":"var(--dim)", sortino>2)+
     card("Volatilità Annua", vol!=null?vol.toFixed(1)+"%":"--", vol<15?"#00d4b8":vol<25?"#ffd23f":vol<35?"#ff9f1c":"#ff6b6b")+
-    card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b")+
+    card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b", maxDD>-10)+
     card("Beta"+(BENCH?" vs "+BENCH.ticker:""), beta!=null?beta.toFixed(2):"--", beta==null?"var(--dim)":Math.abs(beta-1)<0.2?"#ffd23f":beta>1?"#ff9f1c":"#00d4b8");
 };
 
@@ -2568,12 +2573,12 @@ window.loadQuickRatios=async function(){
 
   if(!data){ el("quickRatiosStatus").textContent="❌ Dati di mercato non disponibili per questo ticker"; return; }
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("quickRatiosWrap").innerHTML=
-    card("P/E (ttm)", data.pe!=null?data.pe.toFixed(1)+"x":"--", data.pe&&data.pe<15?"#00d4b8":data.pe&&data.pe>35?"#ff6b6b":"var(--txt)")+
+    card("P/E (ttm)", data.pe!=null?data.pe.toFixed(1)+"x":"--", data.pe&&data.pe<15?"#00d4b8":data.pe&&data.pe>35?"#ff6b6b":"var(--txt)", data.pe&&data.pe<15)+
     card("Forward P/E", data.forwardPE!=null?data.forwardPE.toFixed(1)+"x":"--","var(--txt)")+
-    card("PEG Ratio", data.peg!=null?data.peg.toFixed(2):"--", data.peg&&data.peg<1?"#00d4b8":data.peg&&data.peg>2?"#ff6b6b":"var(--txt)")+
-    card("Dividend Yield", data.dividendYield!=null?data.dividendYield.toFixed(2)+"%":"--", data.dividendYield>3?"#00d4b8":"var(--txt)")+
+    card("PEG Ratio", data.peg!=null?data.peg.toFixed(2):"--", data.peg&&data.peg<1?"#00d4b8":data.peg&&data.peg>2?"#ff6b6b":"var(--txt)", data.peg&&data.peg<1)+
+    card("Dividend Yield", data.dividendYield!=null?data.dividendYield.toFixed(2)+"%":"--", data.dividendYield>3?"#00d4b8":"var(--txt)", data.dividendYield>3)+
     card("Market Cap", fmtBigNum(data.marketCap), "var(--txt)")+
     card("Beta", data.beta!=null?data.beta.toFixed(2):"--","var(--txt)")+
     card("Target Analisti", data.targetPrice!=null?STOCK.currency+" "+data.targetPrice.toFixed(2):"--","#4fa3ff");
@@ -2646,13 +2651,13 @@ function fmtBig(v){
 function renderFundamentals(rows){
   const last=rows[rows.length-1], prev=rows[rows.length-2];
   const revGrowth = (last&&prev&&prev.revenue) ? ((last.revenue-prev.revenue)/prev.revenue*100) : null;
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fundCardsWrap").innerHTML=
     card("Ricavi (ultimo anno)", fmtBig(last?.revenue))+
     card("Utile Netto (ultimo anno)", fmtBig(last?.netIncome), last?.netIncome>=0?"#00d4b8":"#ff6b6b")+
-    card("Margine Netto", last?.netMargin!=null?last.netMargin.toFixed(1)+"%":"--", last?.netMargin>=15?"#00d4b8":last?.netMargin>=5?"#ffd23f":"#ff6b6b")+
-    card("Crescita Ricavi YoY", revGrowth!=null?fmtPct(revGrowth):"--", revGrowth>=0?"#00d4b8":"#ff6b6b")+
-    card("Free Cash Flow", fmtBig(last?.fcf), last?.fcf>=0?"#00d4b8":"#ff6b6b");
+    card("Margine Netto", last?.netMargin!=null?last.netMargin.toFixed(1)+"%":"--", last?.netMargin>=15?"#00d4b8":last?.netMargin>=5?"#ffd23f":"#ff6b6b", last?.netMargin>=15)+
+    card("Crescita Ricavi YoY", revGrowth!=null?fmtPct(revGrowth):"--", revGrowth>=0?"#00d4b8":"#ff6b6b", revGrowth>=15)+
+    card("Free Cash Flow", fmtBig(last?.fcf), last?.fcf>=0?"#00d4b8":"#ff6b6b", last?.fcf>0 && last?.netIncome>0 && last.fcf>=last.netIncome);
 
   const ctx=el("fundChart");
   if(fundChartObj) fundChartObj.destroy();
@@ -2794,11 +2799,11 @@ window.renderValueGeneration=function(rows){
   const niPerShareIncreasing = validNi.length>=2 && validNi[validNi.length-1] > validNi[0];
   const robust = sharesDecreasing && niPerShareIncreasing;
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
   el("valueGenCardsWrap").innerHTML=
-    card("Shares Outstanding", sharesDecreasing?"In calo (buyback)":"In aumento (diluizione)", sharesDecreasing?"#00d4b8":"#ff6b6b")+
-    card("Utile per Azione", niPerShareIncreasing?"In crescita":"In calo", niPerShareIncreasing?"#00d4b8":"#ff6b6b")+
-    card("Valutazione Complessiva", robust?"Robusta":"Da monitorare", robust?"#00d4b8":"#ffd23f");
+    card("Shares Outstanding", sharesDecreasing?"In calo (buyback)":"In aumento (diluizione)", sharesDecreasing?"#00d4b8":"#ff6b6b", sharesDecreasing)+
+    card("Utile per Azione", niPerShareIncreasing?"In crescita":"In calo", niPerShareIncreasing?"#00d4b8":"#ff6b6b", niPerShareIncreasing)+
+    card("Valutazione Complessiva", robust?"Robusta":"Da monitorare", robust?"#00d4b8":"#ffd23f", robust);
 };
 
 // ── FAIR VALUE (Peter Lynch, DCF semplificato) + ALTMAN Z-SCORE ────────
@@ -2847,13 +2852,13 @@ window.renderFairValueSolidity=function(rows){
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
   LAST_FAIR_VALUE={avgFV,upsidePct};
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fairValueCardsWrap").innerHTML=
     card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
     card("Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--","var(--txt)")+
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
     card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
-    card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b");
+    card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20);
 
   // Altman Z-Score per anno: Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MktCap/TL) + 1.0*(Sales/TA)
   const zScores=rows.map(r=>{
@@ -2886,7 +2891,7 @@ window.renderFairValueSolidity=function(rows){
   const lastZ=zScores[zScores.length-1];
   const zCol=lastZ==null?"var(--dim)":lastZ>2.99?"#00d4b8":lastZ>1.81?"#ffd23f":"#ff6b6b";
   const zText=lastZ==null?"Dati insufficienti":lastZ>2.99?"Basso rischio di fallimento":lastZ>1.81?"Zona grigia — attenzione":"Alto rischio di fallimento";
-  el("altmanInfo").innerHTML=`<strong style="color:${zCol};">Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}. <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
+  el("altmanInfo").innerHTML=`<span style="display:inline-block;${lastZ>2.99?'padding:8px 12px;border-radius:8px;background:linear-gradient(180deg,rgba(0,212,184,0.12),transparent);box-shadow:0 0 0 1px rgba(0,212,184,0.35),0 0 14px rgba(0,212,184,0.25);':''}"><strong style="color:${zCol};">${lastZ>2.99?'★ ':''}Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}.</span> <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
 };
 
 // ── PIOTROSKI F-SCORE (9 segnali, anno corrente vs precedente) ─────────
@@ -2937,8 +2942,9 @@ window.renderPiotroski=function(rows){
   const last=results[results.length-1];
   const col=last.score>=7?"#00d4b8":last.score>=4?"#ffd23f":"#ff6b6b";
   const label=last.score>=7?"Forte":last.score>=4?"Intermedio":"Debole";
+  el("piotroskiScoreWrap").className = last.score>=7 ? "box-hl" : "";
   el("piotroskiScoreWrap").innerHTML=`
-    <div style="font-size:42px;font-weight:800;color:${col};line-height:1;">${last.score}<span style="font-size:20px;color:var(--dim);">/9</span></div>
+    <div style="font-size:42px;font-weight:800;color:${col};line-height:1;">${last.score>=7?'★ ':''}${last.score}<span style="font-size:20px;color:var(--dim);">/9</span></div>
     <div style="font-size:12px;color:${col};font-weight:700;margin-top:6px;">${label}</div>
     <div style="font-size:10px;color:var(--dim);margin-top:4px;">Anno ${last.year}</div>`;
 
@@ -3084,7 +3090,7 @@ window.renderMarkov=function(){
   const persistDiag = matrix.map((row,i)=>row[i]==null?0:row[i]);
   const mostPersistentState = persistDiag.indexOf(Math.max(...persistDiag));
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("markovCurrentWrap").innerHTML=
     card("Stato Attuale", STATE_NAMES[currentState], STATE_COLORS[currentState])+
     card("Stato Più Probabile Domani", STATE_NAMES[mostLikelyNext]+" ("+(nextProbs[mostLikelyNext]*100).toFixed(0)+"%)", STATE_COLORS[mostLikelyNext])+
@@ -4551,9 +4557,9 @@ window.renderPortfolioDetailTable=function(name){
   (CLOUD_PORTFOLIO_DATA?.ratings||[]).forEach(rt=>{ if(!latestRatingByTicker[rt.ticker]) latestRatingByTicker[rt.ticker]=rt; });
   const ratingCell=(ticker)=>{
     const rating=latestRatingByTicker[ticker];
-    return rating
-      ? `<span style="color:${ratingColor[rating.rating_label]||'var(--dim)'};font-weight:700;font-size:11px;">${rating.rating_label} (${rating.rating_score>0?"+":""}${rating.rating_score})</span> <span style="font-size:9px;color:var(--dim);">${rating.date}</span>`
-      : `<span style="font-size:10px;color:var(--dim);">— non ancora calcolato</span>`;
+    if(!rating) return `<span style="font-size:10px;color:var(--dim);">— non ancora calcolato</span>`;
+    const isStrongBuy=rating.rating_label==="Strong Buy";
+    return `<span style="${isStrongBuy?'padding:2px 8px;border-radius:6px;background:rgba(0,212,184,0.14);box-shadow:0 0 0 1px rgba(0,212,184,0.4),0 0 10px rgba(0,212,184,0.3);':''}color:${ratingColor[rating.rating_label]||'var(--dim)'};font-weight:700;font-size:11px;">${isStrongBuy?'★ ':''}${rating.rating_label} (${rating.rating_score>0?"+":""}${rating.rating_score})</span> <span style="font-size:9px;color:var(--dim);">${rating.date}</span>`;
   };
 
   // Se c'è un calcolo fresco in questa sessione (dopo "Costruisci
@@ -5338,9 +5344,9 @@ window.runPatternSearch=async function(){
   });
 
   const probCol=result.probability>=60?"#00d4b8":result.probability<=40?"#ff6b6b":"#ffd23f";
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("patCardsWrap").innerHTML=
-    card("Probabilità Rialzo", result.probability!=null?result.probability.toFixed(0)+"%":"--", probCol)+
+    card("Probabilità Rialzo", result.probability!=null?result.probability.toFixed(0)+"%":"--", probCol, result.probability>=70 && result.robustness>=3)+
     card("Robustezza", "★".repeat(result.robustness)+"☆".repeat(5-result.robustness), "#ffd23f")+
     card("Correlazione Media", (result.avgCorr*100).toFixed(0)+"%", "var(--dim)")+
     card("N. Match Trovati", result.matches.length, "var(--dim)");
@@ -5651,13 +5657,13 @@ function renderMonteCarloResults(p05,p25,p50,p75,p95,horizon){
               y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}}}
   });
 
-  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("mcCardsWrap").innerHTML=
     card("Scenario Pessimistico (5°)", fmtPct(r.pessimistic), "#ff6b6b")+
     card("Scenario Mediano", fmtPct(r.median), "#ffd23f")+
     card("Scenario Ottimistico (95°)", fmtPct(r.optimistic), "#00d4b8")+
-    card("Rendimento Medio Atteso", fmtPct(r.meanReturn), r.meanReturn>=0?"#00d4b8":"#ff6b6b")+
-    card("Probabilità di Perdita", r.probLoss.toFixed(0)+"%", r.probLoss>50?"#ff6b6b":"#ffd23f")+
+    card("Rendimento Medio Atteso", fmtPct(r.meanReturn), r.meanReturn>=0?"#00d4b8":"#ff6b6b", r.meanReturn>=15)+
+    card("Probabilità di Perdita", r.probLoss.toFixed(0)+"%", r.probLoss>50?"#ff6b6b":"#ffd23f", r.probLoss<30)+
     card("VaR 95%", fmtPct(r.var95), "#ff6b6b")+
     card("CVaR 95% (Expected Shortfall)", fmtPct(r.cvar95), "#ff6b6b")+
     card("Drawdown Medio Atteso", r.avgMaxDD.toFixed(1)+"%", "#ff9f1c");
@@ -6399,11 +6405,13 @@ window.calcStockScore=function(){
   else if(finalScore>=30){ label="Attenzione"; color="#ff9f1c"; emoji="🟠"; }
   else { label="Debole"; color="#ff6b6b"; emoji="🔴"; }
 
+  el("scoreMainWrap").className = finalScore>=85 ? "box-hl" : "";
+  el("scoreMainWrap").style.borderRadius = finalScore>=85 ? "12px" : "";
   el("scoreMainWrap").innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;margin-bottom:14px;${finalScore>=85?'padding:10px;':''}">
       <div style="display:flex;align-items:center;gap:14px;">
         <span style="font-size:36px;">${emoji}</span>
-        <div><div style="font-size:22px;font-weight:800;color:${color};">${label}</div>
+        <div><div style="font-size:22px;font-weight:800;color:${color};">${finalScore>=85?'★ ':''}${label}</div>
         <div style="font-size:10px;color:var(--dim);">Basato su ${Object.keys(SCORE_WEIGHTS).length-missing.length}/${Object.keys(SCORE_WEIGHTS).length} aree (${LAST_STOCK_SCORE.coveragePct}% del peso totale coperto)</div></div>
       </div>
       <div style="font-size:36px;font-weight:800;color:${color};">${finalScore}<span style="font-size:16px;color:var(--dim);">/100</span></div>
