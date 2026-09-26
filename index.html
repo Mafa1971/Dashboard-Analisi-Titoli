@@ -3221,14 +3221,18 @@ let aiChatMessages=[];
 
 // Chiamata condivisa verso la function claude.js, con UN retry automatico
 // e silenzioso se la prima risposta arriva vuota (nessun errore esplicito,
-// ma nemmeno testo) — capita raramente per motivi non sempre chiari lato
-// Anthropic, e un secondo tentativo spesso risolve senza che l'utente se
-// ne accorga. Ritorna sempre {text, error} — error è null se è andata bene.
+// ma nemmeno testo). Causa più comune: il prompt richiesto (es. Strategia,
+// con le sue 6 sezioni) è troppo articolato per il tetto di token impostato,
+// e il modello finisce il budget prima di scrivere il testo vero e proprio
+// (stop_reason "max_tokens" con contenuto ancora vuoto). Per questo, se il
+// primo tentativo torna vuoto E aveva un maxTokens limitato, il retry alza
+// il tetto invece di limitarsi a riprovare uguale. Ritorna sempre
+// {text, error} — error è null se è andata bene.
 async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
-  async function attempt(){
+  async function attempt(mt){
     const res=await fetch("/.netlify/functions/claude",{
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ prompt, imageBase64, maxTokens })
+      body: JSON.stringify({ prompt, imageBase64, maxTokens:mt })
     });
     let data;
     try{ data=await res.json(); }
@@ -3240,16 +3244,21 @@ async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
   // subito all'errore finale senza nemmeno provare una seconda volta.
   let data, lastErrMsg=null;
   try{
-    data=await attempt();
+    data=await attempt(maxTokens);
   }catch(e){ lastErrMsg=e.message; data={}; }
 
   if(!data.text && !data.error){
     await new Promise(r=>setTimeout(r,600)); // piccola pausa prima del retry
+    // se il budget di token era limitato, il retry ne chiede di più (tetto
+    // server a 3000) — la causa più probabile di una risposta vuota è
+    // proprio l'aver esaurito i token prima di scrivere testo.
+    const retryMaxTokens = maxTokens ? Math.min(maxTokens+800,3000) : maxTokens;
     try{
-      data=await attempt();
+      data=await attempt(retryMaxTokens);
     }catch(e){ lastErrMsg=e.message; data={}; }
   }
-  return { text: data.text||null, error: data.text?null:(data.error||lastErrMsg||"Risposta vuota anche dopo un secondo tentativo — riprova tra qualche secondo.") };
+  const stopReasonNote = data.stopReason==="max_tokens" ? " (il modello ha esaurito il limite di token prima di scrivere la risposta)" : "";
+  return { text: data.text||null, error: data.text?null:(data.error||lastErrMsg||(`Risposta vuota anche dopo un secondo tentativo${stopReasonNote} — riprova tra qualche secondo.`)) };
 }
 
 window.askAIAboutTab=async function(tabName){
@@ -3572,10 +3581,12 @@ R/R sempre calcolato. Se manca un dato dillo, non inventarlo. Scrivi sempre le 6
   }
 
   try{
-    // La Strategia ha il prompt più pesante di tutta l'app — le impostiamo
-    // un tetto più basso per generare più in fretta e stare più comoda
-    // entro i 26s di timeout, invece di rischiare un 504 come qui.
-    const maxTok = tabName==="strategia" ? 1500 : null;
+    // La Strategia ha il prompt più pesante di tutta l'app (6 sezioni
+    // strutturate) — le serve più budget di token delle altre tab, altrimenti
+    // rischia di finire i token prima di scrivere il testo (risposta vuota).
+    // Teniamo comunque un tetto più basso delle altre per stare comodi
+    // entro i 26s di timeout Netlify, invece di rischiare un 504.
+    const maxTok = tabName==="strategia" ? 2000 : null;
     const { text, error } = await callClaudeAPI(prompt, null, maxTok);
     const answer=text||error;
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
