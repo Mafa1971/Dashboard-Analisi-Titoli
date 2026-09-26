@@ -929,6 +929,7 @@ let AI_ANALYSIS_LOG=[]; // {ticker, tab, answer, timestamp} — alimentato da og
 let STOCK_SECTOR=null;
 let LAST_SECTOR_DATA=null;
 let LAST_FAIR_VALUE=null;
+let LAST_ALTMAN_Z=null;
 let LAST_STOCK_SCORE=null;
 let HISTORY_SORT_BY="score"; // default: ordina lo Storico per punteggio, per scegliere subito i migliori
 // Mappa nomi settore (Yahoo/Alpha Vantage usano nomi leggermente diversi) → ETF SPDR di settore
@@ -2901,6 +2902,7 @@ window.renderFairValueSolidity=function(rows){
   });
 
   const lastZ=zScores[zScores.length-1];
+  LAST_ALTMAN_Z = lastZ; // riusato dalla Strategia AI come filtro fondamentali sì/no
   const zCol=lastZ==null?"var(--dim)":lastZ>2.99?"#00d4b8":lastZ>1.81?"#ffd23f":"#ff6b6b";
   const zText=lastZ==null?"Dati insufficienti":lastZ>2.99?"Basso rischio di fallimento":lastZ>1.81?"Zona grigia — attenzione":"Alto rischio di fallimento";
   el("altmanInfo").innerHTML=`<span style="display:inline-block;${lastZ>2.99?'padding:8px 12px;border-radius:8px;background:linear-gradient(180deg,rgba(0,212,184,0.12),transparent);box-shadow:0 0 0 1px rgba(0,212,184,0.35),0 0 14px rgba(0,212,184,0.25);':''}"><strong style="color:${zCol};">${lastZ>2.99?'★ ':''}Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}.</span> <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
@@ -3519,6 +3521,45 @@ Sii diretto, numeri concreti, evita frasi vaghe.`;
     const low52w=Math.min(...STOCK.lows.slice(-252).filter(v=>v!=null));
     const highAllTime=Math.max(...STOCK.highs.filter(v=>v!=null));
     const lowAllTime=Math.min(...STOCK.lows.filter(v=>v!=null));
+
+    // ── CONSOLIDAMENTO: i pezzi più importanti delle ALTRE tab, portati qui
+    // così la Strategia risponde da sola a "comprare o no, adesso" invece di
+    // lasciare Score/Fondamentali/Rischio isolati in tab separate ────────
+    const nD=STOCK.closes.length;
+    // 1) Correzione/rimbalzo RECENTE rispetto al trend di fondo — uno score
+    // storico alto non dice se il prezzo sta ritracciando proprio ora.
+    const chg10=nD>10?((STOCK.closes[nD-1]-STOCK.closes[nD-11])/STOCK.closes[nD-11]*100):null;
+    const chg20=nD>20?((STOCK.closes[nD-1]-STOCK.closes[nD-21])/STOCK.closes[nD-21]*100):null;
+    // 2) Prezzo vs POC/VWAP — sopra o sotto, non solo il numero nudo
+    const vsLevel=(label,val)=> val==null?null:`${label}: prezzo ${price>=val?"SOPRA":"SOTTO"} di ${Math.abs((price-val)/val*100).toFixed(1)}% (livello ${val.toFixed(2)})`;
+    const priceVsLevels=[
+      vsLevel("POC storico",vp?.poc),
+      vsLevel(`POC ultimi ${recentN}gg`,vpRecent?.poc),
+      vsLevel("POC dal Massimo Storico",vpSincePeak?.poc),
+      vsLevel("Anchored VWAP",anchoredVWAP)
+    ].filter(Boolean);
+    // 3) Volumi in tendenza (ultimi 10gg vs i 10gg precedenti), non solo
+    // l'istantanea dell'ultimo giorno che guarda già lo score Volume
+    const vol=STOCK.volumes;
+    const volLast10=vol.slice(-10).filter(v=>v!=null), volPrev10=vol.slice(-20,-10).filter(v=>v!=null);
+    const avgVolLast10=volLast10.length?volLast10.reduce((a,b)=>a+b,0)/volLast10.length:null;
+    const avgVolPrev10=volPrev10.length?volPrev10.reduce((a,b)=>a+b,0)/volPrev10.length:null;
+    const volTrendPct=(avgVolLast10!=null&&avgVolPrev10)?((avgVolLast10-avgVolPrev10)/avgVolPrev10*100):null;
+    // 4) Fondamentali come filtro sì/no: Stock Quant Score salvato, Piotroski
+    // coi singoli segnali (non solo il totale), Altman Z, Fair Value upside
+    const histEntry=loadAnalysisHistory().find(h=>h.ticker===STOCK.ticker);
+    const quantScore=histEntry?.stockScore??null;
+    const fundGate=(()=>{
+      if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return null;
+      const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+      const piotroski=computePiotroskiForYear(last,prev);
+      const failedSignals=piotroski?piotroski.signals.filter(s=>!s.pass).map(s=>s.label):[];
+      return { piotroski, failedSignals };
+    })();
+    // 5) Volatilità Annua — per tarare quanto deve essere largo uno stop
+    // "normale" per QUESTO titolo, invece di un 1.5×ATR uguale per tutti
+    const volAnnua=calcVolatility(calcDailyReturns(STOCK.closes));
+
     prompt=base+`Costruisci un PIANO OPERATIVO dettagliato per ${STOCK.ticker}, nello stile di un vero trading plan: livelli di prezzo precisi, non genericità.
 
 Rispondi sempre per intero, anche con dati mancanti (scrivi "N/D" dove serve, mai risposta vuota).
@@ -3539,11 +3580,16 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Swing Low sotto il prezzo (target Short / stop Long): ${swingLowsBelow.length?swingLowsBelow.slice(0,4).join(", "):"nessuno"}
 - Swing Low sopra il prezzo (stop alt. Short): ${swingLowsAbove.length?swingLowsAbove.slice(0,3).join(", "):"nessuno"}
 - Swing High sotto il prezzo (target alt. Short): ${swingHighsBelow.length?swingHighsBelow.slice(0,3).join(", "):"nessuno"}
-- LONG: Score ${l.score!=null?l.score+"/100":"N/D"}, stop ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}
-- SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}
+- LONG: Score ${l.score!=null?l.score+"/100":"N/D"}, stop ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}, rischio ${l.riskPct!=null?l.riskPct.toFixed(1)+"%":"N/D"}
+- SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}, rischio ${s.riskPct!=null?s.riskPct.toFixed(1)+"%":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
-${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=computePiotroskiForYear(last,prev); return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}.`; })()}
+- Stock Quant Score (0-100, calcolato dall'utente su tutte le aree del sito): ${quantScore!=null?quantScore+"/100":"N/D — non ancora calcolato per questo titolo"}
+- Volatilità Annua (per capire se lo stop attuale è stretto o largo rispetto a QUESTO titolo, non uno standard uguale per tutti): ${volAnnua!=null?volAnnua.toFixed(1)+"%":"N/D"}
+- Variazione prezzo ultimi 10gg: ${chg10!=null?fmtPct(chg10):"N/D"} | ultimi 20gg: ${chg20!=null?fmtPct(chg20):"N/D"} — usali per capire se il prezzo sta CORREGGENDO proprio ora rispetto al trend di fondo (Score/Trend possono essere alti ma il prezzo ritracciare nel breve, o viceversa)
+- Prezzo vs livelli di volume (sopra/sotto, non solo il numero): ${priceVsLevels.length?priceVsLevels.join(" | "):"N/D"}
+- Tendenza Volumi (media ultimi 10gg vs media 10gg precedenti): ${volTrendPct!=null?(volTrendPct>=0?"+":"")+volTrendPct.toFixed(0)+"% "+(volTrendPct>10?"(in aumento — conferma il movimento)":volTrendPct<-10?"(in calo — movimento meno convinto)":"(stabili)"):"N/D"}
+${(()=>{ if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2) return "- Fondamentali: non caricati."; const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2]; const revGrowth=prev.revenue?((last.revenue-prev.revenue)/prev.revenue*100):null; const piotroski=fundGate?.piotroski; const zTxt=LAST_ALTMAN_Z!=null?(LAST_ALTMAN_Z>2.99?"sicura":LAST_ALTMAN_Z>1.81?"grigia — attenzione":"a rischio"):"N/D"; const fvTxt=LAST_FAIR_VALUE?.upsidePct!=null?(LAST_FAIR_VALUE.upsidePct>=0?"sottovalutato":"sopravvalutato")+" del "+Math.abs(LAST_FAIR_VALUE.upsidePct).toFixed(0)+"% vs Fair Value":"N/D"; return `- Fondamentali (${last.year.slice(0,4)}): Ricavi ${fmtBig(last.revenue)} (YoY ${revGrowth!=null?fmtPct(revGrowth):"N/D"}), Margine ${last.netMargin!=null?last.netMargin.toFixed(1)+"%":"N/D"}, Piotroski ${piotroski?piotroski.score+"/9":"N/D"}${fundGate?.failedSignals?.length?" (segnali NON superati: "+fundGate.failedSignals.join("; ")+")":""}, Altman Z-Score: zona ${zTxt}, Prezzo ${fvTxt}.`; })()}
 ${(()=>{
   const lines=[];
   const addZoneLines=(res,label)=>{
@@ -3560,7 +3606,7 @@ REGOLE SUI TARGET: ogni Target Price deve coincidere con uno dei livelli reali e
 STRUTTURA — 6 sezioni con questi titoli esatti, concise, dritte ai numeri:
 
 📊 Analisi Tecnica
-2 frasi: trend, momentum, contesto generale, fondamentali se ci sono.
+3 frasi: 1) trend di fondo + momentum; 2) se il prezzo sta CORREGGENDO/rimbalzando proprio ora rispetto a quel trend (usa variazione 10/20gg — uno Score alto con prezzo in ritracciamento va detto esplicitamente, così come un rimbalzo dentro un trend debole); 3) dove siamo rispetto a POC/VWAP e se i volumi confermano (in aumento) o no (in calo) il movimento.
 
 🎯 Supporti/Resistenze
 Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendline, 52w). Solo dati in lista.
@@ -3569,7 +3615,7 @@ Livelli reali sopra/sotto il prezzo (Swing, Pivot, POC recente+storico, Trendlin
 1 approccio per la direzione migliore, zona+condizione+Stop+max 2 Target con R/R. Se la Zona B ha un pattern non ancora rotto, usa la metodologia rottura-confermata-poi-ritest (stesso prezzo per entrambe le fasi, vedi dati sopra), non un ingresso secco sulla prima candela di rottura. Poi l'altra direzione in 1 riga.
 
 ⚠️ Rischio
-Stop, invalidazione principale, 1 riga cosa faresti/non faresti.
+Stop, invalidazione principale, e se lo stop è stretto o largo rispetto alla Volatilità Annua del titolo (es. rischio 5% su un titolo al 50% di volatilità annua è normale, sullo stesso 5% con un titolo al 15% è già ampio). Poi 1 riga su fondamentali (Piotroski/Altman Z/Fair Value): se dicono "sì puoi comprarlo" o "occhio, qualcosa non torna" a prescindere dal setup tecnico.
 
 🔗 Markov
 1 frase: cosa dice lo score Markov, coerente o no col resto.
