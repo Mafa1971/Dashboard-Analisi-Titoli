@@ -53,6 +53,16 @@ exports.handler = async function (event) {
       body: JSON.stringify({
         model: "claude-sonnet-5", // controlla su docs.claude.com/en/docs/about-claude/models se è uscito un modello più recente
         max_tokens: maxTokens,
+        // Da Claude Sonnet 5 in poi il "thinking" (ragionamento interno) è
+        // ATTIVO DI DEFAULT e consuma parte dello stesso budget di max_tokens
+        // riservato al testo visibile: con budget bassi (necessari qui per
+        // stare entro i 26s di timeout di Netlify) il modello può esaurire
+        // tutto il budget "pensando" e restituire un testo vuoto con
+        // stop_reason "max_tokens" — il bug che causava "Risposta vuota anche
+        // dopo un secondo tentativo". Per queste richieste (risposte brevi e
+        // strutturate, non serve ragionamento step-by-step visibile) lo
+        // disattiviamo esplicitamente così tutto il budget resta per il testo.
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content }]
       })
     });
