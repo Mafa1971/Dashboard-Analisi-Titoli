@@ -460,7 +460,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">🎯 METRICHE DI RISCHIO (annualizzate, storico caricato)</div>
           <div class="cards" id="riskCardsWrap"></div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta richiede un confronto con un benchmark: vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Il Beta si calcola rispetto a un benchmark: se non ne hai già confrontato uno nel tab ⚖️ Benchmark, viene scaricato automaticamente l'indice S&amp;P 500 (^GSPC) di default. Per usare un altro indice, vai al tab ⚖️ Benchmark, premi CONFRONTA, poi torna qui.</div>
           <button class="btn primary" onclick="askAIAboutTab('rischio')">🤖 Chiedi a Warren AI — interpreta questi numeri</button>
           <div id="aiTabRischio" style="margin-top:12px;"></div>
         </div>
@@ -732,6 +732,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div id="btResultsWrap" style="display:none;">
               <div id="btStatsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;"></div>
               <div style="height:280px;margin-bottom:16px;"><canvas id="btEquityChart"></canvas></div>
+              <div style="margin-bottom:10px;"><button class="btn" onclick="exportBacktestToExcel()">📥 SCARICA EXCEL (trade + equity curve)</button></div>
               <div id="btTradesWrap" style="overflow-x:auto;max-height:420px;overflow-y:auto;"></div>
             </div>
           </div>
@@ -2528,19 +2529,34 @@ function calcBeta(stockCloses,stockDates,benchCloses,benchDates){
   return varB>0?(cov/varB):null;
 }
 
-window.renderRisk=function(){
+window.renderRisk=async function(){
   if(!STOCK) return;
   const returns=calcDailyReturns(STOCK.closes);
   const sharpe=calcSharpe(returns), sortino=calcSortino(returns), vol=calcVolatility(returns), maxDD=calcMaxDrawdown(STOCK.closes);
-  const beta = BENCH ? calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates) : null;
 
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col};">${val}</div><div class="l">${label}</div></div>`;
-  el("riskCardsWrap").innerHTML=
-    card("Sharpe Ratio", sharpe!=null?sharpe.toFixed(2):"--", sharpe>1.5?"#00d4b8":sharpe>0.5?"#80ed99":sharpe>0?"#ffd23f":sharpe!=null?"#ff6b6b":"var(--dim)", sharpe>1.5)+
-    card("Sortino Ratio", sortino!=null?sortino.toFixed(2):"--", sortino>2?"#00d4b8":sortino>1?"#80ed99":sortino>0.5?"#ffd23f":sortino!=null?"#ff6b6b":"var(--dim)", sortino>2)+
-    card("Volatilità Annua", vol!=null?vol.toFixed(1)+"%":"--", vol<15?"#00d4b8":vol<25?"#ffd23f":vol<35?"#ff9f1c":"#ff6b6b")+
-    card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b", maxDD>-10)+
-    card("Beta"+(BENCH?" vs "+BENCH.ticker:""), beta!=null?beta.toFixed(2):"--", beta==null?"var(--dim)":Math.abs(beta-1)<0.2?"#ffd23f":beta>1?"#ff9f1c":"#00d4b8");
+  const renderCards=(betaVal,betaLabel)=>{
+    el("riskCardsWrap").innerHTML=
+      card("Sharpe Ratio", sharpe!=null?sharpe.toFixed(2):"--", sharpe>1.5?"#00d4b8":sharpe>0.5?"#80ed99":sharpe>0?"#ffd23f":sharpe!=null?"#ff6b6b":"var(--dim)", sharpe>1.5)+
+      card("Sortino Ratio", sortino!=null?sortino.toFixed(2):"--", sortino>2?"#00d4b8":sortino>1?"#80ed99":sortino>0.5?"#ffd23f":sortino!=null?"#ff6b6b":"var(--dim)", sortino>2)+
+      card("Volatilità Annua", vol!=null?vol.toFixed(1)+"%":"--", vol<15?"#00d4b8":vol<25?"#ffd23f":vol<35?"#ff9f1c":"#ff6b6b")+
+      card("Max Drawdown", maxDD!=null?maxDD.toFixed(1)+"%":"--", maxDD>-10?"#00d4b8":maxDD>-20?"#ffd23f":maxDD>-30?"#ff9f1c":"#ff6b6b", maxDD>-10)+
+      card(betaLabel, betaVal!=null?betaVal.toFixed(2):"--", betaVal==null?"var(--dim)":Math.abs(betaVal-1)<0.2?"#ffd23f":betaVal>1?"#ff9f1c":"#00d4b8");
+  };
+
+  // Prima passata: se non c'è ancora un benchmark (né confrontato a mano né
+  // scaricato in automatico da un'altra tab, es. Regime), mostra subito le
+  // altre 4 card e "Beta ..." in caricamento, poi scarica in automatico
+  // l'indice di default (^GSPC) così il Beta non resta mai vuoto senza un
+  // motivo spiegato.
+  if(!BENCH){
+    renderCards(null,"Beta (scarico ^GSPC...)");
+    const ok=await ensureBenchmarkForRegime("^GSPC");
+    if(!STOCK) return; // l'utente potrebbe aver cambiato titolo nel frattempo
+    if(!ok){ renderCards(null,"Beta (^GSPC non disponibile)"); return; }
+  }
+  const beta=calcBeta(STOCK.closes,STOCK.dates,BENCH.closes,BENCH.dates);
+  renderCards(beta,"Beta"+(BENCH?" vs "+BENCH.ticker:""));
 };
 
 // ── BILANCIO (Alpha Vantage) ────────────────────────────────────────
@@ -7089,7 +7105,7 @@ function computeApproachZones(direction){
   }
 }
 
-let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null, BT_EQUITY_CHART=null;
+let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null, BT_EQUITY_CHART=null, LAST_BACKTEST=null;
 
 // Formatta una Date dello storico come stringa "YYYY-MM-DD" per etichette/tabelle.
 function fmtBtDate(d){ return d instanceof Date ? d.toISOString().slice(0,10) : String(d); }
@@ -7217,6 +7233,16 @@ window.runStrategyBacktest=function(){
     el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${fmtBtDate(dates[warmup])} al ${fmtBtDate(dates[n-1])}.`;
     el("btResultsWrap").style.display="block";
 
+    // Salvato per il pulsante "Scarica Excel" — così l'export riflette
+    // esattamente l'ultimo backtest mostrato a schermo, parametri compresi.
+    LAST_BACKTEST = {
+      ticker:STOCK.ticker, currency:STOCK.currency, direction, horizon, threshold, startCapital, warmup,
+      periodFrom:fmtBtDate(dates[warmup]), periodTo:fmtBtDate(dates[n-1]),
+      trades, equityCurve:equityCurve.map(p=>({date:fmtBtDate(p.date),value:p.value})),
+      stats:{ capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, nTrade:trades.length, winRate,
+        profitFactor:profitFactor===Infinity?null:profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss }
+    };
+
     const statCard=(label,val,color)=>`<div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;">
       <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
       <div style="font-size:18px;font-weight:800;color:${color||'var(--txt)'};margin-top:4px;">${val}</div>
@@ -7265,6 +7291,44 @@ window.runStrategyBacktest=function(){
     el("btTradesWrap").innerHTML=h;
   }, 30);
 };
+
+// Esporta in .xlsx l'ultimo backtest calcolato (window.runStrategyBacktest
+// deve essere già stato eseguito almeno una volta — LAST_BACKTEST è il suo
+// output completo: parametri, elenco trade, equity curve e statistiche).
+window.exportBacktestToExcel=function(){
+  if(!LAST_BACKTEST){ alert("Esegui prima il backtest (pulsante \"ESEGUI BACKTEST\")."); return; }
+  const b=LAST_BACKTEST;
+  const wb=XLSX.utils.book_new();
+  const addSheet=(rows,name)=>{
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31));
+  };
+
+  const s=b.stats;
+  addSheet([
+    ["Ticker",b.ticker], ["Direzione",b.direction==="long"?"Long":"Short"], ["Orizzonte",b.horizon==="posizionale"?"Posizionale":"Swing"],
+    ["Soglia minima punteggio",b.threshold], ["Capitale iniziale",b.startCapital], ["Periodo simulato",`${b.periodFrom} - ${b.periodTo}`],
+    [], ["Capitale Finale",s.capitaleFinale.toFixed(2)], ["Rendimento Totale (%)",s.rendimentoTotalePct.toFixed(2)],
+    ["CAGR (%/anno)", s.cagr!=null?s.cagr.toFixed(2):"N/D"], ["N. Trade",s.nTrade], ["Win Rate (%)",s.winRate.toFixed(1)],
+    ["Profit Factor", s.profitFactor!=null?s.profitFactor.toFixed(2):"∞"], ["Max Drawdown (%)",s.maxDrawdownPct.toFixed(1)],
+    ["Win Medio",s.avgWin.toFixed(2)], ["Perdita Media",s.avgLoss.toFixed(2)],
+    [], ["Generato il",new Date().toLocaleString("it-IT")]
+  ], "Riepilogo");
+
+  const tradeRows=[["#","Data Ingresso","Data Uscita","Prezzo Entry","Prezzo Exit","Stop","Esito","P&L","P&L %","Capitale Dopo"]];
+  b.trades.forEach((t,i)=>{
+    tradeRows.push([i+1, t.entryDate, t.exitDate, +t.entryPrice.toFixed(2), +t.exitPrice.toFixed(2), +t.stop.toFixed(2),
+      t.exitReason, +t.pnl.toFixed(2), +t.pnlPct.toFixed(2), +t.capitalAfter.toFixed(2)]);
+  });
+  addSheet(tradeRows, "Trade");
+
+  const eqRows=[["Data","Capitale"]];
+  b.equityCurve.forEach(p=>eqRows.push([p.date, +p.value.toFixed(2)]));
+  addSheet(eqRows, "Equity Curve");
+
+  XLSX.writeFile(wb, `backtest_${b.ticker}_${b.direction}_${new Date().toISOString().slice(0,10)}.xlsx`);
+};
+
 // Quadro consolidato: i pezzi più importanti delle ALTRE tab (Score, Rischio,
 // Bilancio/Fondamentali, Volume Profile) portati nella Strategia, sia per le
 // card visibili sia per il prompt della Strategia AI — un solo posto dove
