@@ -709,7 +709,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
           <div class="panel">
             <div class="panel-title">🧪 BACKTEST STORICO — la strategia avrebbe funzionato?</div>
-            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Simula ogni giorno dello storico disponibile come se fosse "oggi": ricalcola lo stesso punteggio 0-100 (Trend, Momentum, Struttura ICT, Markov, Volume, Candlestick, Rischio Order Block — il componente Regime è escluso perché userebbe una classificazione che nel passato non esisteva ancora), ed entra quando il punteggio supera la soglia scelta. Uscita a Stop (invalidazione) o a Target fisso 2R (il doppio del rischio preso in ingresso — una semplificazione rispetto alle Zone A/B/C mostrate sopra, usate solo per l'operazione live odierna). Una sola posizione alla volta, capitale reinvestito ad ogni trade chiuso. Non è garanzia di risultati futuri.</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Simula ogni giorno dello storico disponibile come se fosse "oggi": ricalcola lo stesso punteggio 0-100 (Trend, Momentum, Struttura ICT, Markov, Volume, Candlestick, Rischio Order Block, più un aggiustamento stagionale ±8 basato sui mesi passati — il componente Regime è escluso perché userebbe una classificazione che nel passato non esisteva ancora), ed entra quando il punteggio supera la soglia scelta. Uscita a Stop (invalidazione) o a Target fisso 2R (il doppio del rischio preso in ingresso — una semplificazione rispetto alle Zone A/B/C mostrate sopra, usate solo per l'operazione live odierna). Una sola posizione alla volta, capitale reinvestito ad ogni trade chiuso. Non è garanzia di risultati futuri.</div>
             <div style="font-size:10px;color:#ffd23f;margin-bottom:12px;">💡 Il Max Drawdown dipende moltissimo da "Rischio per trade": con "100%" ogni trade investe tutto il capitale (una serie di stop consecutivi si somma quasi 1:1 sul capitale — è la causa più comune di DD alti). Abbassalo (es. 2-5%) per un money management realistico: solo quella % del capitale è a rischio sulla distanza Entry→Stop, non l'intera posizione.</div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
               <label style="font-size:11px;color:var(--dim);">Direzione:
@@ -731,6 +731,16 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <input type="number" id="btWarmup" value="260" min="60" step="10" style="width:70px;">
               </label>
               <button class="btn primary" onclick="runStrategyBacktest()">🧪 ESEGUI BACKTEST</button>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+              <label class="chk" style="font-size:10px;"><input type="checkbox" id="btUseCommissions" checked> Includi commissioni</label>
+              <label style="font-size:11px;color:var(--dim);">Commissione titoli USD (per esecuzione):
+                <input type="number" id="btCommUSD" value="1" min="0" step="0.5" style="width:55px;">
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Commissione altre valute/es. EUR (per esecuzione):
+                <input type="number" id="btCommEUR" value="2" min="0" step="0.5" style="width:55px;">
+              </label>
+              <span style="font-size:10px;color:var(--dim);">Ogni trade paga la commissione due volte (acquisto + vendita).</span>
             </div>
             <div id="btStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
             <div id="btResultsWrap" style="display:none;">
@@ -3607,6 +3617,7 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}, rischio ${s.riskPct!=null?s.riskPct.toFixed(1)+"%":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
+- Aggiustamento stagionale già incluso nel punteggio: LONG ${l.seasonal?.yearsUsed>=MIN_SEASONAL_YEARS?(l.seasonal.adj>0?"+":"")+l.seasonal.adj:"N/D (storico insufficiente)"}, SHORT ${s.seasonal?.yearsUsed>=MIN_SEASONAL_YEARS?(s.seasonal.adj>0?"+":"")+s.seasonal.adj:"N/D (storico insufficiente)"} (basato su come il titolo si muove questo mese vs la media storica dello stesso mese)
 - Stock Quant Score: ${ctx.quantScore!=null?ctx.quantScore+"/100":"N/D"} | Volatilità Annua: ${ctx.volAnnua!=null?ctx.volAnnua.toFixed(1)+"%":"N/D"} (tara quanto deve essere largo lo stop per QUESTO titolo)
 - Var. prezzo 10gg: ${ctx.chg10!=null?fmtPct(ctx.chg10):"N/D"} | 20gg: ${ctx.chg20!=null?fmtPct(ctx.chg20):"N/D"} (dice se sta correggendo/rimbalzando PROPRIO ORA rispetto al trend di fondo)
 - Prezzo vs livelli volume: ${ctx.levels.length?ctx.levels.map(x=>`${x.label} ${x.above?"SOPRA":"SOTTO"} ${Math.abs(x.distPct).toFixed(1)}%`).join(", "):"N/D"} | Tendenza Volumi 10gg: ${ctx.volTrendPct!=null?(ctx.volTrendPct>=0?"+":"")+ctx.volTrendPct.toFixed(0)+"%":"N/D"}
@@ -5030,7 +5041,14 @@ window.renderHistoryTab=function(){
     hist=hist.slice().reverse();
   }
 
-  let h=`<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+  // Conteggio titoli: distingue "righe" (ogni rianalisi crea/aggiorna una
+  // riga) da "titoli UNICI" (ticker distinti) — se un titolo è stato
+  // rianalizzato più volte lo storico ha comunque una sola riga per ticker
+  // (vedi loadAnalysisHistory/saveHistoryArr), quindi in genere coincidono;
+  // il conteggio distinto serve comunque per chiarezza in ogni caso.
+  const uniqueTickers=new Set(hist.map(r=>r.ticker)).size;
+  let h=`<div style="display:flex;gap:16px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">
+    <div style="font-size:12px;color:var(--txt);font-weight:700;">📊 ${uniqueTickers} titol${uniqueTickers===1?"o":"i"} in storico${hist.length!==uniqueTickers?` (${hist.length} righe)`:""}</div>
     <span style="font-size:10px;color:var(--dim);">Ordina per:</span>
     <button class="btn ${HISTORY_SORT_BY==='score'?'primary':'ghost'}" style="font-size:10px;padding:4px 10px;" onclick="HISTORY_SORT_BY='score';renderHistoryTab();">⭐ Punteggio (migliori in cima)</button>
     <button class="btn ${HISTORY_SORT_BY==='date'?'primary':'ghost'}" style="font-size:10px;padding:4px 10px;" onclick="HISTORY_SORT_BY='date';renderHistoryTab();">🕐 Data (più recenti in cima)</button>
@@ -6928,6 +6946,92 @@ function computeOBRejectionRisk(highs,lows,closes,direction,atr){
 // live, sotto) lo chiama passando STOCK per intero; il Backtest Storico lo
 // richiama passando gli array TRONCATI fino al giorno simulato — stessa
 // identica logica di scoring, solo senza guardare avanti nel tempo.
+// Aggiustamento stagionale: bonus/malus (max ±8 punti) applicato SOPRA il
+// punteggio già calcolato dagli 8 componenti pesati — non è un componente
+// pesato come gli altri, è un correttivo separato basato su come il prezzo
+// si sta muovendo QUESTO mese rispetto alla media storica dello stesso mese
+// calendario negli anni PRECEDENTI (mai l'anno in corso, per non guardare
+// nel futuro — cruciale nel Backtest Storico). Logica (esempio Long):
+// - Mese storicamente FAVOREVOLE alla direzione → bonus proporzionale.
+// - Mese storicamente SFAVOREVOLE:
+//   • se il titolo sta "disobbedendo" al pattern (si muove già a favore
+//     nostro, o ha perso molto meno del solito) → BONUS (forza relativa);
+//   • se il calo/salita avversa tipica si è già in gran parte consumata
+//     (es. il mese perde di solito il 5% e siamo già a -3/-4%) → BONUS
+//     (poco rischio stagionale residuo — "si è già fatto il grosso del male");
+//   • se invece il movimento avverso sembra IN CORSO ma non ancora
+//     completato → MALUS (il grosso del movimento sfavorevole potrebbe
+//     dover ancora arrivare).
+// Richiede almeno MIN_SEASONAL_YEARS occorrenze passate dello stesso mese;
+// altrimenti nessun aggiustamento (dato insufficiente, come per il
+// componente Regime nel backtest).
+const MIN_SEASONAL_YEARS = 3;
+function computeSeasonalAdjustment(data, direction){
+  const dates=data.dates, closes=data.closes;
+  const n=closes.length;
+  if(!dates || !closes || n<30) return { adj:0, yearsUsed:0 };
+  const lastDate=dates[n-1];
+  const curYear=lastDate.getFullYear(), curMonth=lastDate.getMonth();
+
+  // Rendimento di ogni occorrenza PASSATA (anni < curYear) dello stesso mese.
+  const yearlyReturns=[];
+  const yearsPresent=new Set(dates.map(d=>d.getFullYear()));
+  yearsPresent.forEach(y=>{
+    if(y>=curYear) return; // mai l'anno corrente (incompleto) né futuro
+    let firstIdx=null,lastIdx=null;
+    for(let i=0;i<n;i++){
+      if(dates[i].getFullYear()===y && dates[i].getMonth()===curMonth){
+        if(firstIdx===null) firstIdx=i;
+        lastIdx=i;
+      }
+    }
+    if(firstIdx!=null && lastIdx!=null && firstIdx!==lastIdx && closes[firstIdx]>0){
+      yearlyReturns.push((closes[lastIdx]-closes[firstIdx])/closes[firstIdx]*100);
+    }
+  });
+  if(yearlyReturns.length<MIN_SEASONAL_YEARS) return { adj:0, yearsUsed:yearlyReturns.length };
+
+  const avgSeasonalPct = yearlyReturns.reduce((a,b)=>a+b,0)/yearlyReturns.length;
+
+  // Month-to-date del mese in corso: dal primo giorno di trading del mese ad oggi.
+  let monthStartIdx=null;
+  for(let i=n-1;i>=0;i--){
+    if(dates[i].getFullYear()===curYear && dates[i].getMonth()===curMonth) monthStartIdx=i;
+    else break;
+  }
+  if(monthStartIdx==null || closes[monthStartIdx]<=0) return { adj:0, yearsUsed:yearlyReturns.length, avgSeasonalPct };
+  const mtdPct=(closes[n-1]-closes[monthStartIdx])/closes[monthStartIdx]*100;
+
+  // Riporta tutto al segno della direzione scelta: valori positivi = a favore del trade.
+  const expected = direction==="long" ? avgSeasonalPct : -avgSeasonalPct;
+  const mtdAligned = direction==="long" ? mtdPct : -mtdPct;
+
+  const MAX_ADJ=8;
+  let adj=0;
+  if(expected>=0){
+    // Mese storicamente a favore della direzione scelta: bonus proporzionale.
+    adj = Math.min(MAX_ADJ, expected*1.2);
+  } else {
+    const adverseAvg = -expected;   // quanto normalmente si perde (>0)
+    const adverseMtd = -mtdAligned; // quanto si è già perso questo mese (>0 se in linea col pattern)
+    const ratio = adverseAvg>0 ? adverseMtd/adverseAvg : 0;
+    if(ratio<=0.15){
+      // Il titolo sta disobbedendo alla stagionalità avversa → forza relativa.
+      adj = Math.min(MAX_ADJ, (0.15-ratio)/0.15*MAX_ADJ);
+    } else if(ratio>=0.5){
+      // Il movimento avverso tipico si è già in gran parte consumato.
+      adj = Math.min(MAX_ADJ, (ratio-0.5)/0.5*MAX_ADJ);
+    } else {
+      // Zona intermedia: il movimento avverso sembra in corso ma non ancora
+      // completato — malus massimo al centro della zona (ratio~0.325).
+      const mid=0.325;
+      const distFromMid=Math.abs(ratio-mid)/(mid-0.15); // 0 al centro, 1 ai bordi della zona
+      adj = -MAX_ADJ*(1-distFromMid);
+    }
+  }
+  return { adj:Math.round(adj*10)/10, avgSeasonalPct, mtdPct, yearsUsed:yearlyReturns.length, month:curMonth };
+}
+
 function computeEntryScoreCore(data,direction,horizon){
   if(!data) return null;
   const params = horizon==="posizionale"
@@ -7039,7 +7143,12 @@ function computeEntryScoreCore(data,direction,horizon){
 
   let totalWeight=0, weightedSum=0;
   components.forEach(c=>{ if(c.val!=null){ totalWeight+=c.weight; weightedSum+=c.val*c.weight; } });
-  const finalScore = totalWeight>0 ? Math.round(weightedSum/totalWeight) : null;
+  const scoreBeforeSeasonal = totalWeight>0 ? Math.round(weightedSum/totalWeight) : null;
+
+  // Aggiustamento stagionale (bonus/malus, non un componente pesato — vedi
+  // computeSeasonalAdjustment sopra per la logica completa).
+  const seasonal = computeSeasonalAdjustment(data, direction);
+  const finalScore = scoreBeforeSeasonal!=null ? Math.max(0,Math.min(100, Math.round(scoreBeforeSeasonal + (seasonal.adj||0)))) : null;
 
   // Invalidazione: il più vicino (conservativo) tra stop strutturale (Order Block) e stop ATR
   const atrStop = atr!=null ? (direction==="long" ? price-1.5*atr : price+1.5*atr) : null;
@@ -7051,7 +7160,7 @@ function computeEntryScoreCore(data,direction,horizon){
   else if(atrStop!=null){ finalStop=atrStop; stopType="ATR (1.5×)"; }
 
   const riskPct = finalStop!=null ? Math.abs((price-finalStop)/price*100) : null;
-  return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight, atr, structuralStop, atrStop };
+  return { direction, horizon, score:finalScore, scoreBeforeSeasonal, seasonal, components, price, stop:finalStop, stopType, riskPct, totalWeight, atr, structuralStop, atrStop };
 }
 
 function computeEntryScore(direction,horizon){
@@ -7134,6 +7243,13 @@ window.runStrategyBacktest=function(){
   const startCapital=parseFloat(el("btCapital").value)||2500;
   const riskPct=Math.min(100,Math.max(0.1,parseFloat(el("btRiskPct").value)||2));
   const warmup=Math.max(60,parseInt(el("btWarmup").value)||260);
+  // Commissioni: applicate due volte per trade (acquisto + vendita). Il tasso
+  // si sceglie in base alla valuta del titolo — approssimazione: USD usa la
+  // tariffa "mercato USA", qualsiasi altra valuta (EUR, GBP, CHF...) usa la
+  // tariffa "Europa". Modificabile dai due campi nel pannello.
+  const useCommissions=el("btUseCommissions").checked;
+  const commissionPerSide = !useCommissions ? 0
+    : (STOCK.currency==="USD" ? (parseFloat(el("btCommUSD").value)||0) : (parseFloat(el("btCommEUR").value)||0));
 
   const dates=STOCK.dates, closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows, opens=STOCK.opens, volumes=STOCK.volumes;
   const n=closes.length;
@@ -7169,11 +7285,13 @@ window.runStrategyBacktest=function(){
           else if(lo<=target){ exitPrice=target; exitReason="Target (2R)"; }
         }
         if(exitPrice!=null){
-          const pnl = direction==="long" ? (exitPrice-entryPrice)*shares : (entryPrice-exitPrice)*shares;
+          const pnlLordo = direction==="long" ? (exitPrice-entryPrice)*shares : (entryPrice-exitPrice)*shares;
+          const commission = 2*commissionPerSide; // acquisto + vendita
+          const pnl = pnlLordo - commission;
           capital += pnl;
           trades.push({
             entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[i]), entryPrice, exitPrice, stop,
-            pnl, pnlPct: pnl/(entryPrice*shares)*100, exitReason, capitalAfter:capital
+            pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason, capitalAfter:capital
           });
           equityCurve.push({date:dates[i], value:capital});
           inPosition=false;
@@ -7218,11 +7336,13 @@ window.runStrategyBacktest=function(){
     // dell'ultima barra, per non "sparire" dal conteggio del capitale finale.
     if(inPosition){
       const lastPrice=closes[n-1];
-      const pnl = direction==="long" ? (lastPrice-entryPrice)*shares : (entryPrice-lastPrice)*shares;
+      const pnlLordo = direction==="long" ? (lastPrice-entryPrice)*shares : (entryPrice-lastPrice)*shares;
+      const commission = 2*commissionPerSide;
+      const pnl = pnlLordo - commission;
       capital += pnl;
       trades.push({
         entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[n-1]), entryPrice, exitPrice:lastPrice, stop,
-        pnl, pnlPct: pnl/(entryPrice*shares)*100, exitReason:"Fine storico (posizione ancora aperta)", capitalAfter:capital
+        pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason:"Fine storico (posizione ancora aperta)", capitalAfter:capital
       });
       equityCurve.push({date:dates[n-1], value:capital});
     }
@@ -7245,18 +7365,20 @@ window.runStrategyBacktest=function(){
     equityCurve.forEach(pt=>{ if(pt.value>peak) peak=pt.value; const dd=(peak-pt.value)/peak*100; if(dd>maxDD) maxDD=dd; });
     const avgWin = wins.length? grossWin/wins.length : 0;
     const avgLoss = losses.length? grossLoss/losses.length : 0;
+    const totalCommissions = trades.reduce((s,t)=>s+(t.commission||0),0);
 
-    el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${fmtBtDate(dates[warmup])} al ${fmtBtDate(dates[n-1])}.`;
+    el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${fmtBtDate(dates[warmup])} al ${fmtBtDate(dates[n-1])}.${useCommissions?` Commissioni totali pagate: ${STOCK.currency} ${totalCommissions.toFixed(0)}.`:""}`;
     el("btResultsWrap").style.display="block";
 
     // Salvato per il pulsante "Scarica Excel" — così l'export riflette
     // esattamente l'ultimo backtest mostrato a schermo, parametri compresi.
     LAST_BACKTEST = {
       ticker:STOCK.ticker, currency:STOCK.currency, direction, horizon, threshold, startCapital, riskPct, warmup,
+      useCommissions, commissionPerSide,
       periodFrom:fmtBtDate(dates[warmup]), periodTo:fmtBtDate(dates[n-1]),
       trades, equityCurve:equityCurve.map(p=>({date:fmtBtDate(p.date),value:p.value})),
       stats:{ capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, nTrade:trades.length, winRate,
-        profitFactor:profitFactor===Infinity?null:profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss }
+        profitFactor:profitFactor===Infinity?null:profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss, totalCommissions }
     };
 
     const statCard=(label,val,color)=>`<div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;">
@@ -7271,7 +7393,8 @@ window.runStrategyBacktest=function(){
       statCard("Win Rate", `${winRate.toFixed(0)}%`, winRate>=50?"#00d4b8":"#ffd23f"),
       statCard("Profit Factor", profitFactor===Infinity?"∞":profitFactor.toFixed(2), profitFactor>=1.5?"#00d4b8":profitFactor>=1?"#ffd23f":"#ff6b6b"),
       statCard("Max Drawdown", `-${maxDD.toFixed(1)}%`, maxDD<=15?"#00d4b8":maxDD<=30?"#ffd23f":"#ff6b6b"),
-      statCard("Win Medio / Perdita Media", `+${STOCK.currency}${avgWin.toFixed(0)} / -${STOCK.currency}${avgLoss.toFixed(0)}`, "var(--txt)")
+      statCard("Win Medio / Perdita Media", `+${STOCK.currency}${avgWin.toFixed(0)} / -${STOCK.currency}${avgLoss.toFixed(0)}`, "var(--txt)"),
+      statCard("Commissioni Totali", useCommissions?`${STOCK.currency} ${totalCommissions.toFixed(0)}`:"non incluse", "var(--dim)")
     ].join("");
 
     const eqCtx=el("btEquityChart");
@@ -7324,17 +7447,18 @@ window.exportBacktestToExcel=function(){
   addSheet([
     ["Ticker",b.ticker], ["Direzione",b.direction==="long"?"Long":"Short"], ["Orizzonte",b.horizon==="posizionale"?"Posizionale":"Swing"],
     ["Soglia minima punteggio",b.threshold], ["Capitale iniziale",b.startCapital], ["Rischio per trade (%)",b.riskPct], ["Periodo simulato",`${b.periodFrom} - ${b.periodTo}`],
+    ["Commissioni incluse",b.useCommissions?"Sì":"No"], ["Commissione per esecuzione",b.useCommissions?b.commissionPerSide:"N/A"],
     [], ["Capitale Finale",s.capitaleFinale.toFixed(2)], ["Rendimento Totale (%)",s.rendimentoTotalePct.toFixed(2)],
     ["CAGR (%/anno)", s.cagr!=null?s.cagr.toFixed(2):"N/D"], ["N. Trade",s.nTrade], ["Win Rate (%)",s.winRate.toFixed(1)],
     ["Profit Factor", s.profitFactor!=null?s.profitFactor.toFixed(2):"∞"], ["Max Drawdown (%)",s.maxDrawdownPct.toFixed(1)],
-    ["Win Medio",s.avgWin.toFixed(2)], ["Perdita Media",s.avgLoss.toFixed(2)],
+    ["Win Medio",s.avgWin.toFixed(2)], ["Perdita Media",s.avgLoss.toFixed(2)], ["Commissioni Totali Pagate",s.totalCommissions.toFixed(2)],
     [], ["Generato il",new Date().toLocaleString("it-IT")]
   ], "Riepilogo");
 
-  const tradeRows=[["#","Data Ingresso","Data Uscita","Prezzo Entry","Prezzo Exit","Stop","Esito","P&L","P&L %","Capitale Dopo"]];
+  const tradeRows=[["#","Data Ingresso","Data Uscita","Prezzo Entry","Prezzo Exit","Stop","Esito","P&L (netto commissioni)","Commissioni","P&L %","Capitale Dopo"]];
   b.trades.forEach((t,i)=>{
     tradeRows.push([i+1, t.entryDate, t.exitDate, +t.entryPrice.toFixed(2), +t.exitPrice.toFixed(2), +t.stop.toFixed(2),
-      t.exitReason, +t.pnl.toFixed(2), +t.pnlPct.toFixed(2), +t.capitalAfter.toFixed(2)]);
+      t.exitReason, +t.pnl.toFixed(2), +(t.commission||0).toFixed(2), +t.pnlPct.toFixed(2), +t.capitalAfter.toFixed(2)]);
   });
   addSheet(tradeRows, "Trade");
 
@@ -7449,6 +7573,11 @@ window.calcStrategy=function(){
       <div style="font-size:11px;color:var(--dim);">Rischio dall'attuale: <strong style="color:#ff9f1c;">${res.riskPct!=null?res.riskPct.toFixed(1)+"%":"N/D"}</strong></div>
       <div style="font-size:11px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">Zona A (retest/pullback): <strong style="color:#c77dff;">${res.zoneA!=null?STOCK.currency+" "+res.zoneA.toFixed(2):"nessun livello reale trovato"}</strong></div>
       <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong>${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` <span style="color:#f9c74f;">— confine ${res.patternBreakout.patternType}, non ancora rotto</span>`:""}</div>
+      ${res.seasonal && res.seasonal.yearsUsed>=MIN_SEASONAL_YEARS ? (()=>{
+        const monthNamesFull=["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+        const s=res.seasonal, adjColor=s.adj>0.5?"#00d4b8":s.adj<-0.5?"#ff6b6b":"var(--dim)";
+        return `<div style="font-size:10px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">📅 Stagionalità (${monthNamesFull[s.month]}, media ${s.yearsUsed} anni: ${s.avgSeasonalPct>=0?"+":""}${s.avgSeasonalPct.toFixed(1)}%, questo mese: ${s.mtdPct>=0?"+":""}${s.mtdPct.toFixed(1)}%) → Aggiustamento score: <strong style="color:${adjColor};">${s.adj>0?"+":""}${s.adj}</strong> (già incluso sopra, punteggio pre-stagionalità: ${res.scoreBeforeSeasonal})</div>`;
+      })() : ""}
     </div>`;
   }
   el("stratLongCard").innerHTML=renderCard(long,"📈 LONG","#00d4b8");
