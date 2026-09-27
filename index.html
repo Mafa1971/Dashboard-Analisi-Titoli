@@ -710,6 +710,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel">
             <div class="panel-title">🧪 BACKTEST STORICO — la strategia avrebbe funzionato?</div>
             <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Simula ogni giorno dello storico disponibile come se fosse "oggi": ricalcola lo stesso punteggio 0-100 (Trend, Momentum, Struttura ICT, Markov, Volume, Candlestick, Rischio Order Block — il componente Regime è escluso perché userebbe una classificazione che nel passato non esisteva ancora), ed entra quando il punteggio supera la soglia scelta. Uscita a Stop (invalidazione) o a Target fisso 2R (il doppio del rischio preso in ingresso — una semplificazione rispetto alle Zone A/B/C mostrate sopra, usate solo per l'operazione live odierna). Una sola posizione alla volta, capitale reinvestito ad ogni trade chiuso. Non è garanzia di risultati futuri.</div>
+            <div style="font-size:10px;color:#ffd23f;margin-bottom:12px;">💡 Il Max Drawdown dipende moltissimo da "Rischio per trade": con "100%" ogni trade investe tutto il capitale (una serie di stop consecutivi si somma quasi 1:1 sul capitale — è la causa più comune di DD alti). Abbassalo (es. 2-5%) per un money management realistico: solo quella % del capitale è a rischio sulla distanza Entry→Stop, non l'intera posizione.</div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
               <label style="font-size:11px;color:var(--dim);">Direzione:
                 <select id="btDirection">
@@ -722,6 +723,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               </label>
               <label style="font-size:11px;color:var(--dim);">Capitale iniziale:
                 <input type="number" id="btCapital" value="2500" min="100" step="100" style="width:90px;">
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Rischio per trade (% capitale, "100" = tutto-dentro):
+                <input type="number" id="btRiskPct" value="2" min="0.1" max="100" step="0.5" style="width:65px;">
               </label>
               <label style="font-size:11px;color:var(--dim);">Giorni di "riscaldamento" (min. storico prima di iniziare a fare trade):
                 <input type="number" id="btWarmup" value="260" min="60" step="10" style="width:70px;">
@@ -7128,6 +7132,7 @@ window.runStrategyBacktest=function(){
   const horizon=el("stratHorizon").value;
   const threshold=parseFloat(el("btThreshold").value)||60;
   const startCapital=parseFloat(el("btCapital").value)||2500;
+  const riskPct=Math.min(100,Math.max(0.1,parseFloat(el("btRiskPct").value)||2));
   const warmup=Math.max(60,parseInt(el("btWarmup").value)||260);
 
   const dates=STOCK.dates, closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows, opens=STOCK.opens, volumes=STOCK.volumes;
@@ -7193,7 +7198,18 @@ window.runStrategyBacktest=function(){
         if(risk<=0) continue;
         entryIdx=i+1; entryPrice=nextOpen; stop=res.stop;
         target = direction==="long" ? entryPrice+2*risk : entryPrice-2*risk;
-        shares = capital/entryPrice;
+        // Position sizing per RISCHIO (non più "tutto dentro"): investe solo
+        // l'importo tale per cui, se lo Stop viene colpito, la perdita vale
+        // "riskPct"% del capitale corrente — non il 100% investito su ogni
+        // trade. Es. capitale 2500, riskPct 2% → si rischiano 50, che diviso
+        // per la distanza Entry→Stop dà quante azioni comprare. Il tetto
+        // "maxShares" impedisce di sforare il capitale disponibile (niente
+        // leva: se lo stop è vicinissimo, sizeRisk uscirebbe enorme, ma non
+        // si può comunque comprare più di quanto si ha in cassa).
+        const riskAmount = capital*(riskPct/100);
+        const sharesForRisk = riskAmount/risk;
+        const maxShares = capital/entryPrice;
+        shares = Math.min(sharesForRisk, maxShares);
         inPosition=true;
       }
     }
@@ -7236,7 +7252,7 @@ window.runStrategyBacktest=function(){
     // Salvato per il pulsante "Scarica Excel" — così l'export riflette
     // esattamente l'ultimo backtest mostrato a schermo, parametri compresi.
     LAST_BACKTEST = {
-      ticker:STOCK.ticker, currency:STOCK.currency, direction, horizon, threshold, startCapital, warmup,
+      ticker:STOCK.ticker, currency:STOCK.currency, direction, horizon, threshold, startCapital, riskPct, warmup,
       periodFrom:fmtBtDate(dates[warmup]), periodTo:fmtBtDate(dates[n-1]),
       trades, equityCurve:equityCurve.map(p=>({date:fmtBtDate(p.date),value:p.value})),
       stats:{ capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, nTrade:trades.length, winRate,
@@ -7263,7 +7279,7 @@ window.runStrategyBacktest=function(){
     BT_EQUITY_CHART=new Chart(eqCtx.getContext("2d"),{
       type:"line",
       data:{ labels:equityCurve.map(p=>fmtBtDate(p.date)), datasets:[{
-        label:`Capitale (${direction==="long"?"Long":"Short"}, soglia ${threshold})`, data:equityCurve.map(p=>p.value),
+        label:`Capitale (${direction==="long"?"Long":"Short"}, soglia ${threshold}, rischio ${riskPct}%/trade)`, data:equityCurve.map(p=>p.value),
         borderColor:"#00d4b8", backgroundColor:"rgba(0,212,184,0.08)", borderWidth:2, pointRadius:0, tension:0.1, fill:true
       }]},
       options:{responsive:true,maintainAspectRatio:false,
@@ -7307,7 +7323,7 @@ window.exportBacktestToExcel=function(){
   const s=b.stats;
   addSheet([
     ["Ticker",b.ticker], ["Direzione",b.direction==="long"?"Long":"Short"], ["Orizzonte",b.horizon==="posizionale"?"Posizionale":"Swing"],
-    ["Soglia minima punteggio",b.threshold], ["Capitale iniziale",b.startCapital], ["Periodo simulato",`${b.periodFrom} - ${b.periodTo}`],
+    ["Soglia minima punteggio",b.threshold], ["Capitale iniziale",b.startCapital], ["Rischio per trade (%)",b.riskPct], ["Periodo simulato",`${b.periodFrom} - ${b.periodTo}`],
     [], ["Capitale Finale",s.capitaleFinale.toFixed(2)], ["Rendimento Totale (%)",s.rendimentoTotalePct.toFixed(2)],
     ["CAGR (%/anno)", s.cagr!=null?s.cagr.toFixed(2):"N/D"], ["N. Trade",s.nTrade], ["Win Rate (%)",s.winRate.toFixed(1)],
     ["Profit Factor", s.profitFactor!=null?s.profitFactor.toFixed(2):"∞"], ["Max Drawdown (%)",s.maxDrawdownPct.toFixed(1)],
