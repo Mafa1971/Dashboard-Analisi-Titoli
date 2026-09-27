@@ -706,6 +706,35 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <button class="btn primary" onclick="askAIAboutTab('strategia')">🤖 Chiedi a Warren AI — questa strategia ha senso?</button>
             <div id="aiTabStrategia" style="margin-top:12px;"></div>
           </div>
+
+          <div class="panel">
+            <div class="panel-title">🧪 BACKTEST STORICO — la strategia avrebbe funzionato?</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Simula ogni giorno dello storico disponibile come se fosse "oggi": ricalcola lo stesso punteggio 0-100 (Trend, Momentum, Struttura ICT, Markov, Volume, Candlestick, Rischio Order Block — il componente Regime è escluso perché userebbe una classificazione che nel passato non esisteva ancora), ed entra quando il punteggio supera la soglia scelta. Uscita a Stop (invalidazione) o a Target fisso 2R (il doppio del rischio preso in ingresso — una semplificazione rispetto alle Zone A/B/C mostrate sopra, usate solo per l'operazione live odierna). Una sola posizione alla volta, capitale reinvestito ad ogni trade chiuso. Non è garanzia di risultati futuri.</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+              <label style="font-size:11px;color:var(--dim);">Direzione:
+                <select id="btDirection">
+                  <option value="long" selected>Long</option>
+                  <option value="short">Short</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Soglia minima punteggio:
+                <input type="number" id="btThreshold" value="60" min="0" max="100" step="5" style="width:60px;">
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Capitale iniziale:
+                <input type="number" id="btCapital" value="2500" min="100" step="100" style="width:90px;">
+              </label>
+              <label style="font-size:11px;color:var(--dim);">Giorni di "riscaldamento" (min. storico prima di iniziare a fare trade):
+                <input type="number" id="btWarmup" value="260" min="60" step="10" style="width:70px;">
+              </label>
+              <button class="btn primary" onclick="runStrategyBacktest()">🧪 ESEGUI BACKTEST</button>
+            </div>
+            <div id="btStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+            <div id="btResultsWrap" style="display:none;">
+              <div id="btStatsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;"></div>
+              <div style="height:280px;margin-bottom:16px;"><canvas id="btEquityChart"></canvas></div>
+              <div id="btTradesWrap" style="overflow-x:auto;max-height:420px;overflow-y:auto;"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -6874,13 +6903,18 @@ function computeOBRejectionRisk(highs,lows,closes,direction,atr){
   }catch(e){ return 70; }
 }
 
-function computeEntryScore(direction,horizon){
-  if(!STOCK) return null;
+// Nucleo dello scoring, indipendente da STOCK: accetta un oggetto dati
+// {closes,highs,lows,opens,volumes,dates} qualsiasi. computeEntryScore (uso
+// live, sotto) lo chiama passando STOCK per intero; il Backtest Storico lo
+// richiama passando gli array TRONCATI fino al giorno simulato — stessa
+// identica logica di scoring, solo senza guardare avanti nel tempo.
+function computeEntryScoreCore(data,direction,horizon){
+  if(!data) return null;
   const params = horizon==="posizionale"
     ? { smaFast:100, smaSlow:200, atrPeriod:50, structureSz:50 }
     : { smaFast:21, smaSlow:100, atrPeriod:14, structureSz:5 };
 
-  const closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows;
+  const closes=data.closes, highs=data.highs, lows=data.lows;
   const n=closes.length;
   const price=closes[n-1];
 
@@ -6941,7 +6975,7 @@ function computeEntryScore(direction,horizon){
   // 4) MARKOV — probabilità di continuazione nella direzione desiderata (peso 13)
   let markovScore=null;
   try{
-    const series=periodReturnSeries(STOCK.dates,closes,"daily");
+    const series=periodReturnSeries(data.dates,closes,"daily");
     const states=classifyStates(series,0.5,1.5);
     const {matrix}=buildTransitionMatrix(states);
     const cs=states[states.length-1];
@@ -6953,14 +6987,18 @@ function computeEntryScore(direction,horizon){
   }catch(e){}
   components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:13,val:markovScore});
 
-  // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 8)
+  // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 8). Usa la
+  // classificazione LIVE (LAST_REGIME_RESULT) solo quando stiamo guardando
+  // il presente (data===STOCK): nel Backtest Storico sarebbe un errore di
+  // "sguardo nel futuro" (il regime di oggi non esisteva nel passato), quindi
+  // lì il componente resta N/D e il peso si redistribuisce sugli altri.
   let regimeScore=null;
-  if(LAST_REGIME_RESULT) regimeScore = direction==="long" ? LAST_REGIME_RESULT.score : 100-LAST_REGIME_RESULT.score;
+  if(data===STOCK && LAST_REGIME_RESULT) regimeScore = direction==="long" ? LAST_REGIME_RESULT.score : 100-LAST_REGIME_RESULT.score;
   components.push({key:"regime",label:"Regime di Mercato",weight:8,val:regimeScore});
 
   // 6) VOLUME — conferma del movimento, penalizza sia debolezza che esaurimento (peso 7)
   let volScore=null;
-  const lastVol=STOCK.volumes[n-1], lastVolMA=smaSeriesCalc(STOCK.volumes,20)[n-1];
+  const lastVol=data.volumes[n-1], lastVolMA=smaSeriesCalc(data.volumes,20)[n-1];
   if(lastVol!=null && lastVolMA){
     const ratio=lastVol/lastVolMA;
     if(ratio>=1.0&&ratio<=2.5) volScore=100;
@@ -6971,7 +7009,7 @@ function computeEntryScore(direction,horizon){
   components.push({key:"volume",label:"Volume (conferma)",weight:7,val:volScore});
 
   // 7) CANDLESTICK — pattern di conferma o esaurimento sulle ultime 2 candele (peso 10)
-  const candleScore=detectCandlestickSignal(STOCK.opens,highs,lows,closes,direction);
+  const candleScore=detectCandlestickSignal(data.opens,highs,lows,closes,direction);
   components.push({key:"candlestick",label:"Pattern Candlestick",weight:10,val:candleScore});
 
   // 8) RISCHIO ORDER BLOCK OPPOSTO — penalizza l'ingresso se un OB di segno
@@ -6994,6 +7032,11 @@ function computeEntryScore(direction,horizon){
 
   const riskPct = finalStop!=null ? Math.abs((price-finalStop)/price*100) : null;
   return { direction, horizon, score:finalScore, components, price, stop:finalStop, stopType, riskPct, totalWeight, atr, structuralStop, atrStop };
+}
+
+function computeEntryScore(direction,horizon){
+  if(!STOCK) return null;
+  return computeEntryScoreCore(STOCK,direction,horizon);
 }
 
 // Calcola le zone A (retest/pullback) e B (breakout) come DATI concreti,
@@ -7046,7 +7089,182 @@ function computeApproachZones(direction){
   }
 }
 
-let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null;
+let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null, BT_EQUITY_CHART=null;
+
+// Formatta una Date dello storico come stringa "YYYY-MM-DD" per etichette/tabelle.
+function fmtBtDate(d){ return d instanceof Date ? d.toISOString().slice(0,10) : String(d); }
+
+// BACKTEST STORICO della Strategia: cammina barra per barra sullo storico
+// disponibile, ricalcolando ad OGNI giorno lo STESSO punteggio 0-100 usato
+// dal vivo (computeEntryScoreCore) ma passando solo i dati fino a quel
+// giorno incluso — mai oltre, per non introdurre "sguardo nel futuro".
+// Quando il punteggio supera la soglia scelta ed è libera una posizione,
+// entra all'apertura della barra SUCCESSIVA (mai alla chiusura del giorno
+// del segnale). Esce a Stop (stesso livello di invalidazione calcolato dal
+// motore) o a Target fisso 2R (il doppio del rischio preso in ingresso —
+// una semplificazione: le Zone A/B/C "live" mostrate sopra userebbero
+// pattern/trendline dell'intero storico, non replicabili in modo identico
+// giorno per giorno nel passato). Una sola posizione alla volta, capitale
+// reinvestito per intero ad ogni trade chiuso (compounding).
+window.runStrategyBacktest=function(){
+  if(!STOCK){ el("btStatus").textContent="Analizza prima un titolo"; return; }
+  const direction=el("btDirection").value;
+  const horizon=el("stratHorizon").value;
+  const threshold=parseFloat(el("btThreshold").value)||60;
+  const startCapital=parseFloat(el("btCapital").value)||2500;
+  const warmup=Math.max(60,parseInt(el("btWarmup").value)||260);
+
+  const dates=STOCK.dates, closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows, opens=STOCK.opens, volumes=STOCK.volumes;
+  const n=closes.length;
+  if(n<warmup+20){
+    el("btStatus").textContent=`⚠️ Storico insufficiente per il backtest (servono almeno ${warmup+20} barre, disponibili ${n}). Riduci i giorni di riscaldamento o scegli un titolo con più storico.`;
+    el("btResultsWrap").style.display="none";
+    return;
+  }
+
+  el("btStatus").textContent="⏳ Simulazione in corso (ricalcola lo score per ogni giorno dello storico, può richiedere qualche secondo)...";
+  el("btResultsWrap").style.display="none";
+
+  // setTimeout per lasciar disegnare il messaggio "in corso" prima del loop
+  // pesante (ricalcolo indicatori su ogni singola barra dello storico).
+  setTimeout(()=>{
+    const trades=[];
+    let capital=startCapital;
+    const equityCurve=[{date:dates[warmup], value:capital}];
+    let inPosition=false, entryIdx=null, entryPrice=null, stop=null, target=null, shares=null;
+
+    for(let i=warmup; i<n-1; i++){
+      if(inPosition){
+        // Controlla l'uscita sull'escursione high/low della barra corrente:
+        // in caso di ambiguità (stop e target toccati nella stessa barra),
+        // dà priorità allo stop — ipotesi conservativa.
+        const hi=highs[i], lo=lows[i];
+        let exitPrice=null, exitReason=null;
+        if(direction==="long"){
+          if(lo<=stop){ exitPrice=stop; exitReason="Stop"; }
+          else if(hi>=target){ exitPrice=target; exitReason="Target (2R)"; }
+        } else {
+          if(hi>=stop){ exitPrice=stop; exitReason="Stop"; }
+          else if(lo<=target){ exitPrice=target; exitReason="Target (2R)"; }
+        }
+        if(exitPrice!=null){
+          const pnl = direction==="long" ? (exitPrice-entryPrice)*shares : (entryPrice-exitPrice)*shares;
+          capital += pnl;
+          trades.push({
+            entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[i]), entryPrice, exitPrice, stop,
+            pnl, pnlPct: pnl/(entryPrice*shares)*100, exitReason, capitalAfter:capital
+          });
+          equityCurve.push({date:dates[i], value:capital});
+          inPosition=false;
+        }
+        continue; // mentre si è in posizione non si valutano nuovi ingressi
+      }
+
+      // Nessuna posizione aperta: ricalcola lo score SOLO sui dati fino a i (incluso)
+      const dataSlice = {
+        closes:closes.slice(0,i+1), highs:highs.slice(0,i+1), lows:lows.slice(0,i+1),
+        opens:opens.slice(0,i+1), volumes:volumes.slice(0,i+1), dates:dates.slice(0,i+1)
+      };
+      let res;
+      try{ res=computeEntryScoreCore(dataSlice,direction,horizon); }catch(e){ res=null; }
+      if(res && res.score!=null && res.score>=threshold && res.stop!=null){
+        // Entra all'APERTURA della barra successiva — mai al prezzo di
+        // chiusura del giorno del segnale, per evitare il bias di guardare
+        // il futuro immediato.
+        const nextOpen=opens[i+1];
+        if(nextOpen==null) continue;
+        const risk=Math.abs(nextOpen-res.stop);
+        if(risk<=0) continue;
+        entryIdx=i+1; entryPrice=nextOpen; stop=res.stop;
+        target = direction==="long" ? entryPrice+2*risk : entryPrice-2*risk;
+        shares = capital/entryPrice;
+        inPosition=true;
+      }
+    }
+
+    // Una posizione ancora aperta a fine storico viene chiusa al mark-to-market
+    // dell'ultima barra, per non "sparire" dal conteggio del capitale finale.
+    if(inPosition){
+      const lastPrice=closes[n-1];
+      const pnl = direction==="long" ? (lastPrice-entryPrice)*shares : (entryPrice-lastPrice)*shares;
+      capital += pnl;
+      trades.push({
+        entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[n-1]), entryPrice, exitPrice:lastPrice, stop,
+        pnl, pnlPct: pnl/(entryPrice*shares)*100, exitReason:"Fine storico (posizione ancora aperta)", capitalAfter:capital
+      });
+      equityCurve.push({date:dates[n-1], value:capital});
+    }
+
+    if(trades.length===0){
+      el("btStatus").textContent=`⚠️ Nessun trade generato con questi parametri (soglia ${threshold}, direzione ${direction==="long"?"Long":"Short"}) — prova ad abbassare la soglia o l'orizzonte.`;
+      el("btResultsWrap").style.display="none";
+      return;
+    }
+
+    // --- Statistiche riassuntive ---
+    const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<=0);
+    const winRate=wins.length/trades.length*100;
+    const grossWin=wins.reduce((s,t)=>s+t.pnl,0), grossLoss=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
+    const profitFactor = grossLoss>0 ? grossWin/grossLoss : (grossWin>0?Infinity:0);
+    const totalReturnPct=(capital-startCapital)/startCapital*100;
+    const yearsSpan=(dates[n-1]-dates[warmup])/(365.25*24*3600*1000);
+    const cagr = yearsSpan>0.1 ? (Math.pow(Math.max(capital,0.01)/startCapital,1/yearsSpan)-1)*100 : null;
+    let peak=startCapital, maxDD=0;
+    equityCurve.forEach(pt=>{ if(pt.value>peak) peak=pt.value; const dd=(peak-pt.value)/peak*100; if(dd>maxDD) maxDD=dd; });
+    const avgWin = wins.length? grossWin/wins.length : 0;
+    const avgLoss = losses.length? grossLoss/losses.length : 0;
+
+    el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${fmtBtDate(dates[warmup])} al ${fmtBtDate(dates[n-1])}.`;
+    el("btResultsWrap").style.display="block";
+
+    const statCard=(label,val,color)=>`<div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;">
+      <div style="font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:0.5px;">${label}</div>
+      <div style="font-size:18px;font-weight:800;color:${color||'var(--txt)'};margin-top:4px;">${val}</div>
+    </div>`;
+    el("btStatsWrap").innerHTML = [
+      statCard("Capitale Finale", `${STOCK.currency} ${capital.toFixed(0)}`, capital>=startCapital?"#00d4b8":"#ff6b6b"),
+      statCard("Rendimento Totale", `${totalReturnPct>=0?"+":""}${totalReturnPct.toFixed(1)}%`, totalReturnPct>=0?"#00d4b8":"#ff6b6b"),
+      statCard("CAGR", cagr!=null?`${cagr>=0?"+":""}${cagr.toFixed(1)}%/anno`:"N/D", (cagr??0)>=0?"#00d4b8":"#ff6b6b"),
+      statCard("N. Trade", trades.length, "var(--txt)"),
+      statCard("Win Rate", `${winRate.toFixed(0)}%`, winRate>=50?"#00d4b8":"#ffd23f"),
+      statCard("Profit Factor", profitFactor===Infinity?"∞":profitFactor.toFixed(2), profitFactor>=1.5?"#00d4b8":profitFactor>=1?"#ffd23f":"#ff6b6b"),
+      statCard("Max Drawdown", `-${maxDD.toFixed(1)}%`, maxDD<=15?"#00d4b8":maxDD<=30?"#ffd23f":"#ff6b6b"),
+      statCard("Win Medio / Perdita Media", `+${STOCK.currency}${avgWin.toFixed(0)} / -${STOCK.currency}${avgLoss.toFixed(0)}`, "var(--txt)")
+    ].join("");
+
+    const eqCtx=el("btEquityChart");
+    if(BT_EQUITY_CHART) BT_EQUITY_CHART.destroy();
+    BT_EQUITY_CHART=new Chart(eqCtx.getContext("2d"),{
+      type:"line",
+      data:{ labels:equityCurve.map(p=>fmtBtDate(p.date)), datasets:[{
+        label:`Capitale (${direction==="long"?"Long":"Short"}, soglia ${threshold})`, data:equityCurve.map(p=>p.value),
+        borderColor:"#00d4b8", backgroundColor:"rgba(0,212,184,0.08)", borderWidth:2, pointRadius:0, tension:0.1, fill:true
+      }]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:"#eef1f7",font:{size:10}}}},
+        scales:{
+          x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10},grid:{color:"#1e2d45"}},
+          y:{title:{display:true,text:`Capitale (${STOCK.currency})`,color:"#7d8aa3"},ticks:{color:"#7d8aa3"},grid:{color:"#1e2d45"}}
+        }}
+    });
+
+    let h=`<table><tr><th>#</th><th>Ingresso</th><th>Uscita</th><th>Prezzo Entry</th><th>Prezzo Exit</th><th>Stop</th><th>Esito</th><th>P&L</th><th>Capitale</th></tr>`;
+    trades.slice().reverse().forEach((t,ri)=>{
+      const i=trades.length-1-ri;
+      const pnlColor=t.pnl>0?"#00d4b8":"#ff6b6b";
+      h+=`<tr>
+        <td>${i+1}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
+        <td>${STOCK.currency} ${t.entryPrice.toFixed(2)}</td><td>${STOCK.currency} ${t.exitPrice.toFixed(2)}</td>
+        <td style="color:var(--dim);">${STOCK.currency} ${t.stop.toFixed(2)}</td>
+        <td style="color:${t.exitReason==='Stop'?'#ff6b6b':t.exitReason.indexOf('Target')===0?'#00d4b8':'var(--dim)'};">${t.exitReason}</td>
+        <td style="color:${pnlColor};font-weight:700;">${t.pnl>=0?"+":""}${t.pnl.toFixed(0)} (${t.pnlPct>=0?"+":""}${t.pnlPct.toFixed(1)}%)</td>
+        <td>${STOCK.currency} ${t.capitalAfter.toFixed(0)}</td>
+      </tr>`;
+    });
+    h+="</table>";
+    el("btTradesWrap").innerHTML=h;
+  }, 30);
+};
 // Quadro consolidato: i pezzi più importanti delle ALTRE tab (Score, Rischio,
 // Bilancio/Fondamentali, Volume Profile) portati nella Strategia, sia per le
 // card visibili sia per il prompt della Strategia AI — un solo posto dove
