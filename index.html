@@ -676,6 +676,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">I dati più rilevanti calcolati altrove nel sito, riuniti qui per capire se comprare/tenere/evitare — senza dover girare tab per tab. Calcolo istantaneo, nessuna chiamata AI.</div>
             <div id="stratConsolidatedWrap"></div>
           </div>
+          <div class="panel" id="comaPanel" style="display:none;">
+            <div class="panel-title">🩺 TITOLO DA COMA — ritracciamento ≥50% dal massimo storico</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">3 segnali di ingresso indipendenti per titoli in forte drawdown, ciascuno rappresenta una fase diversa del possibile recupero — non un punteggio unico, guarda quale stadio è attivo ORA.</div>
+            <div id="comaWrap"></div>
+          </div>
           <div class="panel">
             <div class="panel-title">💰 POSITION SIZING — 3 TRANCHE SU BUDGET TOTALE</div>
             <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Divide il budget su 3 punti d'ingresso (Entry attuale, Zona A retest, Zona B breakout) usando i livelli reali già calcolati sopra — calcola quante azioni comprare a ciascun prezzo e il prezzo medio di carico finale.</div>
@@ -966,7 +971,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────
-const APP_PASSWORD = "Marin71Analyzer2026."; // ⚠️ CAMBIA_PASSWORD prima di deployare
+const APP_PASSWORD = "Marin71Analyzer2026.";
 const AUTH_KEY = "analyzer_auth_v1";
 
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
@@ -7218,6 +7223,97 @@ function computeApproachZones(direction){
   }
 }
 
+// ── STRATEGIA COMA — titoli con ritracciamento ≥50% dal massimo storico ──
+// Tre segnali di ingresso INDIPENDENTI, non un punteggio unico: sono fasi
+// diverse del possibile recupero di un titolo crollato, mischiarle in un
+// solo numero nasconderebbe quale stadio si sta osservando.
+// 1) CONTINUAZIONE: prezzo sopra il POC calcolato dal massimo storico ad
+//    oggi (il rimbalzo già in corso) + un pattern tecnico (triangolo/cuneo,
+//    stessa rilevazione della Strategia normale) che ha già rotto la sua
+//    resistenza.
+// 2) RIMBALZO DAL FONDO: prezzo vicino (entro 5%) al POC calcolato su TUTTO
+//    lo storico (supporto di lungo periodo) + stessa rottura di pattern.
+// 3) CAMBIO DI STRUTTURA: il PRIMO CHoCH rialzista dal minimo del
+//    ritracciamento — il segnale di inversione più precoce dei tre.
+// Target: il massimo storico (obiettivo finale) + i 2-3 swing high
+// SIGNIFICATIVI (confermati da volume/volatilità anomali — non un
+// qualsiasi piccolo pivot) più vicini, per un piano di uscita a tranche.
+function computeComaSignals(data){
+  if(!data) return null;
+  const {highs,lows,closes,opens,volumes,dates}=data;
+  const n=closes.length;
+  if(n<60) return { isComa:false };
+  const price=closes[n-1];
+
+  let highIdx=0;
+  for(let i=1;i<n;i++){ if(highs[i]!=null && (highs[highIdx]==null||highs[i]>highs[highIdx])) highIdx=i; }
+  const highAllTime=highs[highIdx], highAllTimeDate=dates[highIdx];
+  const retracementPct=(highAllTime-price)/highAllTime*100;
+  const isComa=retracementPct>=50;
+  if(!isComa) return { isComa:false, retracementPct, highAllTime, highAllTimeDate:fmtBtDate(highAllTimeDate) };
+
+  const vpSincePeak=computeVolumeProfileSincePeak(highs,closes,volumes,24);
+  const vpFull=computeVolumeProfile(closes,volumes,24);
+
+  // Pattern/breakout: stessa identica logica della Strategia normale
+  // (computeApproachZones) — trendline settimanali sugli ultimi 365gg +
+  // triangolo/cuneo, per non avere due rilevazioni diverse che potrebbero
+  // disaccordare tra loro sullo stesso grafico.
+  const weeklySw=calcWeeklySwings(dates,highs,lows);
+  const supportLine=detectTrendline(recentPivotsOnly(weeklySw.lows,n,365),"support");
+  const resistanceLine=detectTrendline(recentPivotsOnly(weeklySw.highs,n,365),"resistance");
+  const triangle=detectTrianglePattern(supportLine,resistanceLine,n-1);
+  let patternBreakout=null;
+  if(triangle){
+    const breakoutLevel=triangle.resistanceNow;
+    patternBreakout = { patternType:triangle.type, level:breakoutLevel, alreadyBroken: breakoutLevel!=null && price>breakoutLevel };
+  }
+
+  const signal1 = {
+    poc: vpSincePeak?.poc ?? null,
+    priceAbovePoc: vpSincePeak ? price>vpSincePeak.poc : null,
+    patternBreakout,
+    active: !!(vpSincePeak && price>vpSincePeak.poc && patternBreakout?.alreadyBroken)
+  };
+
+  const pocFullDistPct = vpFull ? Math.abs(price-vpFull.poc)/vpFull.poc*100 : null;
+  const signal2 = {
+    poc: vpFull?.poc ?? null,
+    distancePct: pocFullDistPct,
+    patternBreakout,
+    active: !!(vpFull && pocFullDistPct!=null && pocFullDistPct<=5 && patternBreakout?.alreadyBroken)
+  };
+
+  // Minimo del ritracciamento: il punto più basso toccato DOPO il massimo storico.
+  let lowIdx=highIdx;
+  for(let i=highIdx;i<n;i++){ if(lows[i]!=null && (lows[lowIdx]==null||lows[i]<lows[lowIdx])) lowIdx=i; }
+  let firstBullishCHoCH=null;
+  try{
+    const struct=computeSMCStructure(highs,lows,closes,5);
+    // Nota: computeSMCStructure tiene solo gli ultimi 20 eventi — se il
+    // minimo è molto lontano nel tempo e da allora sono già passati più di
+    // 20 cambi di struttura, il "primo" CHoCH rialzista dal minimo potrebbe
+    // non comparire più qui (limite noto della funzione, non di questa logica).
+    const afterLow=struct.events.filter(e=>e.idx>lowIdx && e.dir==="up" && e.label==="CHoCH");
+    if(afterLow.length) firstBullishCHoCH={ date:fmtBtDate(dates[afterLow[0].idx]), price:closes[afterLow[0].idx] };
+  }catch(e){}
+  const signal3 = { active:!!firstBullishCHoCH, event:firstBullishCHoCH, lowDate:fmtBtDate(dates[lowIdx]), lowPrice:lows[lowIdx] };
+
+  let intermediateTargets=[];
+  try{
+    const sig=calcSignificantSwings(highs,lows,closes,volumes,dates,5);
+    intermediateTargets = sig.highs.filter(p=>p.significant && p.price>price && p.price<highAllTime)
+      .sort((a,b)=>a.price-b.price).slice(0,3)
+      .map(p=>({ price:p.price, date:fmtBtDate(dates[p.idx]) }));
+  }catch(e){}
+
+  return {
+    isComa:true, retracementPct, highAllTime, highAllTimeDate:fmtBtDate(highAllTimeDate),
+    signal1, signal2, signal3,
+    targets:{ final:highAllTime, intermediate:intermediateTargets }
+  };
+}
+
 let LAST_STRATEGY_LONG=null, LAST_STRATEGY_SHORT=null, BT_EQUITY_CHART=null, LAST_BACKTEST=null;
 
 // Formatta una Date dello storico come stringa "YYYY-MM-DD" per etichette/tabelle.
@@ -7548,6 +7644,55 @@ function renderStrategyConsolidated(){
   wrap.innerHTML=h;
 }
 
+// Renderizza il pannello "Titolo da Coma" nella tab Strategia — nascosto
+// del tutto se il titolo non ha un ritracciamento ≥50% dal massimo storico.
+function renderComaPanel(){
+  const panel=el("comaPanel"), wrap=el("comaWrap");
+  if(!panel||!wrap||!STOCK) return;
+  const c=computeComaSignals(STOCK);
+  if(!c || !c.isComa){ panel.style.display="none"; return; }
+  panel.style.display="block";
+
+  const sigBadge=(active)=>active
+    ? `<span style="color:#00d4b8;font-weight:800;">● ATTIVO ORA</span>`
+    : `<span style="color:var(--dim);">○ non ancora</span>`;
+  const patternNote = (pb)=> pb
+    ? `Pattern rilevato: <strong>${pb.patternType}</strong>, livello di rottura ${STOCK.currency} ${pb.level.toFixed(2)} — ${pb.alreadyBroken?"<span style='color:#00d4b8;'>già rotto</span>":"<span style='color:#ffd23f;'>non ancora rotto</span>"}`
+    : `Nessun pattern triangolare/cuneo rilevato al momento`;
+
+  let h=`<div style="font-size:12px;color:var(--txt);margin-bottom:12px;">Ritracciamento dal massimo storico (${STOCK.currency} ${c.highAllTime.toFixed(2)} del ${c.highAllTimeDate}): <strong style="color:#ff6b6b;">-${c.retracementPct.toFixed(1)}%</strong></div>`;
+
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:14px;">`;
+
+  h+=`<div style="border:1px solid var(--line);border-radius:10px;padding:12px;">
+    <div style="font-size:11px;font-weight:800;color:var(--txt);margin-bottom:6px;">1️⃣ CONTINUAZIONE ${sigBadge(c.signal1.active)}</div>
+    <div style="font-size:10px;color:var(--dim);">POC dal massimo storico: <strong style="color:var(--txt);">${c.signal1.poc!=null?STOCK.currency+" "+c.signal1.poc.toFixed(2):"N/D"}</strong> — prezzo attuale ${c.signal1.priceAbovePoc?"<span style='color:#00d4b8;'>sopra</span>":"<span style='color:#ff9f1c;'>sotto</span>"}</div>
+    <div style="font-size:10px;color:var(--dim);margin-top:4px;">${patternNote(c.signal1.patternBreakout)}</div>
+  </div>`;
+
+  h+=`<div style="border:1px solid var(--line);border-radius:10px;padding:12px;">
+    <div style="font-size:11px;font-weight:800;color:var(--txt);margin-bottom:6px;">2️⃣ RIMBALZO DAL FONDO ${sigBadge(c.signal2.active)}</div>
+    <div style="font-size:10px;color:var(--dim);">POC su tutto lo storico: <strong style="color:var(--txt);">${c.signal2.poc!=null?STOCK.currency+" "+c.signal2.poc.toFixed(2):"N/D"}</strong> — distanza dal prezzo: <strong style="color:var(--txt);">${c.signal2.distancePct!=null?c.signal2.distancePct.toFixed(1)+"%":"N/D"}</strong> (soglia: entro 5%)</div>
+    <div style="font-size:10px;color:var(--dim);margin-top:4px;">${patternNote(c.signal2.patternBreakout)}</div>
+  </div>`;
+
+  h+=`<div style="border:1px solid var(--line);border-radius:10px;padding:12px;">
+    <div style="font-size:11px;font-weight:800;color:var(--txt);margin-bottom:6px;">3️⃣ CAMBIO DI STRUTTURA ${sigBadge(c.signal3.active)}</div>
+    <div style="font-size:10px;color:var(--dim);">Minimo del ritracciamento: <strong style="color:var(--txt);">${STOCK.currency} ${c.signal3.lowPrice.toFixed(2)}</strong> (${c.signal3.lowDate})</div>
+    <div style="font-size:10px;color:var(--dim);margin-top:4px;">${c.signal3.event?`Primo CHoCH rialzista: <strong style="color:#00d4b8;">${STOCK.currency} ${c.signal3.event.price.toFixed(2)}</strong> (${c.signal3.event.date})`:"Nessun cambio di struttura rialzista ancora rilevato dal minimo"}</div>
+  </div>`;
+
+  h+=`</div>`;
+
+  h+=`<div style="border-top:1px solid var(--line);padding-top:10px;">
+    <div style="font-size:11px;font-weight:800;color:var(--txt);margin-bottom:6px;">🎯 TARGET</div>
+    <div style="font-size:10px;color:var(--dim);">Target finale (massimo storico): <strong style="color:#00d4b8;">${STOCK.currency} ${c.targets.final.toFixed(2)}</strong></div>
+    ${c.targets.intermediate.length ? `<div style="font-size:10px;color:var(--dim);margin-top:4px;">Target intermedi (swing significativi, per prese di profitto parziali): ${c.targets.intermediate.map(t=>`<strong style="color:#c77dff;">${STOCK.currency} ${t.price.toFixed(2)}</strong> (${t.date})`).join(", ")}</div>` : `<div style="font-size:10px;color:var(--dim);margin-top:4px;">Nessuno swing high significativo trovato tra il prezzo attuale e il massimo storico — solo il target finale.</div>`}
+  </div>`;
+
+  wrap.innerHTML=h;
+}
+
 window.calcStrategy=function(){
   if(!STOCK){ el("stratStatus").textContent="Analizza prima un titolo"; return; }
   const horizon=el("stratHorizon").value;
@@ -7597,6 +7742,7 @@ window.calcStrategy=function(){
   el("stratResultsWrap").style.display="block";
   el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
   renderStrategyConsolidated();
+  renderComaPanel();
   drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
   calcPositionSizing(); // aggiorna anche il position sizing con i nuovi livelli
   if(LAST_STOCK_SCORE) renderVerdict(); // aggiorna il verdetto se lo Score era già stato calcolato prima
