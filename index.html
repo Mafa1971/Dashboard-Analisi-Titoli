@@ -2898,30 +2898,42 @@ window.renderFairValueSolidity=function(rows){
   // Peter Lynch: Fair Value = EPS × (crescita utili % + dividend yield %)
   // Usiamo la crescita media dell'utile netto sugli ultimi bilanci disponibili come proxy.
   const validNI=rows.map(r=>r.netIncome).filter(v=>v!=null);
-  let earningsGrowthPct=null;
+  let earningsGrowthPctRaw=null;
   if(validNI.length>=2){
     const first=validNI[0], lastV=validNI[validNI.length-1];
     const years=validNI.length-1;
-    if(first>0) earningsGrowthPct = (Math.pow(lastV/first,1/years)-1)*100;
+    if(first>0) earningsGrowthPctRaw = (Math.pow(lastV/first,1/years)-1)*100;
   }
+  // Tetto di buon senso: se l'anno-base dell'utile netto è insolitamente
+  // basso (recupero da una flessione, IPO recente, ecc.), la CAGR calcolata
+  // può schizzare a centinaia di punti percentuali — usata SENZA limite in
+  // formule come Lynch/Graham genera Fair Value assurdi (es. un titolo con
+  // prezzo 450 e Fair Value Lynch di 8.382: EPS moltiplicato per una
+  // "crescita" di ~930%). Nessuna azienda matura sostiene tassi così alti
+  // a lungo, quindi limitiamo la crescita usata in TUTTE E TRE le formule
+  // tra 0% e 25%/anno (il DCF aveva già un suo tetto al 15%, ora è ridondante
+  // ma innocuo, lo lasciamo com'è).
+  const earningsGrowthPct = earningsGrowthPctRaw!=null ? Math.min(Math.max(earningsGrowthPctRaw,0),25) : null;
   const eps=last.eps;
-  const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*Math.max(earningsGrowthPct,0) : null;
+  const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*earningsGrowthPct : null;
 
   // Graham: V = EPS × (8,5 + 2g) × 4,4 / Y
   // 8,5 = multiplo P/E "base" per un'azienda a crescita zero (fisso, storico)
-  // g = crescita attesa degli utili % (stessa proxy usata per Lynch)
+  // g = crescita attesa degli utili % (stessa proxy usata per Lynch, già capped)
   // 4,4 = rendimento AAA nel 1962, l'anno in cui Graham ideò la formula (fisso, storico)
   // Y = rendimento AAA ATTUALE, inserito dall'utente (non abbiamo una fonte dati live per questo)
   const grahamY=parseFloat(el("grahamYInput")?.value)||5.0;
-  const grahamFV = (eps!=null && earningsGrowthPct!=null && eps>0) ? eps*(8.5+2*Math.max(earningsGrowthPct,0))*4.4/grahamY : null;
+  const grahamFV = (eps!=null && earningsGrowthPct!=null && eps>0) ? eps*(8.5+2*earningsGrowthPct)*4.4/grahamY : null;
 
   // DCF semplificato: proiettiamo il FCF per azione a 5 anni con la crescita
-  // storica media (cap 15%/anno per prudenza), sconto al 9%, no valore terminale
-  // oltre l'orizzonte per semplicità — è una stima MOLTO approssimativa.
+  // storica media (già capped 0-25% sopra, qui ulteriormente 0-15% per
+  // prudenza — un DCF è più sensibile a crescite alte, composte su 5 anni),
+  // sconto al 9%, no valore terminale oltre l'orizzonte per semplicità —
+  // è una stima MOLTO approssimativa.
   const fcfPerShareLast = last.sharesOutstanding ? last.fcf/last.sharesOutstanding : null;
   let dcfFV=null;
   if(fcfPerShareLast!=null && earningsGrowthPct!=null){
-    const g=Math.min(Math.max(earningsGrowthPct,0),15)/100;
+    const g=Math.min(earningsGrowthPct,15)/100;
     const discount=0.09;
     let sum=0, fcf=fcfPerShareLast;
     for(let y=1;y<=5;y++){ fcf*=(1+g); sum+=fcf/Math.pow(1+discount,y); }
