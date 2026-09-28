@@ -367,6 +367,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
         <div class="panel">
           <div class="panel-title">🎯 FAIR VALUE & SOLIDITÀ</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">🎯 Target Analisti:
+              <input type="text" id="fvAnalystTarget" placeholder="es. 220.00" style="width:110px;">
+            </label>
+            <button class="btn primary" style="font-size:11px;" onclick="saveAnalystTargetFromFV()">💾 Salva</button>
+            <span id="fvAnalystTargetStatus" style="font-size:10px;color:var(--gold);"></span>
+          </div>
           <div class="cards" id="fairValueCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
           <div id="fvGrowthSourceNote" style="font-size:9px;color:var(--dim);margin-bottom:4px;"></div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF, Peter Lynch e Graham dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
@@ -1095,6 +1102,7 @@ window.switchTab=function(name){
   if(name==="Watchlist") renderWatchlistTable();
   if(name==="Portafoglio" && !CLOUD_PORTFOLIO_DATA) loadPortfoliosFromCloud();
   if(name==="Pattern" && STOCK) prefillAnalystTargetForCurrentStock();
+  if(name==="Bilancio" && STOCK) prefillAnalystTargetForCurrentStock();
 };
 
 // ── YAHOO FETCH ───────────────────────────────────────────────────────
@@ -4154,12 +4162,44 @@ window.saveAnalystTargetFromPattern=function(){
 };
 function prefillAnalystTargetForCurrentStock(){
   const field=el("patternAnalystTarget");
-  if(!field||!STOCK) return;
-  const existing=WATCHLIST.find(w=>w.ticker===STOCK.ticker);
-  field.value = existing?.analystTarget || "";
-  const status=el("patternAnalystTargetStatus");
-  if(status) status.textContent = existing?.analystTarget ? "Valore già presente in Watchlist, precompilato." : "";
+  if(field&&STOCK){
+    const existing=WATCHLIST.find(w=>w.ticker===STOCK.ticker);
+    field.value = existing?.analystTarget || "";
+    const status=el("patternAnalystTargetStatus");
+    if(status) status.textContent = existing?.analystTarget ? "Valore già presente in Watchlist, precompilato." : "";
+  }
+  // Stesso campo, duplicato nella tab Bilancio (Fair Value) per comodità:
+  // entrambi leggono/scrivono lo stesso dato in Watchlist (WATCHLIST[].analystTarget).
+  const fvField=el("fvAnalystTarget");
+  if(fvField&&STOCK){
+    const existing=WATCHLIST.find(w=>w.ticker===STOCK.ticker);
+    fvField.value = existing?.analystTarget || "";
+    const fvStatus=el("fvAnalystTargetStatus");
+    if(fvStatus) fvStatus.textContent = existing?.analystTarget ? "Valore già presente in Watchlist, precompilato." : "";
+  }
 }
+
+window.saveAnalystTargetFromFV=function(){
+  if(!STOCK){ el("fvAnalystTargetStatus").textContent="Analizza prima un titolo."; return; }
+  const val=(el("fvAnalystTarget").value||"").trim();
+  if(!val){ el("fvAnalystTargetStatus").textContent="Inserisci un valore prima di salvare."; return; }
+  const ticker=STOCK.ticker;
+  let existing=WATCHLIST.find(w=>w.ticker===ticker);
+  if(!existing){
+    existing={ ticker, company:STOCK.name||"", sector:"", industry:"", country:"", tags:[{file:"Manuale (da tab Bilancio)",note:null,date:new Date().toISOString()}] };
+    WATCHLIST.push(existing);
+  }
+  existing.analystTarget=val;
+  saveWatchlist();
+  el("fvAnalystTargetStatus").textContent=`✅ Target Analisti (${val}) salvato per ${ticker}.`;
+  // Aggiorna anche il campo gemello nella tab Pattern, se presente.
+  const patternField=el("patternAnalystTarget");
+  if(patternField) patternField.value=val;
+  const patternStatus=el("patternAnalystTargetStatus");
+  if(patternStatus) patternStatus.textContent=`✅ Target Analisti (${val}) salvato per ${ticker}.`;
+  // Ricalcola subito la card nel pannello Fair Value.
+  if(typeof LAST_FUND_ROWS!=="undefined" && LAST_FUND_ROWS) renderFairValueSolidity(LAST_FUND_ROWS);
+};
 
 window.removeFromWatchlist=function(ticker){
   WATCHLIST=WATCHLIST.filter(w=>w.ticker!==ticker);
