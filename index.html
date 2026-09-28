@@ -367,11 +367,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
         <div class="panel">
           <div class="panel-title">🎯 FAIR VALUE & SOLIDITÀ</div>
-          <div style="margin-bottom:10px;">
-            <label style="font-size:10px;color:var(--dim);">Rendimento obbligazioni corporate AAA attuale (%, serve alla formula di Graham):
-              <input type="number" id="grahamYInput" value="5.0" min="0.1" max="20" step="0.1" style="width:60px;" onchange="if(LAST_FUND_ROWS) renderFairValueSolidity(LAST_FUND_ROWS);">
-            </label>
-          </div>
           <div class="cards" id="fairValueCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
           <div id="fvGrowthSourceNote" style="font-size:9px;color:var(--dim);margin-bottom:4px;"></div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF, Peter Lynch e Graham dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
@@ -2931,13 +2926,17 @@ window.renderFairValueSolidity=function(rows){
   const eps=last.eps;
   const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*earningsGrowthPct : null;
 
-  // Graham: V = EPS × (8,5 + 2g) × 4,4 / Y
-  // 8,5 = multiplo P/E "base" per un'azienda a crescita zero (fisso, storico)
-  // g = crescita attesa degli utili % (stessa proxy usata per Lynch, già capped)
-  // 4,4 = rendimento AAA nel 1962, l'anno in cui Graham ideò la formula (fisso, storico)
-  // Y = rendimento AAA ATTUALE, inserito dall'utente (non abbiamo una fonte dati live per questo)
-  const grahamY=parseFloat(el("grahamYInput")?.value)||5.0;
-  const grahamFV = (eps!=null && earningsGrowthPct!=null && eps>0) ? eps*(8.5+2*earningsGrowthPct)*4.4/grahamY : null;
+  // Graham: Numero di Graham "classico" = √(22.5 × EPS × BVPS)
+  // (da "Security Analysis", non la formula di crescita di "The Intelligent
+  // Investor" usata in precedenza). 22,5 = P/E max 15 × P/B max 1,5 che
+  // Graham riteneva accettabili per un investitore difensivo. Non dipende
+  // da nessuna stima di crescita, quindi elimina i problemi di crescita
+  // incalcolabile/capped che affliggevano la vecchia formula — richiede solo
+  // EPS e Valore Contabile per Azione (BVPS = patrimonio netto / azioni),
+  // entrambi già disponibili nei dati di bilancio. Valido solo se EPS e
+  // BVPS sono entrambi positivi (altrimenti la radice non ha senso).
+  const bvps = (last.totalEquity!=null && last.sharesOutstanding) ? last.totalEquity/last.sharesOutstanding : null;
+  const grahamFV = (eps!=null && eps>0 && bvps!=null && bvps>0) ? Math.sqrt(22.5*eps*bvps) : null;
 
   // DCF semplificato: proiettiamo il FCF per azione a 5 anni con la crescita
   // storica media (già capped 0-25% sopra, qui ulteriormente 0-15% per
@@ -2970,13 +2969,23 @@ window.renderFairValueSolidity=function(rows){
 
   const fvGrowthNoteEl=el("fvGrowthSourceNote");
   if(fvGrowthNoteEl){
+    const notes=[];
+    // Nota sulla crescita (riguarda solo Peter Lynch e DCF — Graham ora usa
+    // il Numero di Graham classico, indipendente da qualsiasi crescita).
     if(earningsGrowthPct==null){
-      fvGrowthNoteEl.innerHTML="⚠️ Crescita non calcolabile (dati insufficienti su Utili e Ricavi) — Fair Value non disponibili.";
+      notes.push("⚠️ Crescita non calcolabile (dati insufficienti su Utili e Ricavi) — Peter Lynch e DCF non disponibili.");
     } else if(growthSource==="ricavi"){
-      fvGrowthNoteEl.innerHTML=`⚠️ Crescita basata sui <b>Ricavi</b> (${earningsGrowthPct.toFixed(1)}%/anno, cappata 0-25%) invece che sull'Utile Netto: l'anno-base dell'Utile Netto era zero/negativo (comune dopo fusioni o ristrutturazioni), quindi la CAGR sugli utili non era calcolabile.`;
+      notes.push(`⚠️ Peter Lynch e DCF usano la crescita dei <b>Ricavi</b> (${earningsGrowthPct.toFixed(1)}%/anno, cappata 0-25%) invece che dell'Utile Netto: l'anno-base dell'Utile Netto era zero/negativo (comune dopo fusioni o ristrutturazioni).`);
     } else {
-      fvGrowthNoteEl.innerHTML=`Crescita usata: ${earningsGrowthPct.toFixed(1)}%/anno (da Utile Netto, cappata 0-25%).`;
+      notes.push(`Peter Lynch e DCF: crescita usata ${earningsGrowthPct.toFixed(1)}%/anno (da Utile Netto, cappata 0-25%).`);
     }
+    // Nota sul Graham Number (BVPS)
+    if(bvps==null || bvps<=0){
+      notes.push("⚠️ Graham FV non disponibile: manca un Valore Contabile per Azione positivo (patrimonio netto/azioni).");
+    } else {
+      notes.push(`Graham FV: Numero di Graham classico √(22,5 × EPS × BVPS), BVPS = ${STOCK.currency} ${bvps.toFixed(2)}.`);
+    }
+    fvGrowthNoteEl.innerHTML=notes.join("<br>");
   }
 
   // Altman Z-Score per anno: Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MktCap/TL) + 1.0*(Sales/TA)
