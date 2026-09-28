@@ -2959,13 +2959,24 @@ window.renderFairValueSolidity=function(rows){
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
   LAST_FAIR_VALUE={avgFV,upsidePct};
 
+  // Target Analisti: il valore inserito manualmente dall'utente nella tab
+  // Pattern (salvato in Watchlist per ticker). È un dato di natura diversa
+  // dagli altri 3 (non un calcolo di valore intrinseco ma la media dei
+  // target price degli analisti di mercato), quindi lo mostriamo come
+  // riferimento a parte SENZA includerlo nella Fair Value Media.
+  const wlEntry=(typeof WATCHLIST!=="undefined") ? WATCHLIST.find(w=>w.ticker===STOCK.ticker) : null;
+  const analystTargetVal=wlEntry?.analystTarget ? parseFloat(String(wlEntry.analystTarget).replace(",",".")) : null;
+  const analystUpsidePct=(analystTargetVal!=null && !isNaN(analystTargetVal)) ? ((analystTargetVal-price)/price*100) : null;
+
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fairValueCardsWrap").innerHTML=
     card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
     card("Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--","var(--txt)")+
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
     card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
-    card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20);
+    card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20)+
+    card("🎯 Target Analisti", analystTargetVal!=null?STOCK.currency+" "+analystTargetVal.toFixed(2):"--","#4fa3ff")+
+    card("Prezzo vs Target Analisti", analystUpsidePct!=null?(analystUpsidePct>=0?"+":"")+analystUpsidePct.toFixed(1)+"%":"--", analystUpsidePct>0?"#00d4b8":"#ff6b6b");
 
   const fvGrowthNoteEl=el("fvGrowthSourceNote");
   if(fvGrowthNoteEl){
