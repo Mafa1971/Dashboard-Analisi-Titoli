@@ -373,6 +373,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </label>
           </div>
           <div class="cards" id="fairValueCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:14px;"></div>
+          <div id="fvGrowthSourceNote" style="font-size:9px;color:var(--dim);margin-bottom:4px;"></div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:10px;">Stime indicative, non consigli di investimento. DCF, Peter Lynch e Graham dipendono molto dalle assunzioni di crescita — trattali come punto di partenza, non come verità assoluta.</div>
           <div style="height:220px;"><canvas id="altmanChart"></canvas></div>
           <div id="altmanInfo" style="margin-top:10px;font-size:12px;"></div>
@@ -2904,15 +2905,28 @@ window.renderFairValueSolidity=function(rows){
     const years=validNI.length-1;
     if(first>0) earningsGrowthPctRaw = (Math.pow(lastV/first,1/years)-1)*100;
   }
-  // Tetto di buon senso: se l'anno-base dell'utile netto è insolitamente
-  // basso (recupero da una flessione, IPO recente, ecc.), la CAGR calcolata
-  // può schizzare a centinaia di punti percentuali — usata SENZA limite in
-  // formule come Lynch/Graham genera Fair Value assurdi (es. un titolo con
-  // prezzo 450 e Fair Value Lynch di 8.382: EPS moltiplicato per una
-  // "crescita" di ~930%). Nessuna azienda matura sostiene tassi così alti
-  // a lungo, quindi limitiamo la crescita usata in TUTTE E TRE le formule
-  // tra 0% e 25%/anno (il DCF aveva già un suo tetto al 15%, ora è ridondante
-  // ma innocuo, lo lasciamo com'è).
+  // Fallback: se l'Utile Netto dell'anno-base è zero/negativo (es. oneri
+  // straordinari da fusione/ristrutturazione, comune per titoli reduci da
+  // M&A), la CAGR sugli utili non è calcolabile matematicamente. Invece di
+  // lasciare la Fair Value vuota, usiamo come proxy la crescita dei Ricavi
+  // (meno volatile, quasi sempre positiva) sullo stesso arco di anni.
+  let growthSource="utili";
+  if(earningsGrowthPctRaw==null){
+    const validRev=rows.map(r=>r.revenue).filter(v=>v!=null);
+    if(validRev.length>=2){
+      const firstR=validRev[0], lastR=validRev[validRev.length-1];
+      const yearsR=validRev.length-1;
+      if(firstR>0){ earningsGrowthPctRaw=(Math.pow(lastR/firstR,1/yearsR)-1)*100; growthSource="ricavi"; }
+    }
+  }
+  // Tetto di buon senso: se l'anno-base è insolitamente basso (recupero da
+  // una flessione, IPO recente, ecc.), la CAGR calcolata può schizzare a
+  // centinaia di punti percentuali — usata SENZA limite in formule come
+  // Lynch/Graham genera Fair Value assurdi (es. un titolo con prezzo 450 e
+  // Fair Value Lynch di 8.382: EPS moltiplicato per una "crescita" di
+  // ~930%). Nessuna azienda matura sostiene tassi così alti a lungo, quindi
+  // limitiamo la crescita usata in TUTTE E TRE le formule tra 0% e 25%/anno
+  // (il DCF aveva già un suo tetto al 15%, ora è ridondante ma innocuo).
   const earningsGrowthPct = earningsGrowthPctRaw!=null ? Math.min(Math.max(earningsGrowthPctRaw,0),25) : null;
   const eps=last.eps;
   const lynchFV = (eps!=null && earningsGrowthPct!=null) ? eps*earningsGrowthPct : null;
@@ -2953,6 +2967,17 @@ window.renderFairValueSolidity=function(rows){
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
     card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
     card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20);
+
+  const fvGrowthNoteEl=el("fvGrowthSourceNote");
+  if(fvGrowthNoteEl){
+    if(earningsGrowthPct==null){
+      fvGrowthNoteEl.innerHTML="⚠️ Crescita non calcolabile (dati insufficienti su Utili e Ricavi) — Fair Value non disponibili.";
+    } else if(growthSource==="ricavi"){
+      fvGrowthNoteEl.innerHTML=`⚠️ Crescita basata sui <b>Ricavi</b> (${earningsGrowthPct.toFixed(1)}%/anno, cappata 0-25%) invece che sull'Utile Netto: l'anno-base dell'Utile Netto era zero/negativo (comune dopo fusioni o ristrutturazioni), quindi la CAGR sugli utili non era calcolabile.`;
+    } else {
+      fvGrowthNoteEl.innerHTML=`Crescita usata: ${earningsGrowthPct.toFixed(1)}%/anno (da Utile Netto, cappata 0-25%).`;
+    }
+  }
 
   // Altman Z-Score per anno: Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MktCap/TL) + 1.0*(Sales/TA)
   const zScores=rows.map(r=>{
