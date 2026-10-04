@@ -42,6 +42,31 @@ exports.handler = async function (event) {
     }
   }
 
+  // type=fundamentals: bilanci annuali (conto economico, stato patrimoniale,
+  // flussi di cassa) via quoteSummary — a differenza di Alpha Vantage, Yahoo
+  // copre bene anche i titoli di Borsa Italiana (.MI) e altre borse estere,
+  // non solo i titoli USA. Stesso discorso crumb/cookie del blocco sopra:
+  // il frontend deve prevedere un fallback (Alpha Vantage) se questa
+  // chiamata fallisce o torna dati vuoti.
+  if (type === "fundamentals") {
+    const modules = "incomeStatementHistory,balanceSheetHistory,cashflowStatementHistory,defaultKeyStatistics";
+    const qsUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=${modules}`;
+    try {
+      const res = await fetch(qsUrl, { headers: commonHeaders });
+      if (!res.ok) {
+        return { statusCode: res.status, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: `Yahoo fundamentals ha risposto con status ${res.status}` }) };
+      }
+      const data = await res.json();
+      return {
+        statusCode: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600" },
+        body: JSON.stringify(data)
+      };
+    } catch (err) {
+      return { statusCode: 500, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: err.message }) };
+    }
+  }
+
   // Con period1/period2 espliciti Yahoo restituisce dati giornalieri reali
   // anche su archi lunghi, evitando l'aggregazione automatica che avviene
   // a volte con range=max (che può ridurre i punti a poche decine).
