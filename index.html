@@ -989,7 +989,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────
-const APP_PASSWORD = "Marin71Analyzer2026.71";
+const APP_PASSWORD = "Marin71Analyzer2026.710507";
 const AUTH_KEY = "analyzer_auth_v1";
 
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
@@ -2728,45 +2728,104 @@ window.loadQuickRatios=async function(){
   el("quickRatiosStatus").innerHTML=`✅ Fonte: <strong>${source}</strong>`;
 };
 
-window.loadFundamentals=async function(){
-  if(!STOCK){ alert("Analizza prima un titolo"); return; }
-  el("fundStatus").textContent="⏳ Scarico dati di bilancio (3 richieste ad Alpha Vantage, con pausa per rispettare il limite 1/sec)...";
+// Tenta di costruire le righe di bilancio (stesso formato usato in tutta
+// l'app) a partire da Yahoo Finance (quoteSummary), gratis e senza i limiti
+// di frequenza di Alpha Vantage — e con una copertura molto migliore per i
+// titoli non-USA (es. Borsa Italiana, .MI), dove Alpha Vantage spesso non ha
+// alcun dato di bilancio. Ritorna null se Yahoo non ha dati utilizzabili
+// (il chiamante farà fallback su Alpha Vantage).
+async function tryFetchFundamentalsFromYahoo(ticker){
   try{
-    // Le richieste vanno spaziate: il piano gratuito Alpha Vantage accetta max 1 richiesta/secondo
-    const income=await fetchFundamental(STOCK.ticker,"income");
-    await new Promise(r=>setTimeout(r,1300));
-    const balance=await fetchFundamental(STOCK.ticker,"balance");
-    await new Promise(r=>setTimeout(r,1300));
-    const cashflow=await fetchFundamental(STOCK.ticker,"cashflow");
-    const incReports=(income.annualReports||[]).slice(0,8);
-    const balReports=(balance.annualReports||[]).slice(0,8);
-    const cfReports=(cashflow.annualReports||[]).slice(0,8);
-    if(incReports.length===0) throw new Error("Nessun dato di bilancio disponibile per questo ticker su Alpha Vantage");
-
-    const rows=incReports.map((inc,i)=>{
-      const bal=balReports[i]||{}, cf=cfReports[i]||{};
-      const revenue=numOrNull(inc.totalRevenue), netIncome=numOrNull(inc.netIncome);
-      const opCF=numOrNull(cf.operatingCashflow), capex=numOrNull(cf.capitalExpenditures);
+    const res=await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&type=fundamentals`);
+    const json=await res.json();
+    const r=json?.quoteSummary?.result?.[0];
+    if(!r) return null;
+    const incList=r.incomeStatementHistory?.incomeStatementHistory||[];
+    const balList=r.balanceSheetHistory?.balanceSheetStatements||[];
+    const cfList=r.cashflowStatementHistory?.cashflowStatements||[];
+    if(incList.length===0) return null;
+    // Yahoo non espone lo storico anno-per-anno delle azioni in circolazione
+    // nell'endpoint gratuito: si usa il valore attuale come approssimazione
+    // per tutti gli anni (impatta solo EPS e il segnale Piotroski "nessuna
+    // nuova emissione azioni", non gli altri indicatori).
+    const sharesNow=numOrNull(r.defaultKeyStatistics?.sharesOutstanding?.raw);
+    const g=(obj,key)=> obj && obj[key]!=null ? numOrNull(obj[key].raw) : null;
+    const rows=incList.slice(0,8).map((inc,i)=>{
+      const bal=balList[i]||{}, cf=cfList[i]||{};
+      const revenue=g(inc,"totalRevenue"), netIncome=g(inc,"netIncome");
+      const opCF=g(cf,"totalCashFromOperatingActivities"), capex=g(cf,"capitalExpenditures");
+      const dateStr = inc.endDate?.fmt || bal.endDate?.fmt || null;
+      if(!dateStr) return null;
       return {
-        year: inc.fiscalDateEnding,
+        year: dateStr,
         revenue, netIncome,
         netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
-        ebitda: numOrNull(inc.ebitda),
-        ebit: numOrNull(inc.ebit),
-        grossProfit: numOrNull(inc.grossProfit),
-        eps: numOrNull(inc.netIncome)!=null && numOrNull(bal.commonStockSharesOutstanding) ? numOrNull(inc.netIncome)/numOrNull(bal.commonStockSharesOutstanding) : null,
-        totalAssets: numOrNull(bal.totalAssets),
-        totalEquity: numOrNull(bal.totalShareholderEquity),
-        totalLiab: numOrNull(bal.totalLiabilities),
-        totalCurrentAssets: numOrNull(bal.totalCurrentAssets),
-        totalCurrentLiab: numOrNull(bal.totalCurrentLiabilities),
-        longTermDebt: numOrNull(bal.longTermDebt),
-        retainedEarnings: numOrNull(bal.retainedEarnings),
-        sharesOutstanding: numOrNull(bal.commonStockSharesOutstanding),
-        opCF, // cash flow operativo grezzo (serve per Piotroski, separato dal FCF)
-        fcf: (opCF!=null&&capex!=null)?(opCF+capex):null // capex è già negativo in Alpha Vantage
+        ebitda: null, // non disponibile per anno nei moduli storici gratuiti di Yahoo
+        ebit: g(inc,"ebit"),
+        grossProfit: g(inc,"grossProfit"),
+        eps: (netIncome!=null && sharesNow) ? netIncome/sharesNow : null,
+        totalAssets: g(bal,"totalAssets"),
+        totalEquity: g(bal,"totalStockholderEquity"),
+        totalLiab: g(bal,"totalLiab"),
+        totalCurrentAssets: g(bal,"totalCurrentAssets"),
+        totalCurrentLiab: g(bal,"totalCurrentLiabilities"),
+        longTermDebt: g(bal,"longTermDebt"),
+        retainedEarnings: g(bal,"retainedEarnings"),
+        sharesOutstanding: sharesNow,
+        opCF,
+        fcf: (opCF!=null&&capex!=null)?(opCF+capex):null
       };
-    }).reverse(); // dal più vecchio al più recente
+    }).filter(Boolean).reverse(); // dal più vecchio al più recente
+    return rows.length ? rows : null;
+  }catch(e){ return null; }
+}
+
+window.loadFundamentals=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+  el("fundStatus").textContent="⏳ Provo Yahoo (gratis, senza limiti, buona copertura anche per titoli non-USA)...";
+  try{
+    let rows=await tryFetchFundamentalsFromYahoo(STOCK.ticker);
+    let fundSource="Yahoo (gratis)";
+
+    if(!rows){
+      el("fundStatus").textContent="⏳ Yahoo non disponibile per questo titolo, provo Alpha Vantage (3 richieste, con pausa per rispettare il limite 1/sec)...";
+      // Le richieste vanno spaziate: il piano gratuito Alpha Vantage accetta max 1 richiesta/secondo
+      const income=await fetchFundamental(STOCK.ticker,"income");
+      await new Promise(r=>setTimeout(r,1300));
+      const balance=await fetchFundamental(STOCK.ticker,"balance");
+      await new Promise(r=>setTimeout(r,1300));
+      const cashflow=await fetchFundamental(STOCK.ticker,"cashflow");
+      const incReports=(income.annualReports||[]).slice(0,8);
+      const balReports=(balance.annualReports||[]).slice(0,8);
+      const cfReports=(cashflow.annualReports||[]).slice(0,8);
+      if(incReports.length===0) throw new Error("Nessun dato di bilancio disponibile per questo ticker, né su Yahoo né su Alpha Vantage");
+
+      rows=incReports.map((inc,i)=>{
+        const bal=balReports[i]||{}, cf=cfReports[i]||{};
+        const revenue=numOrNull(inc.totalRevenue), netIncome=numOrNull(inc.netIncome);
+        const opCF=numOrNull(cf.operatingCashflow), capex=numOrNull(cf.capitalExpenditures);
+        return {
+          year: inc.fiscalDateEnding,
+          revenue, netIncome,
+          netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
+          ebitda: numOrNull(inc.ebitda),
+          ebit: numOrNull(inc.ebit),
+          grossProfit: numOrNull(inc.grossProfit),
+          eps: numOrNull(inc.netIncome)!=null && numOrNull(bal.commonStockSharesOutstanding) ? numOrNull(inc.netIncome)/numOrNull(bal.commonStockSharesOutstanding) : null,
+          totalAssets: numOrNull(bal.totalAssets),
+          totalEquity: numOrNull(bal.totalShareholderEquity),
+          totalLiab: numOrNull(bal.totalLiabilities),
+          totalCurrentAssets: numOrNull(bal.totalCurrentAssets),
+          totalCurrentLiab: numOrNull(bal.totalCurrentLiabilities),
+          longTermDebt: numOrNull(bal.longTermDebt),
+          retainedEarnings: numOrNull(bal.retainedEarnings),
+          sharesOutstanding: numOrNull(bal.commonStockSharesOutstanding),
+          opCF, // cash flow operativo grezzo (serve per Piotroski, separato dal FCF)
+          fcf: (opCF!=null&&capex!=null)?(opCF+capex):null // capex è già negativo in Alpha Vantage
+        };
+      }).reverse(); // dal più vecchio al più recente
+      fundSource="Alpha Vantage (fallback)";
+    }
 
     renderFundamentals(rows);
     LAST_FUND_ROWS=rows;
@@ -2776,7 +2835,7 @@ window.loadFundamentals=async function(){
     renderPiotroski(rows);
     renderImportedQualityCompare();
     saveFundamentalsToHistory(STOCK.ticker, rows); // persiste anno per anno nello Storico, non solo in sessione
-    el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker}`;
+    el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker} — fonte: ${fundSource}`;
   }catch(err){
     el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
   }
