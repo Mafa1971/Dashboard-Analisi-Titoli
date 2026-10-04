@@ -50,22 +50,25 @@ async function getYahooAuth() {
   return cachedAuth;
 }
 
-// Esegue una chiamata quoteSummary autenticata (cookie+crumb); se
-// l'autenticazione fallisce o la chiamata torna comunque 401, ritenta UNA
-// volta forzando un nuovo handshake (il crumb cache potrebbe essere scaduto
-// lato Yahoo prima del previsto).
-async function fetchQuoteSummaryAuth(ticker, modules) {
-  const build = (auth) =>
-    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=${modules}&crumb=${encodeURIComponent(auth.crumb)}`;
-
+// Esegue una chiamata autenticata (cookie+crumb) verso un URL Yahoo
+// costruito da `buildUrl(auth)`; se l'autenticazione fallisce o la chiamata
+// torna comunque 401, ritenta UNA volta forzando un nuovo handshake (il
+// crumb in cache potrebbe essere scaduto lato Yahoo prima del previsto).
+async function fetchYahooAuth(buildUrl) {
   let auth = await getYahooAuth();
-  let res = await fetch(build(auth), { headers: { ...commonHeaders, Cookie: auth.cookie } });
+  let res = await fetch(buildUrl(auth), { headers: { ...commonHeaders, Cookie: auth.cookie } });
   if (res.status === 401) {
     cachedAuth = null; // forza un nuovo handshake
     auth = await getYahooAuth();
-    res = await fetch(build(auth), { headers: { ...commonHeaders, Cookie: auth.cookie } });
+    res = await fetch(buildUrl(auth), { headers: { ...commonHeaders, Cookie: auth.cookie } });
   }
   return res;
+}
+
+function fetchQuoteSummaryAuth(ticker, modules) {
+  return fetchYahooAuth(auth =>
+    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=${modules}&crumb=${encodeURIComponent(auth.crumb)}`
+  );
 }
 
 exports.handler = async function (event) {
@@ -103,17 +106,31 @@ exports.handler = async function (event) {
   }
 
   // type=fundamentals: bilanci annuali (conto economico, stato patrimoniale,
-  // flussi di cassa) via quoteSummary — a differenza di Alpha Vantage, Yahoo
-  // copre bene anche i titoli di Borsa Italiana (.MI) e altre borse estere,
-  // non solo i titoli USA. Stesso discorso crumb/cookie del blocco sopra:
-  // il frontend deve prevedere un fallback (Alpha Vantage) se questa
-  // chiamata fallisce o torna dati vuoti.
+  // flussi di cassa) via l'endpoint "fundamentals-timeseries" — lo stesso
+  // che alimenta oggi la pagina Financials di finance.yahoo.com, con una
+  // copertura internazionale (Borsa Italiana inclusa) molto più ampia del
+  // vecchio modulo quoteSummary "balanceSheetHistory" (che per molti titoli
+  // non-USA torna vuoto pur avendo conto economico/cash flow popolati).
+  // NOTA: i nomi esatti dei campi ("annualStockholdersEquity" ecc.) sono gli
+  // stessi usati da librerie come yfinance, ma Yahoo può cambiarli senza
+  // preavviso — se un campo smette di arrivare, nel frontend risulterà
+  // semplicemente null (nessun crash) e andrà aggiornato qui il nome campo.
   if (type === "fundamentals") {
-    const modules = "incomeStatementHistory,balanceSheetHistory,cashflowStatementHistory,defaultKeyStatistics";
+    const types = [
+      "annualTotalRevenue", "annualNetIncome", "annualGrossProfit", "annualEBIT",
+      "annualTotalAssets", "annualStockholdersEquity", "annualRetainedEarnings",
+      "annualCurrentAssets", "annualCurrentLiabilities", "annualLongTermDebt",
+      "annualTotalLiabilitiesNetMinorityInterest", "annualOrdinarySharesNumber",
+      "annualOperatingCashFlow", "annualCapitalExpenditure"
+    ].join(",");
+    const nowSec = Math.floor(Date.now() / 1000);
+    const period1 = nowSec - 15 * 365 * 24 * 3600; // ~15 anni di storico, poi il frontend tiene gli ultimi 8
     try {
-      const res = await fetchQuoteSummaryAuth(ticker, modules);
+      const res = await fetchYahooAuth(auth =>
+        `https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(ticker)}?symbol=${encodeURIComponent(ticker)}&type=${types}&period1=${period1}&period2=${nowSec}&crumb=${encodeURIComponent(auth.crumb)}`
+      );
       if (!res.ok) {
-        return { statusCode: res.status, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: `Yahoo fundamentals ha risposto con status ${res.status}` }) };
+        return { statusCode: res.status, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: `Yahoo fundamentals-timeseries ha risposto con status ${res.status}` }) };
       }
       const data = await res.json();
       return {
