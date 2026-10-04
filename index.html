@@ -1034,9 +1034,22 @@ let BENCH=null;      // dati benchmark confrontato
 function el(id){ return document.getElementById(id); }
 
 // ── AUTH ──────────────────────────────────────────────────────────────
+// Il login salvato in localStorage NON è semplicemente "1": è legato a un
+// hash della password corrente (vedi hashPwd). Così, se la password viene
+// cambiata nel codice, le sessioni già salvate nel browser (proprio o di
+// chiunque altro) smettono automaticamente di essere valide, invece di
+// restare loggate per sempre finché qualcuno non svuota manualmente la
+// cache. Non è crittografia vera (la password è comunque in chiaro nel
+// codice sorgente, visibile a chi ispeziona la pagina), serve solo a far
+// scadere i login salvati quando la password cambia.
+function hashPwd(s){
+  let h=0;
+  for(let i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; }
+  return "h"+h;
+}
 window.doLogin=function(){
   const pwd=el("loginPassword").value;
-  if(pwd===APP_PASSWORD){ try{localStorage.setItem(AUTH_KEY,"1");}catch(e){} showApp(); }
+  if(pwd===APP_PASSWORD){ try{localStorage.setItem(AUTH_KEY,hashPwd(APP_PASSWORD));}catch(e){} showApp(); }
   else{ el("loginErr").textContent="Password errata."; el("loginPassword").value=""; }
 };
 function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; }
@@ -1044,7 +1057,7 @@ document.getElementById("btnLogout").addEventListener("click",()=>{
   try{localStorage.removeItem(AUTH_KEY);}catch(e){}
   el("appContent").style.display="none"; el("loginScreen").style.display="flex"; el("loginPassword").value="";
 });
-(function(){ try{ if(localStorage.getItem(AUTH_KEY)==="1") showApp(); }catch(e){} })();
+(function(){ try{ if(localStorage.getItem(AUTH_KEY)===hashPwd(APP_PASSWORD)) showApp(); }catch(e){} })();
 
 // ── TAB SWITCH ────────────────────────────────────────────────────────
 window.fullReanalyzeFromHistory=async function(ticker){
