@@ -153,6 +153,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkInternalStruct" onchange="renderICTOverlays()"> <span style="color:#3179f5;">■</span> Struttura Internal (BOS/CHoCH)</label>
             <label class="chk"><input type="checkbox" id="chkTrendline" checked onchange="renderICTOverlays()"> <span style="color:#f9c74f;">■</span> Trendline</label>
             <label class="chk"><input type="checkbox" id="chkPattern" checked onchange="renderICTOverlays()"> <span style="color:#f94144;">■</span> Triangoli/Cunei/Flag</label>
+            <label class="chk"><input type="checkbox" id="chkBacktestTrades" onchange="renderICTOverlays()"> <span style="color:#00d4b8;">▲</span> Entrate/Uscite Backtest</label>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
             <label style="font-size:10px;color:var(--dim);">Lunghezza Swing <input type="number" id="swingLen" value="50" min="10" max="200" style="width:55px;" onchange="renderICTOverlays()"></label>
@@ -758,6 +759,15 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <div id="btTradesWrap" style="overflow-x:auto;max-height:420px;overflow-y:auto;"></div>
             </div>
           </div>
+
+          <div class="panel">
+            <div class="panel-title">🆚 CONFRONTA STRATEGIE — quale stile si adatta meglio a questo titolo?</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Lancia il backtest più volte sullo stesso titolo, una volta per ogni strategia selezionata, usando gli stessi parametri impostati sopra (direzione, soglia, capitale, rischio, riscaldamento, commissioni) ma con un ricalcolo del punteggio 0-100 che pesa diversamente gli stessi 8 componenti (Trend, Momentum, Struttura ICT, Markov, Regime, Volume, Candlestick, Rischio Order Block) a seconda dello stile. Utile per capire se questo titolo si comporta meglio come trend-following, swing, momentum o puro incrocio di medie.</div>
+            <div id="stratPresetChecks" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;"></div>
+            <button class="btn primary" onclick="compareStrategies()">🆚 CONFRONTA STRATEGIE SELEZIONATE</button>
+            <div id="stratCompareStatus" style="font-size:11px;color:var(--gold);margin:10px 0;"></div>
+            <div id="stratCompareWrap" style="overflow-x:auto;"></div>
+          </div>
         </div>
       </div>
 
@@ -799,6 +809,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
           <div id="watchlistStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
           <button class="btn ghost" style="font-size:10px;" onclick="clearWatchlist()">🗑 Svuota Watchlist</button>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+            <label style="font-size:11px;color:var(--dim);">Filtra per Strategia migliore (dalla tab Strategia → Confronta Strategie):
+              <select id="wlStrategyFilter" onchange="renderWatchlistTable()" style="font-size:11px;"><option value="">Tutte</option></select>
+            </label>
+          </div>
           <div id="watchlistTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:620px;margin-top:14px;"></div>
         </div>
       </div>
@@ -1770,6 +1785,47 @@ function drawICTCanvasOverlay(){
 
   drawTrendlineAndPatternOverlay(ctx,w,xForIdx);
   drawStrategyOverlay(ctx,w,ts,xForIdx);
+  drawBacktestTradesOverlay(ctx,w,ts);
+}
+
+// Sovrappone al grafico prezzo i trade dell'ULTIMO backtest eseguito (dalla
+// tab Strategia) — serve a verificare "a occhio" che le entrate abbiano
+// senso tecnico (es. che gli ingressi da Struttura ICT cadano davvero su
+// rotture pulite), non solo che il numero finale del backtest sia buono.
+// Disegna solo se il backtest è dello STESSO titolo aperto ora (altrimenti
+// le date non avrebbero senso su questo grafico).
+function drawBacktestTradesOverlay(ctx,w,ts){
+  if(!el("chkBacktestTrades")?.checked) return;
+  if(!LAST_BACKTEST || !STOCK || LAST_BACKTEST.ticker!==STOCK.ticker) return;
+  const dir=LAST_BACKTEST.direction;
+  const isLong=dir==="long";
+  // Troppi trade affollano il grafico e rallentano il canvas: mostriamo solo
+  // gli ultimi 60, che coprono comunque diversi anni nella maggior parte dei casi.
+  const trades=LAST_BACKTEST.trades.slice(-60);
+  trades.forEach(t=>{
+    const xEntry=ts.timeToCoordinate(t.entryDate), xExit=ts.timeToCoordinate(t.exitDate);
+    const yEntry=candleSeries.priceToCoordinate(t.entryPrice), yExit=candleSeries.priceToCoordinate(t.exitPrice);
+    if(xEntry==null||yEntry==null) return; // entrata fuori dal range visibile: salta il trade
+    const won=t.pnl>0;
+    const exitCol=won?"#00d4b8":"#ff6b6b";
+    // Linea sottile tratteggiata che collega entrata e uscita, colorata per esito.
+    if(xExit!=null && yExit!=null){
+      ctx.strokeStyle=exitCol; ctx.lineWidth=1; ctx.setLineDash([2,3]); ctx.globalAlpha=0.5;
+      ctx.beginPath(); ctx.moveTo(xEntry,yEntry); ctx.lineTo(xExit,yExit); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+    }
+    // Marker di entrata: triangolo su (long) o giù (short), colore neutro blu.
+    ctx.fillStyle="#4fa3ff";
+    ctx.beginPath();
+    if(isLong){ ctx.moveTo(xEntry,yEntry+9); ctx.lineTo(xEntry-5,yEntry+18); ctx.lineTo(xEntry+5,yEntry+18); }
+    else { ctx.moveTo(xEntry,yEntry-9); ctx.lineTo(xEntry-5,yEntry-18); ctx.lineTo(xEntry+5,yEntry-18); }
+    ctx.closePath(); ctx.fill();
+    // Marker di uscita: cerchietto verde (win) o rosso (loss).
+    if(xExit!=null && yExit!=null){
+      ctx.fillStyle=exitCol;
+      ctx.beginPath(); ctx.arc(xExit,yExit,4,0,2*Math.PI); ctx.fill();
+    }
+  });
 }
 
 // ── VOLUME PROFILE ─────────────────────────────────────────────────────
@@ -4226,6 +4282,22 @@ window.saveWatchlistRowEdit=function(ticker){
   const w=WATCHLIST.find(x=>x.ticker===ticker);
   if(!w) return;
   const val=(id)=>{ const elm=document.getElementById(id); return elm?elm.value.trim():""; };
+  // Il ticker può essere corretto (es. simboli italiani senza suffisso .MI).
+  const newTickerRaw=val(`wlEdit_ticker_${ticker}`);
+  const newTicker=newTickerRaw.toUpperCase();
+  if(!newTicker){
+    alert("Il ticker non può essere vuoto.");
+    return;
+  }
+  if(newTicker!==ticker && WATCHLIST.some(x=>x!==w && x.ticker===newTicker)){
+    alert(`Il ticker "${newTicker}" è già presente in watchlist.`);
+    return;
+  }
+  if(newTicker!==ticker){
+    w.ticker=newTicker;
+    // Se il titolo aveva uno storico/tag collegato al vecchio ticker, lo lasciamo
+    // così com'è: lo storico analisi è indicizzato per ticker e non lo tocchiamo qui.
+  }
   w.company=val(`wlEdit_company_${ticker}`);
   w.country=val(`wlEdit_country_${ticker}`);
   w.sector=val(`wlEdit_sector_${ticker}`);
@@ -4253,6 +4325,22 @@ window.renderWatchlistTable=function(){
   if(WATCHLIST.length===0){ wrap.innerHTML=`<div class="empty-state"><p>Watchlist vuota — carica un file o incolla dei ticker sopra</p></div>`; return; }
 
   let list=WATCHLIST.slice();
+
+  // Popola il filtro "Strategia migliore" con le sole strategie effettivamente
+  // salvate su almeno un titolo, preservando la selezione corrente.
+  const stratFilterEl=el("wlStrategyFilter");
+  if(stratFilterEl){
+    const prevVal=stratFilterEl.value;
+    const usedIds=[...new Set(WATCHLIST.map(w=>w.bestStrategy).filter(Boolean))];
+    stratFilterEl.innerHTML=`<option value="">Tutte</option>`+usedIds.map(id=>{
+      const label=STRATEGY_PRESETS[id]?.label || WATCHLIST.find(w=>w.bestStrategy===id)?.bestStrategyLabel || id;
+      return `<option value="${id}">${label}</option>`;
+    }).join("");
+    if(usedIds.includes(prevVal)) stratFilterEl.value=prevVal;
+  }
+  const stratFilter=stratFilterEl?.value;
+  if(stratFilter) list=list.filter(w=>w.bestStrategy===stratFilter);
+
   if(WATCHLIST_SORT.column){
     const col=WATCHLIST_SORT.column, dir=WATCHLIST_SORT.dir;
     list.sort((a,b)=>{
@@ -4270,7 +4358,7 @@ window.renderWatchlistTable=function(){
   // e quindi sono anche eleggibili per il tab Portafoglio.
   const historyByTicker={};
   loadAnalysisHistory().forEach(h=>{ if(h.stockScore!=null) historyByTicker[h.ticker]=h.stockScore; });
-  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}${th("sector","Sector")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Etichette")}${thPlain("")}</tr>`;
+  let h=`<table><tr>${thPlain("#")}${th("ticker","Ticker")}${th("company","Company")}${th("country","Country")}${th("sector","Sector")}<th>Analizzato</th>${thPlain("Valutazione")}${thPlain("Qualità")}${thPlain("Strategia")}${thPlain("Etichette")}${thPlain("")}</tr>`;
   list.forEach((w,idx)=>{
     if(WATCHLIST_EDITING===w.ticker){
       // Riga in modalità modifica: un campo per ciascun dato importabile,
@@ -4278,13 +4366,14 @@ window.renderWatchlistTable=function(){
       const inp=(id,val,placeholder,width)=>`<input type="text" id="wlEdit_${id}_${w.ticker}" value="${(val||"").toString().replace(/"/g,"&quot;")}" placeholder="${placeholder}" style="width:${width||70}px;font-size:10px;">`;
       h+=`<tr style="background:var(--panel2);">
         <td style="font-size:11px;color:var(--dim);font-weight:700;text-align:center;">${idx+1}</td>
-        <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
+        <td>${inp("ticker",w.ticker,"Ticker",70)}</td>
         <td>${inp("company",w.company,"Company",110)}</td>
         <td>${inp("country",w.country,"Country",80)}<br>${inp("industry",w.industry,"Industry",80)}</td>
         <td>${inp("sector",w.sector,"Sector",80)}</td>
         <td style="font-size:9px;color:var(--dim);">manuale</td>
         <td>${inp("fairValue",w.fairValue,"Fair Value",55)} ${inp("fairValueLabel",w.fairValueLabel,"Etichetta",70)}<br>${inp("analystTarget",w.analystTarget,"Target",55)} ${inp("targetLabel",w.targetLabel,"Etichetta",70)}</td>
         <td>${inp("altmanZ",w.altmanZ,"Altman Z",55)}<br>${inp("piotroski",w.piotroski,"Piotroski",55)}</td>
+        <td style="font-size:10px;color:var(--dim);">${w.bestStrategyLabel||"—"}</td>
         <td style="max-width:220px;">—</td>
         <td style="white-space:nowrap;">
           <button class="btn primary" style="font-size:10px;padding:3px 8px;" onclick="saveWatchlistRowEdit('${w.ticker}')">💾 Salva</button>
@@ -4308,6 +4397,9 @@ window.renderWatchlistTable=function(){
     const analizzatoHtml = historyByTicker[w.ticker]!=null
       ? `<span style="font-size:10px;color:#00d4b8;font-weight:700;" title="Presente nello Storico, eleggibile per il Portafoglio">✓ Score ${historyByTicker[w.ticker]}</span>`
       : `<span style="font-size:10px;color:var(--dim);">—</span>`;
+    const strategiaHtml = w.bestStrategyLabel
+      ? `<span style="font-size:10px;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:2px 6px;white-space:nowrap;" title="Salvata dalla tab Strategia → Confronta Strategie">${w.bestStrategyLabel}</span>`
+      : `<span style="font-size:10px;color:var(--dim);">—</span>`;
     h+=`<tr>
       <td style="font-size:11px;color:var(--dim);font-weight:700;text-align:center;">${idx+1}</td>
       <td style="font-weight:700;color:#4fa3ff;">${w.ticker}</td>
@@ -4317,6 +4409,7 @@ window.renderWatchlistTable=function(){
       <td>${analizzatoHtml}</td>
       <td>${valutazioneHtml}</td>
       <td>${qualitaHtml}</td>
+      <td>${strategiaHtml}</td>
       <td style="max-width:220px;">${tagsHtml}</td>
       <td style="white-space:nowrap;">
         <a href="${getTVUrl(w.ticker)}" target="_blank" rel="noopener" class="btn ghost" style="font-size:10px;padding:3px 8px;text-decoration:none;display:inline-block;">📈 TradingView</a>
@@ -7134,8 +7227,44 @@ function computeSeasonalAdjustment(data, direction){
   return { adj:Math.round(adj*10)/10, avgSeasonalPct, mtdPct, yearsUsed:yearlyReturns.length, month:curMonth };
 }
 
-function computeEntryScoreCore(data,direction,horizon){
+// ── PRESET DI STRATEGIA ──────────────────────────────────────────────
+// Ogni preset riusa GLI STESSI 8 componenti dello Stock Quant Score (nessun
+// nuovo indicatore), ma li ripesa in modo coerente con uno stile di trading
+// classico — permette di confrontare come lo STESSO titolo si comporta con
+// filosofie diverse, senza duplicare la logica di calcolo. I pesi non devono
+// sommare a 100: computeEntryScoreCore normalizza sul peso totale disponibile.
+const STRATEGY_PRESETS={
+  trend:{
+    label:"📈 Trend Following",
+    desc:"Segue trend forti e li cavalca il più a lungo possibile, ignorando i pullback minori — pensata per pochi trade ma di ampio respiro.",
+    weights:{trend:35,struttura:25,markov:15,regime:10,volume:8,momentum:4,candlestick:2,obRisk:1},
+    exitProfile:{type:"trailing",trailingATRMult:3,breakevenR:1.5}
+  },
+  swing:{
+    label:"🔄 Swing",
+    desc:"Entra su rotture di struttura (BOS/CHoCH) confermate da pattern candlestick, con attenzione al rischio di rigetto — orizzonte più corto, più trade.",
+    weights:{struttura:30,candlestick:20,obRisk:20,momentum:15,trend:8,markov:5,volume:2,regime:0},
+    exitProfile:{type:"fixed",targetR:2,breakevenR:1}
+  },
+  momentum:{
+    label:"🚀 Momentum",
+    desc:"Cerca titoli con slancio forte, confermato da volumi sopra media e continuazione statistica (Markov) — meno peso alla struttura tecnica.",
+    weights:{momentum:30,volume:25,markov:25,trend:10,regime:5,struttura:3,candlestick:2,obRisk:0},
+    exitProfile:{type:"fixed",targetR:1.5,breakevenR:0.75}
+  },
+  ma:{
+    label:"📉 Medie Mobili",
+    desc:"Il classico incrocio di medie mobili — quasi tutto il peso sull'allineamento SMA veloce/lenta, gli altri componenti fanno solo da filtro leggero.",
+    weights:{trend:65,markov:15,regime:10,volume:5,momentum:3,struttura:2,candlestick:0,obRisk:0},
+    exitProfile:{type:"fixed",targetR:3,breakevenR:1}
+  }
+};
+
+function computeEntryScoreCore(data,direction,horizon,weightOverrides){
   if(!data) return null;
+  // Peso di un componente: usa l'override del preset di strategia se
+  // presente, altrimenti il peso di default dello Stock Quant Score.
+  const w=(key,def)=>(weightOverrides && weightOverrides[key]!=null) ? weightOverrides[key] : def;
   const params = horizon==="posizionale"
     ? { smaFast:100, smaSlow:200, atrPeriod:50, structureSz:50 }
     : { smaFast:21, smaSlow:100, atrPeriod:14, structureSz:5 };
@@ -7158,7 +7287,7 @@ function computeEntryScoreCore(data,direction,horizon){
     const bullAligned=price>smaFast && smaFast>smaSlow, bearAligned=price<smaFast && smaFast<smaSlow;
     trendScore = direction==="long" ? (bullAligned?100:(price>smaSlow?50:0)) : (bearAligned?100:(price<smaSlow?50:0));
   }
-  components.push({key:"trend",label:"Trend (SMA allineate)",weight:20,val:trendScore});
+  components.push({key:"trend",label:"Trend (SMA allineate)",weight:w("trend",20),val:trendScore});
 
   // 2) MOMENTUM — RSI in zona "sana", penalizza gli estremi (peso 12)
   let momScore=null;
@@ -7177,7 +7306,7 @@ function computeEntryScoreCore(data,direction,horizon){
       else momScore=15;
     }
   }
-  components.push({key:"momentum",label:"Momentum (RSI)",weight:12,val:momScore});
+  components.push({key:"momentum",label:"Momentum (RSI)",weight:w("momentum",12),val:momScore});
 
   // 3) STRUTTURA ICT — ultimo evento BOS/CHoCH nella direzione giusta, e
   // livello dell'Order Block associato come possibile stop strutturale (peso 20)
@@ -7196,7 +7325,7 @@ function computeEntryScoreCore(data,direction,horizon){
       }
     }
   }catch(e){}
-  components.push({key:"struttura",label:"Struttura ICT (BOS/CHoCH)",weight:20,val:structScore});
+  components.push({key:"struttura",label:"Struttura ICT (BOS/CHoCH)",weight:w("struttura",20),val:structScore});
 
   // 4) MARKOV — probabilità di continuazione nella direzione desiderata (peso 13)
   let markovScore=null;
@@ -7211,7 +7340,7 @@ function computeEntryScoreCore(data,direction,horizon){
       markovScore = direction==="long" ? Math.max(0,Math.min(100,50+(upProb-downProb)*150)) : Math.max(0,Math.min(100,50+(downProb-upProb)*150));
     }
   }catch(e){}
-  components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:13,val:markovScore});
+  components.push({key:"markov",label:"Markov (probabilità continuazione)",weight:w("markov",13),val:markovScore});
 
   // 5) REGIME DI MERCATO — contesto favorevole/sfavorevole (peso 8). Usa la
   // classificazione LIVE (LAST_REGIME_RESULT) solo quando stiamo guardando
@@ -7220,7 +7349,7 @@ function computeEntryScoreCore(data,direction,horizon){
   // lì il componente resta N/D e il peso si redistribuisce sugli altri.
   let regimeScore=null;
   if(data===STOCK && LAST_REGIME_RESULT) regimeScore = direction==="long" ? LAST_REGIME_RESULT.score : 100-LAST_REGIME_RESULT.score;
-  components.push({key:"regime",label:"Regime di Mercato",weight:8,val:regimeScore});
+  components.push({key:"regime",label:"Regime di Mercato",weight:w("regime",8),val:regimeScore});
 
   // 6) VOLUME — conferma del movimento, penalizza sia debolezza che esaurimento (peso 7)
   let volScore=null;
@@ -7232,16 +7361,16 @@ function computeEntryScoreCore(data,direction,horizon){
     else if(ratio>4) volScore=30;
     else volScore=Math.max(20,ratio*80);
   }
-  components.push({key:"volume",label:"Volume (conferma)",weight:7,val:volScore});
+  components.push({key:"volume",label:"Volume (conferma)",weight:w("volume",7),val:volScore});
 
   // 7) CANDLESTICK — pattern di conferma o esaurimento sulle ultime 2 candele (peso 10)
   const candleScore=detectCandlestickSignal(data.opens,highs,lows,closes,direction);
-  components.push({key:"candlestick",label:"Pattern Candlestick",weight:10,val:candleScore});
+  components.push({key:"candlestick",label:"Pattern Candlestick",weight:w("candlestick",10),val:candleScore});
 
   // 8) RISCHIO ORDER BLOCK OPPOSTO — penalizza l'ingresso se un OB di segno
   // contrario è troppo vicino al prezzo attuale (rischio di rigetto) (peso 10)
   const obRiskScore=computeOBRejectionRisk(highs,lows,closes,direction,atr);
-  components.push({key:"obRisk",label:"Rischio Rigetto Order Block",weight:10,val:obRiskScore});
+  components.push({key:"obRisk",label:"Rischio Rigetto Order Block",weight:w("obRisk",10),val:obRiskScore});
 
   let totalWeight=0, weightedSum=0;
   components.forEach(c=>{ if(c.val!=null){ totalWeight+=c.weight; weightedSum+=c.val*c.weight; } });
@@ -7428,6 +7557,168 @@ function fmtBtDate(d){ return d instanceof Date ? d.toISOString().slice(0,10) : 
 // pattern/trendline dell'intero storico, non replicabili in modo identico
 // giorno per giorno nel passato). Una sola posizione alla volta, capitale
 // reinvestito per intero ad ogni trade chiuso (compounding).
+// Motore di simulazione riusabile: cammina barra per barra sullo storico di
+// `stockData`, ricalcolando ad OGNI giorno lo stesso punteggio 0-100 usato
+// dal vivo (computeEntryScoreCore) ma passando solo i dati fino a quel
+// giorno incluso — mai oltre, per non introdurre "sguardo nel futuro".
+// `weightOverrides` (opzionale) applica un preset di strategia diverso dai
+// pesi di default — vedi STRATEGY_PRESETS. Ritorna {error} oppure
+// {trades, equityCurve, stats, periodFrom, periodTo}.
+// `exitProfile` (opzionale) personalizza come viene gestita l'uscita del
+// trade rispetto al comportamento di default (Stop fisso + Target fisso a
+// 2R): { type:"fixed", targetR, breakevenR } oppure
+// { type:"trailing", trailingATRMult, breakevenR } (nessun target fisso,
+// lo stop segue il prezzo con un Chandelier Exit basato su ATR). In
+// entrambi i casi, una volta che il trade è in profitto di "breakevenR"
+// multipli del rischio iniziale, lo stop viene spostato (una sola volta,
+// e mai peggiorato) esattamente al prezzo di entrata. Se omesso, si usa il
+// comportamento storico (fisso 2R, nessun breakeven) per compatibilità.
+function simulateBacktestCore(stockData, direction, horizon, threshold, startCapital, riskPct, warmup, commissionPerSide, weightOverrides, exitProfile){
+  const dates=stockData.dates, closes=stockData.closes, highs=stockData.highs, lows=stockData.lows, opens=stockData.opens, volumes=stockData.volumes;
+  const n=closes.length;
+  if(n<warmup+20) return { error:`Storico insufficiente (servono almeno ${warmup+20} barre, disponibili ${n}).` };
+
+  const profile = exitProfile || { type:"fixed", targetR:2, breakevenR:null };
+  const isTrailing = profile.type==="trailing";
+  const trailingMult = profile.trailingATRMult!=null ? profile.trailingATRMult : 3;
+  const targetR = profile.targetR!=null ? profile.targetR : 2;
+  const breakevenR = profile.breakevenR;
+
+  const trades=[];
+  let capital=startCapital;
+  const equityCurve=[{date:dates[warmup], value:capital}];
+  let inPosition=false, entryIdx=null, entryPrice=null, stop=null, target=null, shares=null;
+  let initialRisk=null, beDone=false, extremePrice=null, lastATR=null;
+
+  for(let i=warmup; i<n-1; i++){
+    if(inPosition){
+      const hi=highs[i], lo=lows[i];
+
+      // Breakeven: una volta raggiunto "breakevenR" multipli del rischio
+      // iniziale a favore, lo stop si sposta all'entrata — mai peggiorato.
+      if(breakevenR!=null && !beDone){
+        const favorable = direction==="long" ? (hi-entryPrice) : (entryPrice-lo);
+        if(favorable >= breakevenR*initialRisk){
+          stop = direction==="long" ? Math.max(stop,entryPrice) : Math.min(stop,entryPrice);
+          beDone=true;
+        }
+      }
+
+      // Trailing (Chandelier Exit): lo stop segue il massimo/minimo
+      // raggiunto da quando si è in posizione, a una distanza di
+      // "trailingMult" × ATR — non torna mai indietro.
+      if(isTrailing){
+        if(direction==="long"){
+          extremePrice = extremePrice==null ? hi : Math.max(extremePrice,hi);
+          const trailStop = extremePrice - trailingMult*lastATR;
+          stop = Math.max(stop, trailStop);
+        } else {
+          extremePrice = extremePrice==null ? lo : Math.min(extremePrice,lo);
+          const trailStop = extremePrice + trailingMult*lastATR;
+          stop = Math.min(stop, trailStop);
+        }
+      }
+
+      // Controlla l'uscita sull'escursione high/low della barra corrente:
+      // in caso di ambiguità (stop e target toccati nella stessa barra),
+      // dà priorità allo stop — ipotesi conservativa.
+      let exitPrice=null, exitReason=null;
+      if(direction==="long"){
+        if(lo<=stop){ exitPrice=stop; exitReason=beDone?"Stop (breakeven/trailing)":"Stop"; }
+        else if(target!=null && hi>=target){ exitPrice=target; exitReason=`Target (${targetR}R)`; }
+      } else {
+        if(hi>=stop){ exitPrice=stop; exitReason=beDone?"Stop (breakeven/trailing)":"Stop"; }
+        else if(target!=null && lo<=target){ exitPrice=target; exitReason=`Target (${targetR}R)`; }
+      }
+      if(exitPrice!=null){
+        const pnlLordo = direction==="long" ? (exitPrice-entryPrice)*shares : (entryPrice-exitPrice)*shares;
+        const commission = 2*commissionPerSide; // acquisto + vendita
+        const pnl = pnlLordo - commission;
+        capital += pnl;
+        trades.push({
+          entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[i]), entryPrice, exitPrice, stop,
+          pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason, capitalAfter:capital
+        });
+        equityCurve.push({date:dates[i], value:capital});
+        inPosition=false;
+      }
+      continue; // mentre si è in posizione non si valutano nuovi ingressi
+    }
+
+    // Nessuna posizione aperta: ricalcola lo score SOLO sui dati fino a i (incluso)
+    const dataSlice = {
+      closes:closes.slice(0,i+1), highs:highs.slice(0,i+1), lows:lows.slice(0,i+1),
+      opens:opens.slice(0,i+1), volumes:volumes.slice(0,i+1), dates:dates.slice(0,i+1)
+    };
+    let res;
+    try{ res=computeEntryScoreCore(dataSlice,direction,horizon,weightOverrides); }catch(e){ res=null; }
+    if(res && res.score!=null && res.score>=threshold && res.stop!=null){
+      // Entra all'APERTURA della barra successiva — mai al prezzo di
+      // chiusura del giorno del segnale, per evitare il bias di guardare
+      // il futuro immediato.
+      const nextOpen=opens[i+1];
+      if(nextOpen==null) continue;
+      const risk=Math.abs(nextOpen-res.stop);
+      if(risk<=0) continue;
+      entryIdx=i+1; entryPrice=nextOpen; stop=res.stop;
+      target = isTrailing ? null : (direction==="long" ? entryPrice+targetR*risk : entryPrice-targetR*risk);
+      initialRisk=risk; beDone=false; extremePrice=null;
+      lastATR = res.atr!=null ? res.atr : risk; // fallback: se l'ATR non è disponibile, usa il rischio iniziale
+      // Position sizing per RISCHIO (non più "tutto dentro"): investe solo
+      // l'importo tale per cui, se lo Stop viene colpito, la perdita vale
+      // "riskPct"% del capitale corrente — non il 100% investito su ogni
+      // trade. Es. capitale 2500, riskPct 2% → si rischiano 50, che diviso
+      // per la distanza Entry→Stop dà quante azioni comprare. Il tetto
+      // "maxShares" impedisce di sforare il capitale disponibile (niente
+      // leva: se lo stop è vicinissimo, sizeRisk uscirebbe enorme, ma non
+      // si può comunque comprare più di quanto si ha in cassa).
+      const riskAmount = capital*(riskPct/100);
+      const sharesForRisk = riskAmount/risk;
+      const maxShares = capital/entryPrice;
+      shares = Math.min(sharesForRisk, maxShares);
+      inPosition=true;
+    }
+  }
+
+  // Una posizione ancora aperta a fine storico viene chiusa al mark-to-market
+  // dell'ultima barra, per non "sparire" dal conteggio del capitale finale.
+  if(inPosition){
+    const lastPrice=closes[n-1];
+    const pnlLordo = direction==="long" ? (lastPrice-entryPrice)*shares : (entryPrice-lastPrice)*shares;
+    const commission = 2*commissionPerSide;
+    const pnl = pnlLordo - commission;
+    capital += pnl;
+    trades.push({
+      entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[n-1]), entryPrice, exitPrice:lastPrice, stop,
+      pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason:"Fine storico (posizione ancora aperta)", capitalAfter:capital
+    });
+    equityCurve.push({date:dates[n-1], value:capital});
+  }
+
+  if(trades.length===0) return { error:"Nessun trade generato con questi parametri." };
+
+  // --- Statistiche riassuntive ---
+  const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<=0);
+  const winRate=wins.length/trades.length*100;
+  const grossWin=wins.reduce((s,t)=>s+t.pnl,0), grossLoss=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
+  const profitFactor = grossLoss>0 ? grossWin/grossLoss : (grossWin>0?Infinity:0);
+  const totalReturnPct=(capital-startCapital)/startCapital*100;
+  const yearsSpan=(dates[n-1]-dates[warmup])/(365.25*24*3600*1000);
+  const cagr = yearsSpan>0.1 ? (Math.pow(Math.max(capital,0.01)/startCapital,1/yearsSpan)-1)*100 : null;
+  let peak=startCapital, maxDD=0;
+  equityCurve.forEach(pt=>{ if(pt.value>peak) peak=pt.value; const dd=(peak-pt.value)/peak*100; if(dd>maxDD) maxDD=dd; });
+  const avgWin = wins.length? grossWin/wins.length : 0;
+  const avgLoss = losses.length? grossLoss/losses.length : 0;
+  const totalCommissions = trades.reduce((s,t)=>s+(t.commission||0),0);
+
+  return {
+    trades, equityCurve,
+    periodFrom:fmtBtDate(dates[warmup]), periodTo:fmtBtDate(dates[n-1]),
+    stats:{ capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, nTrade:trades.length, winRate,
+      profitFactor:profitFactor===Infinity?null:profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss, totalCommissions }
+  };
+}
+
 window.runStrategyBacktest=function(){
   if(!STOCK){ el("btStatus").textContent="Analizza prima un titolo"; return; }
   const direction=el("btDirection").value;
@@ -7444,123 +7735,22 @@ window.runStrategyBacktest=function(){
   const commissionPerSide = !useCommissions ? 0
     : (STOCK.currency==="USD" ? (parseFloat(el("btCommUSD").value)||0) : (parseFloat(el("btCommEUR").value)||0));
 
-  const dates=STOCK.dates, closes=STOCK.closes, highs=STOCK.highs, lows=STOCK.lows, opens=STOCK.opens, volumes=STOCK.volumes;
-  const n=closes.length;
-  if(n<warmup+20){
-    el("btStatus").textContent=`⚠️ Storico insufficiente per il backtest (servono almeno ${warmup+20} barre, disponibili ${n}). Riduci i giorni di riscaldamento o scegli un titolo con più storico.`;
-    el("btResultsWrap").style.display="none";
-    return;
-  }
-
   el("btStatus").textContent="⏳ Simulazione in corso (ricalcola lo score per ogni giorno dello storico, può richiedere qualche secondo)...";
   el("btResultsWrap").style.display="none";
 
   // setTimeout per lasciar disegnare il messaggio "in corso" prima del loop
   // pesante (ricalcolo indicatori su ogni singola barra dello storico).
   setTimeout(()=>{
-    const trades=[];
-    let capital=startCapital;
-    const equityCurve=[{date:dates[warmup], value:capital}];
-    let inPosition=false, entryIdx=null, entryPrice=null, stop=null, target=null, shares=null;
-
-    for(let i=warmup; i<n-1; i++){
-      if(inPosition){
-        // Controlla l'uscita sull'escursione high/low della barra corrente:
-        // in caso di ambiguità (stop e target toccati nella stessa barra),
-        // dà priorità allo stop — ipotesi conservativa.
-        const hi=highs[i], lo=lows[i];
-        let exitPrice=null, exitReason=null;
-        if(direction==="long"){
-          if(lo<=stop){ exitPrice=stop; exitReason="Stop"; }
-          else if(hi>=target){ exitPrice=target; exitReason="Target (2R)"; }
-        } else {
-          if(hi>=stop){ exitPrice=stop; exitReason="Stop"; }
-          else if(lo<=target){ exitPrice=target; exitReason="Target (2R)"; }
-        }
-        if(exitPrice!=null){
-          const pnlLordo = direction==="long" ? (exitPrice-entryPrice)*shares : (entryPrice-exitPrice)*shares;
-          const commission = 2*commissionPerSide; // acquisto + vendita
-          const pnl = pnlLordo - commission;
-          capital += pnl;
-          trades.push({
-            entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[i]), entryPrice, exitPrice, stop,
-            pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason, capitalAfter:capital
-          });
-          equityCurve.push({date:dates[i], value:capital});
-          inPosition=false;
-        }
-        continue; // mentre si è in posizione non si valutano nuovi ingressi
-      }
-
-      // Nessuna posizione aperta: ricalcola lo score SOLO sui dati fino a i (incluso)
-      const dataSlice = {
-        closes:closes.slice(0,i+1), highs:highs.slice(0,i+1), lows:lows.slice(0,i+1),
-        opens:opens.slice(0,i+1), volumes:volumes.slice(0,i+1), dates:dates.slice(0,i+1)
-      };
-      let res;
-      try{ res=computeEntryScoreCore(dataSlice,direction,horizon); }catch(e){ res=null; }
-      if(res && res.score!=null && res.score>=threshold && res.stop!=null){
-        // Entra all'APERTURA della barra successiva — mai al prezzo di
-        // chiusura del giorno del segnale, per evitare il bias di guardare
-        // il futuro immediato.
-        const nextOpen=opens[i+1];
-        if(nextOpen==null) continue;
-        const risk=Math.abs(nextOpen-res.stop);
-        if(risk<=0) continue;
-        entryIdx=i+1; entryPrice=nextOpen; stop=res.stop;
-        target = direction==="long" ? entryPrice+2*risk : entryPrice-2*risk;
-        // Position sizing per RISCHIO (non più "tutto dentro"): investe solo
-        // l'importo tale per cui, se lo Stop viene colpito, la perdita vale
-        // "riskPct"% del capitale corrente — non il 100% investito su ogni
-        // trade. Es. capitale 2500, riskPct 2% → si rischiano 50, che diviso
-        // per la distanza Entry→Stop dà quante azioni comprare. Il tetto
-        // "maxShares" impedisce di sforare il capitale disponibile (niente
-        // leva: se lo stop è vicinissimo, sizeRisk uscirebbe enorme, ma non
-        // si può comunque comprare più di quanto si ha in cassa).
-        const riskAmount = capital*(riskPct/100);
-        const sharesForRisk = riskAmount/risk;
-        const maxShares = capital/entryPrice;
-        shares = Math.min(sharesForRisk, maxShares);
-        inPosition=true;
-      }
-    }
-
-    // Una posizione ancora aperta a fine storico viene chiusa al mark-to-market
-    // dell'ultima barra, per non "sparire" dal conteggio del capitale finale.
-    if(inPosition){
-      const lastPrice=closes[n-1];
-      const pnlLordo = direction==="long" ? (lastPrice-entryPrice)*shares : (entryPrice-lastPrice)*shares;
-      const commission = 2*commissionPerSide;
-      const pnl = pnlLordo - commission;
-      capital += pnl;
-      trades.push({
-        entryDate:fmtBtDate(dates[entryIdx]), exitDate:fmtBtDate(dates[n-1]), entryPrice, exitPrice:lastPrice, stop,
-        pnl, pnlPct: pnl/(entryPrice*shares)*100, commission, exitReason:"Fine storico (posizione ancora aperta)", capitalAfter:capital
-      });
-      equityCurve.push({date:dates[n-1], value:capital});
-    }
-
-    if(trades.length===0){
-      el("btStatus").textContent=`⚠️ Nessun trade generato con questi parametri (soglia ${threshold}, direzione ${direction==="long"?"Long":"Short"}) — prova ad abbassare la soglia o l'orizzonte.`;
+    const result=simulateBacktestCore(STOCK, direction, horizon, threshold, startCapital, riskPct, warmup, commissionPerSide, null);
+    if(result.error){
+      el("btStatus").textContent=`⚠️ ${result.error}`;
       el("btResultsWrap").style.display="none";
       return;
     }
+    const {trades, equityCurve, periodFrom, periodTo, stats}=result;
+    const {capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, winRate, profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss, totalCommissions}=stats;
 
-    // --- Statistiche riassuntive ---
-    const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<=0);
-    const winRate=wins.length/trades.length*100;
-    const grossWin=wins.reduce((s,t)=>s+t.pnl,0), grossLoss=Math.abs(losses.reduce((s,t)=>s+t.pnl,0));
-    const profitFactor = grossLoss>0 ? grossWin/grossLoss : (grossWin>0?Infinity:0);
-    const totalReturnPct=(capital-startCapital)/startCapital*100;
-    const yearsSpan=(dates[n-1]-dates[warmup])/(365.25*24*3600*1000);
-    const cagr = yearsSpan>0.1 ? (Math.pow(Math.max(capital,0.01)/startCapital,1/yearsSpan)-1)*100 : null;
-    let peak=startCapital, maxDD=0;
-    equityCurve.forEach(pt=>{ if(pt.value>peak) peak=pt.value; const dd=(peak-pt.value)/peak*100; if(dd>maxDD) maxDD=dd; });
-    const avgWin = wins.length? grossWin/wins.length : 0;
-    const avgLoss = losses.length? grossLoss/losses.length : 0;
-    const totalCommissions = trades.reduce((s,t)=>s+(t.commission||0),0);
-
-    el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${fmtBtDate(dates[warmup])} al ${fmtBtDate(dates[n-1])}.${useCommissions?` Commissioni totali pagate: ${STOCK.currency} ${totalCommissions.toFixed(0)}.`:""}`;
+    el("btStatus").textContent=`✅ Backtest completato: ${trades.length} trade dal ${periodFrom} al ${periodTo}.${useCommissions?` Commissioni totali pagate: ${STOCK.currency} ${totalCommissions.toFixed(0)}.`:""}`;
     el("btResultsWrap").style.display="block";
 
     // Salvato per il pulsante "Scarica Excel" — così l'export riflette
@@ -7568,10 +7758,9 @@ window.runStrategyBacktest=function(){
     LAST_BACKTEST = {
       ticker:STOCK.ticker, currency:STOCK.currency, direction, horizon, threshold, startCapital, riskPct, warmup,
       useCommissions, commissionPerSide,
-      periodFrom:fmtBtDate(dates[warmup]), periodTo:fmtBtDate(dates[n-1]),
+      periodFrom, periodTo,
       trades, equityCurve:equityCurve.map(p=>({date:fmtBtDate(p.date),value:p.value})),
-      stats:{ capitaleFinale:capital, rendimentoTotalePct:totalReturnPct, cagr, nTrade:trades.length, winRate,
-        profitFactor:profitFactor===Infinity?null:profitFactor, maxDrawdownPct:maxDD, avgWin, avgLoss, totalCommissions }
+      stats
     };
 
     const statCard=(label,val,color)=>`<div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;">
@@ -7584,7 +7773,7 @@ window.runStrategyBacktest=function(){
       statCard("CAGR", cagr!=null?`${cagr>=0?"+":""}${cagr.toFixed(1)}%/anno`:"N/D", (cagr??0)>=0?"#00d4b8":"#ff6b6b"),
       statCard("N. Trade", trades.length, "var(--txt)"),
       statCard("Win Rate", `${winRate.toFixed(0)}%`, winRate>=50?"#00d4b8":"#ffd23f"),
-      statCard("Profit Factor", profitFactor===Infinity?"∞":profitFactor.toFixed(2), profitFactor>=1.5?"#00d4b8":profitFactor>=1?"#ffd23f":"#ff6b6b"),
+      statCard("Profit Factor", profitFactor===Infinity||profitFactor==null?"∞":profitFactor.toFixed(2), (profitFactor==null||profitFactor>=1.5)?"#00d4b8":profitFactor>=1?"#ffd23f":"#ff6b6b"),
       statCard("Max Drawdown", `-${maxDD.toFixed(1)}%`, maxDD<=15?"#00d4b8":maxDD<=30?"#ffd23f":"#ff6b6b"),
       statCard("Win Medio / Perdita Media", `+${STOCK.currency}${avgWin.toFixed(0)} / -${STOCK.currency}${avgLoss.toFixed(0)}`, "var(--txt)"),
       statCard("Commissioni Totali", useCommissions?`${STOCK.currency} ${totalCommissions.toFixed(0)}`:"non incluse", "var(--dim)")
@@ -7621,7 +7810,143 @@ window.runStrategyBacktest=function(){
     });
     h+="</table>";
     el("btTradesWrap").innerHTML=h;
+    // Ridisegna il grafico principale così, se la checkbox "Entrate/Uscite
+    // Backtest" è già attiva, i trade appena calcolati compaiono subito.
+    drawICTCanvasOverlay();
   }, 30);
+};
+
+// ── CONFRONTA STRATEGIE ─────────────────────────────────────────────
+// Popola le checkbox dei preset (chiamata da renderStrategyConsolidated,
+// così sono pronte appena si apre la tab Strategia).
+function renderStrategyPresetChecks(){
+  const wrap=el("stratPresetChecks");
+  if(!wrap) return;
+  // Per ciascun preset: checkbox di selezione + i moltiplicatori di uscita
+  // (target/breakeven, oppure target ATR per il trailing) precompilati con i
+  // default concordati ma modificabili — letti da compareStrategies() al
+  // momento del lancio, non più cablati fissi in STRATEGY_PRESETS.
+  wrap.innerHTML=Object.entries(STRATEGY_PRESETS).map(([id,p])=>{
+    const ep=p.exitProfile||{};
+    const numInp=(cls,val,title,width)=>`<input type="number" step="0.1" class="${cls}" data-preset="${id}" value="${val}" title="${title}" style="width:${width||44}px;font-size:10px;padding:2px 3px;">`;
+    const exitInputs = ep.type==="trailing"
+      ? `<span style="font-size:9px;color:var(--dim);margin-left:6px;">ATR×${numInp("stratTrailMult",ep.trailingATRMult,"Moltiplicatore ATR per il trailing stop")} · BE +${numInp("stratBeR",ep.breakevenR,"Breakeven: multiplo di R dopo il quale lo stop si sposta a pari")}R</span>`
+      : `<span style="font-size:9px;color:var(--dim);margin-left:6px;">Target ${numInp("stratTargetR",ep.targetR,"Target: multiplo di R",40)}R · BE +${numInp("stratBeR",ep.breakevenR,"Breakeven: multiplo di R dopo il quale lo stop si sposta a pari")}R</span>`;
+    return `<label class="chk" style="font-size:11px;display:inline-flex;align-items:center;margin-right:10px;" title="${p.desc.replace(/"/g,'&quot;')}"><input type="checkbox" class="stratPresetCheck" value="${id}" checked> ${p.label}</label>${exitInputs}<br>`;
+  }).join("");
+}
+
+// Legge i moltiplicatori attualmente impostati nei campi per un dato preset
+// (eventualmente modificati dall'utente) e restituisce il relativo
+// exitProfile da passare a simulateBacktestCore — se i campi non sono
+// presenti (es. sessione headless) ricade sui default del preset.
+function readExitProfileForPreset(id){
+  const preset=STRATEGY_PRESETS[id];
+  const base=preset.exitProfile||{type:"fixed",targetR:2,breakevenR:null};
+  const beEl=document.querySelector(`.stratBeR[data-preset="${id}"]`);
+  const breakevenR = beEl ? (parseFloat(beEl.value)||null) : base.breakevenR;
+  if(base.type==="trailing"){
+    const mEl=document.querySelector(`.stratTrailMult[data-preset="${id}"]`);
+    const trailingATRMult = mEl ? (parseFloat(mEl.value)||base.trailingATRMult) : base.trailingATRMult;
+    return { type:"trailing", trailingATRMult, breakevenR };
+  }
+  const tEl=document.querySelector(`.stratTargetR[data-preset="${id}"]`);
+  const targetR = tEl ? (parseFloat(tEl.value)||base.targetR) : base.targetR;
+  return { type:"fixed", targetR, breakevenR };
+}
+
+// Lancia lo stesso backtest (stessi parametri del pannello sopra) una volta
+// per ciascuna strategia selezionata, e mostra una tabella comparativa.
+window.compareStrategies=function(){
+  if(!STOCK){ el("stratCompareStatus").textContent="Analizza prima un titolo"; return; }
+  const selected=Array.from(document.querySelectorAll(".stratPresetCheck:checked")).map(cb=>cb.value);
+  if(selected.length===0){ el("stratCompareStatus").textContent="Seleziona almeno una strategia."; return; }
+
+  const direction=el("btDirection").value;
+  const horizon=el("stratHorizon").value;
+  const threshold=parseFloat(el("btThreshold").value)||60;
+  const startCapital=parseFloat(el("btCapital").value)||2500;
+  const riskPct=Math.min(100,Math.max(0.1,parseFloat(el("btRiskPct").value)||2));
+  const warmup=Math.max(60,parseInt(el("btWarmup").value)||260);
+  const useCommissions=el("btUseCommissions").checked;
+  const commissionPerSide = !useCommissions ? 0
+    : (STOCK.currency==="USD" ? (parseFloat(el("btCommUSD").value)||0) : (parseFloat(el("btCommEUR").value)||0));
+
+  el("stratCompareStatus").textContent=`⏳ Simulazione in corso per ${selected.length} strategie (può richiedere qualche secondo)...`;
+  el("stratCompareWrap").innerHTML="";
+
+  setTimeout(()=>{
+    const rows=selected.map(id=>{
+      const preset=STRATEGY_PRESETS[id];
+      const exitProfile=readExitProfileForPreset(id);
+      const result=simulateBacktestCore(STOCK, direction, horizon, threshold, startCapital, riskPct, warmup, commissionPerSide, preset.weights, exitProfile);
+      return { id, label:preset.label, result };
+    });
+
+    const ok=rows.filter(r=>!r.result.error);
+    ok.sort((a,b)=>(b.result.stats.cagr??-999)-(a.result.stats.cagr??-999));
+    const bestId=ok.length?ok[0].id:null;
+
+    el("stratCompareStatus").textContent=`✅ Confronto completato su ${STOCK.ticker} (${ok.length}/${rows.length} strategie hanno generato trade).`;
+    LAST_STRATEGY_COMPARE={ticker:STOCK.ticker, bestId, rows};
+    renderStrategyCompareTable();
+  }, 30);
+};
+let LAST_STRATEGY_COMPARE=null;
+
+// Disegna (o ridisegna, dopo un salvataggio) la tabella dell'ultimo confronto
+// strategie eseguito, senza rilanciare i backtest.
+function renderStrategyCompareTable(){
+  if(!LAST_STRATEGY_COMPARE || !STOCK || LAST_STRATEGY_COMPARE.ticker!==STOCK.ticker) return;
+  const {bestId, rows}=LAST_STRATEGY_COMPARE;
+  const ok=rows.filter(r=>!r.result.error);
+  const savedId=WATCHLIST.find(w=>w.ticker===STOCK.ticker)?.bestStrategy;
+  let h=`<table><tr><th>Strategia</th><th>N. Trade</th><th>Win Rate</th><th>Profit Factor</th><th>CAGR</th><th>Rendimento Tot.</th><th>Max DD</th><th>Capitale Finale</th><th></th></tr>`;
+  // Prima le strategie con risultati, ordinate per CAGR desc; poi quelle senza trade.
+  [...ok, ...rows.filter(r=>r.result.error)].forEach(r=>{
+    const isBest=r.id===bestId;
+    const isSaved=r.id===savedId;
+    const saveBtn=`<button class="btn ${isSaved?'primary':'ghost'}" style="font-size:9px;padding:3px 8px;" onclick="saveBestStrategyForCurrentStock('${r.id}')">${isSaved?"✅ Salvata":"💾 Salva"}</button>`;
+    if(r.result.error){
+      h+=`<tr style="opacity:0.6;"><td>${r.label}</td><td colspan="6" style="color:var(--dim);">${r.result.error}</td><td>${saveBtn}</td></tr>`;
+      return;
+    }
+    const s=r.result.stats;
+    h+=`<tr${isBest?' style="background:rgba(0,212,184,0.08);"':''}>
+      <td>${isBest?"🏆 ":""}${r.label}</td>
+      <td>${s.nTrade}</td>
+      <td>${s.winRate.toFixed(0)}%</td>
+      <td>${s.profitFactor==null?"∞":s.profitFactor.toFixed(2)}</td>
+      <td style="color:${(s.cagr??0)>=0?'#00d4b8':'#ff6b6b'};font-weight:700;">${s.cagr!=null?(s.cagr>=0?"+":"")+s.cagr.toFixed(1)+"%/anno":"N/D"}</td>
+      <td style="color:${s.rendimentoTotalePct>=0?'#00d4b8':'#ff6b6b'};">${s.rendimentoTotalePct>=0?"+":""}${s.rendimentoTotalePct.toFixed(1)}%</td>
+      <td style="color:${s.maxDrawdownPct<=15?'#00d4b8':s.maxDrawdownPct<=30?'#ffd23f':'#ff6b6b'};">-${s.maxDrawdownPct.toFixed(1)}%</td>
+      <td>${STOCK.currency} ${s.capitaleFinale.toFixed(0)}</td>
+      <td>${saveBtn}</td>
+    </tr>`;
+  });
+  h+="</table>";
+  h+=`<div style="font-size:9px;color:var(--dim);margin-top:8px;">💾 Salva la strategia scelta per questo titolo — la ritrovi come colonna "Strategia" nella tab Watchlist, con un filtro per raggruppare i titoli che condividono la stessa strategia migliore.</div>`;
+  el("stratCompareWrap").innerHTML=h;
+}
+
+// Salva su Watchlist quale strategia (tra quelle confrontate) è quella scelta
+// per il titolo corrente — stesso meccanismo di "Target Analisti": se il
+// titolo non è ancora in Watchlist lo aggiunge al volo.
+window.saveBestStrategyForCurrentStock=function(strategyId){
+  if(!STOCK){ el("stratCompareStatus").textContent="Analizza prima un titolo."; return; }
+  const preset=STRATEGY_PRESETS[strategyId];
+  if(!preset) return;
+  const ticker=STOCK.ticker;
+  let existing=WATCHLIST.find(w=>w.ticker===ticker);
+  if(!existing){
+    existing={ ticker, company:STOCK.name||"", sector:"", industry:"", country:"", tags:[{file:"Manuale (da Confronta Strategie)",note:null,date:new Date().toISOString()}] };
+    WATCHLIST.push(existing);
+  }
+  existing.bestStrategy=strategyId;
+  existing.bestStrategyLabel=preset.label;
+  saveWatchlist();
+  el("stratCompareStatus").textContent=`✅ Strategia "${preset.label}" salvata per ${ticker}.`;
+  renderStrategyCompareTable();
 };
 
 // Esporta in .xlsx l'ultimo backtest calcolato (window.runStrategyBacktest
@@ -7840,6 +8165,7 @@ window.calcStrategy=function(){
   el("stratStatus").textContent=`✅ Strategia calcolata (orizzonte: ${horizon==="posizionale"?"Posizionale":"Swing"})`;
   renderStrategyConsolidated();
   renderComaPanel();
+  renderStrategyPresetChecks();
   drawICTCanvasOverlay(); // ridisegna il grafico se la checkbox overlay è attiva
   calcPositionSizing(); // aggiorna anche il position sizing con i nuovi livelli
   if(LAST_STOCK_SCORE) renderVerdict(); // aggiorna il verdetto se lo Score era già stato calcolato prima
