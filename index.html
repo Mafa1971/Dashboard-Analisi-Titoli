@@ -2729,53 +2729,72 @@ window.loadQuickRatios=async function(){
 };
 
 // Tenta di costruire le righe di bilancio (stesso formato usato in tutta
-// l'app) a partire da Yahoo Finance (quoteSummary), gratis e senza i limiti
-// di frequenza di Alpha Vantage — e con una copertura molto migliore per i
-// titoli non-USA (es. Borsa Italiana, .MI), dove Alpha Vantage spesso non ha
-// alcun dato di bilancio. Ritorna null se Yahoo non ha dati utilizzabili
-// (il chiamante farà fallback su Alpha Vantage).
+// l'app) a partire da Yahoo Finance (endpoint "fundamentals-timeseries",
+// lo stesso che alimenta oggi la pagina Financials di finance.yahoo.com),
+// gratis e senza i limiti di frequenza di Alpha Vantage — e con una
+// copertura molto migliore per i titoli non-USA (es. Borsa Italiana, .MI),
+// comprese le azioni in circolazione ANNO PER ANNO (non più un'approssimazione
+// piatta). Ritorna null se Yahoo non ha dati utilizzabili (il chiamante farà
+// fallback su Alpha Vantage).
 async function tryFetchFundamentalsFromYahoo(ticker){
   try{
     const res=await fetch(`/.netlify/functions/yahoo?ticker=${encodeURIComponent(ticker)}&type=fundamentals`);
     const json=await res.json();
-    const r=json?.quoteSummary?.result?.[0];
-    if(!r) return null;
-    const incList=r.incomeStatementHistory?.incomeStatementHistory||[];
-    const balList=r.balanceSheetHistory?.balanceSheetStatements||[];
-    const cfList=r.cashflowStatementHistory?.cashflowStatements||[];
-    if(incList.length===0) return null;
-    // Yahoo non espone lo storico anno-per-anno delle azioni in circolazione
-    // nell'endpoint gratuito: si usa il valore attuale come approssimazione
-    // per tutti gli anni (impatta solo EPS e il segnale Piotroski "nessuna
-    // nuova emissione azioni", non gli altri indicatori).
-    const sharesNow=numOrNull(r.defaultKeyStatistics?.sharesOutstanding?.raw);
-    const g=(obj,key)=> obj && obj[key]!=null ? numOrNull(obj[key].raw) : null;
-    const rows=incList.slice(0,8).map((inc,i)=>{
-      const bal=balList[i]||{}, cf=cfList[i]||{};
-      const revenue=g(inc,"totalRevenue"), netIncome=g(inc,"netIncome");
-      const opCF=g(cf,"totalCashFromOperatingActivities"), capex=g(cf,"capitalExpenditures");
-      const dateStr = inc.endDate?.fmt || bal.endDate?.fmt || null;
-      if(!dateStr) return null;
+    const result=json?.timeseries?.result;
+    if(!Array.isArray(result) || result.length===0) return null;
+
+    // La risposta arriva "spezzata": un oggetto per ciascun tipo richiesto
+    // (annualTotalRevenue, annualNetIncome, ...), ciascuno con un array di
+    // {asOfDate, reportedValue:{raw}}. La appiattiamo in un'unica mappa
+    // tipo → { "YYYY-MM-DD": valore }.
+    const byType={};
+    result.forEach(entry=>{
+      if(!entry) return;
+      Object.keys(entry).forEach(k=>{
+        if(k==="meta"||k==="timestamp") return;
+        const arr=entry[k];
+        if(!Array.isArray(arr)) return;
+        const map=byType[k]||(byType[k]={});
+        arr.forEach(pt=>{
+          if(!pt || !pt.asOfDate) return;
+          const v=pt.reportedValue?.raw;
+          if(v!=null) map[pt.asOfDate]=v;
+        });
+      });
+    });
+
+    const revMap=byType["annualTotalRevenue"];
+    if(!revMap || Object.keys(revMap).length===0) return null; // niente ricavi = dati inutilizzabili
+
+    const g=(key,date)=> byType[key] && byType[key][date]!=null ? byType[key][date] : null;
+    const dates=Object.keys(revMap).sort(); // "YYYY-MM-DD" si ordina correttamente come stringa
+
+    const rows=dates.slice(-8).map(date=>{
+      const revenue=g("annualTotalRevenue",date);
+      const netIncome=g("annualNetIncome",date);
+      const opCF=g("annualOperatingCashFlow",date);
+      const capex=g("annualCapitalExpenditure",date);
+      const sharesOutstanding=g("annualOrdinarySharesNumber",date);
       return {
-        year: dateStr,
+        year: date,
         revenue, netIncome,
         netMargin: (revenue&&netIncome!=null)?(netIncome/revenue*100):null,
-        ebitda: null, // non disponibile per anno nei moduli storici gratuiti di Yahoo
-        ebit: g(inc,"ebit"),
-        grossProfit: g(inc,"grossProfit"),
-        eps: (netIncome!=null && sharesNow) ? netIncome/sharesNow : null,
-        totalAssets: g(bal,"totalAssets"),
-        totalEquity: g(bal,"totalStockholderEquity"),
-        totalLiab: g(bal,"totalLiab"),
-        totalCurrentAssets: g(bal,"totalCurrentAssets"),
-        totalCurrentLiab: g(bal,"totalCurrentLiabilities"),
-        longTermDebt: g(bal,"longTermDebt"),
-        retainedEarnings: g(bal,"retainedEarnings"),
-        sharesOutstanding: sharesNow,
+        ebitda: null, // non richiesto in questo set di tipi (non impatta i calcoli, solo un campo in tabella)
+        ebit: g("annualEBIT",date),
+        grossProfit: g("annualGrossProfit",date),
+        eps: (netIncome!=null && sharesOutstanding) ? netIncome/sharesOutstanding : null,
+        totalAssets: g("annualTotalAssets",date),
+        totalEquity: g("annualStockholdersEquity",date),
+        totalLiab: g("annualTotalLiabilitiesNetMinorityInterest",date),
+        totalCurrentAssets: g("annualCurrentAssets",date),
+        totalCurrentLiab: g("annualCurrentLiabilities",date),
+        longTermDebt: g("annualLongTermDebt",date),
+        retainedEarnings: g("annualRetainedEarnings",date),
+        sharesOutstanding,
         opCF,
         fcf: (opCF!=null&&capex!=null)?(opCF+capex):null
       };
-    }).filter(Boolean).reverse(); // dal più vecchio al più recente
+    });
     return rows.length ? rows : null;
   }catch(e){ return null; }
 }
