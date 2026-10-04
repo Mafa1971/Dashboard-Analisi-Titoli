@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -70,9 +71,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 <div id="loginScreen">
   <div style="text-align:center;"><div class="logo">FMP ANALYZER</div><div style="font-size:10px;color:var(--dim);letter-spacing:3px;margin-top:4px;">ANALISI SINGOLO TITOLO</div></div>
   <div class="lcard">
+    <label>Email</label>
+    <input type="email" id="loginEmail" placeholder="Email" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
     <label>Password</label>
-    <input type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="btn-login" onclick="doLogin()">ACCEDI →</button>
+    <div style="text-align:center;margin-top:10px;">
+      <a href="#" id="forgotPwdLink" style="font-size:10px;color:var(--dim);text-decoration:underline;">Password dimenticata?</a>
+    </div>
     <div class="err" id="loginErr"></div>
   </div>
 </div>
@@ -989,8 +995,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────
-const APP_PASSWORD = "Marin71Analyzer2026.710507";
-const AUTH_KEY = "analyzer_auth_v1";
+// Autenticazione reale via Supabase (vedi blocco AUTH più sotto) — niente
+// più password fissa scritta nel codice. La "anon key" qui sotto è la
+// chiave pubblica di Supabase: è normale e sicuro che sia visibile nel
+// codice del browser, è protetta dalle Row Level Security policy lato
+// database, non dà accesso libero ai dati.
+const SUPABASE_URL = "https://cwymthunpzxgqunjbqen.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_ClAmbNxdE_756Lkhrk3-6A_SJvF1M3G";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let chart=null, candleSeries=null, sma21Series=null, sma100Series=null, sma200Series=null;
 let volumeChartObj=null;
@@ -1033,31 +1045,52 @@ let BENCH=null;      // dati benchmark confrontato
 
 function el(id){ return document.getElementById(id); }
 
-// ── AUTH ──────────────────────────────────────────────────────────────
-// Il login salvato in localStorage NON è semplicemente "1": è legato a un
-// hash della password corrente (vedi hashPwd). Così, se la password viene
-// cambiata nel codice, le sessioni già salvate nel browser (proprio o di
-// chiunque altro) smettono automaticamente di essere valide, invece di
-// restare loggate per sempre finché qualcuno non svuota manualmente la
-// cache. Non è crittografia vera (la password è comunque in chiaro nel
-// codice sorgente, visibile a chi ispeziona la pagina), serve solo a far
-// scadere i login salvati quando la password cambia.
-function hashPwd(s){
-  let h=0;
-  for(let i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; }
-  return "h"+h;
-}
-window.doLogin=function(){
+// ── AUTH (Supabase) ──────────────────────────────────────────────────
+// Login con account reale (email+password) gestito da Supabase: password
+// mai visibile nel codice, hashing/sicurezza lato Supabase, sessione
+// persistita automaticamente dal loro SDK (token JWT in localStorage,
+// rinnovato da solo), e recupero password via email integrato.
+window.doLogin=async function(){
+  const email=el("loginEmail").value.trim();
   const pwd=el("loginPassword").value;
-  if(pwd===APP_PASSWORD){ try{localStorage.setItem(AUTH_KEY,hashPwd(APP_PASSWORD));}catch(e){} showApp(); }
-  else{ el("loginErr").textContent="Password errata."; el("loginPassword").value=""; }
+  el("loginErr").textContent="";
+  if(!email || !pwd){ el("loginErr").textContent="Inserisci email e password."; return; }
+  const {error}=await supabaseClient.auth.signInWithPassword({email, password:pwd});
+  if(error){ el("loginErr").textContent="Accesso negato: "+(error.message||"email o password errati."); el("loginPassword").value=""; return; }
+  showApp();
 };
+document.getElementById("forgotPwdLink").addEventListener("click", async (e)=>{
+  e.preventDefault();
+  const email=el("loginEmail").value.trim();
+  if(!email){ el("loginErr").textContent="Inserisci la tua email qui sopra, poi clicca di nuovo su \"Password dimenticata\"."; return; }
+  el("loginErr").style.color="var(--dim)";
+  el("loginErr").textContent="⏳ Invio email in corso...";
+  const {error}=await supabaseClient.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin+window.location.pathname });
+  if(error){ el("loginErr").style.color="var(--red)"; el("loginErr").textContent="Errore: "+error.message; return; }
+  el("loginErr").textContent="✅ Se l'email è registrata, controlla la posta per il link di reset.";
+});
 function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; }
-document.getElementById("btnLogout").addEventListener("click",()=>{
-  try{localStorage.removeItem(AUTH_KEY);}catch(e){}
+document.getElementById("btnLogout").addEventListener("click", async ()=>{
+  await supabaseClient.auth.signOut();
   el("appContent").style.display="none"; el("loginScreen").style.display="flex"; el("loginPassword").value="";
 });
-(function(){ try{ if(localStorage.getItem(AUTH_KEY)===hashPwd(APP_PASSWORD)) showApp(); }catch(e){} })();
+// Se Supabase ci rimanda qui con un link di reset password (#access_token=...
+// &type=recovery), mostriamo subito l'app già autenticati nella sessione
+// temporanea di recovery e chiediamo la nuova password con un semplice prompt
+// — più rapido che costruire uno schermo dedicato per un caso raro.
+supabaseClient.auth.onAuthStateChange(async (event, session)=>{
+  if(event==="PASSWORD_RECOVERY"){
+    const newPwd=prompt("Imposta la nuova password:");
+    if(newPwd){
+      const {error}=await supabaseClient.auth.updateUser({password:newPwd});
+      alert(error ? "Errore: "+error.message : "✅ Password aggiornata. Accedi di nuovo con la nuova password.");
+    }
+  }
+});
+(async function(){
+  const {data:{session}}=await supabaseClient.auth.getSession();
+  if(session) showApp();
+})();
 
 // ── TAB SWITCH ────────────────────────────────────────────────────────
 window.fullReanalyzeFromHistory=async function(ticker){
