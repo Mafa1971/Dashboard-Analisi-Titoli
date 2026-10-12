@@ -550,6 +550,24 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           </div>
         </div>
         <div class="panel">
+          <div class="panel-title">🌊 VOLATILITÀ EWMA &amp; CONO DI PREZZO</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Non prevede la <em>direzione</em> del prezzo — stima quanto ampio potrebbe essere il movimento nei prossimi giorni/mesi. Usa l'EWMA (media mobile esponenziale della volatilità, λ=0,94 — lo stesso approccio di RiskMetrics/JP Morgan), che si adatta più in fretta della volatilità storica semplice quando il mercato passa da calmo a turbolento. Il cono è centrato sul prezzo attuale, senza alcuna ipotesi sulla direzione — solo l'ampiezza statisticamente attesa del movimento.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ EWMA, orizzonte 1 sett.):
+              <input type="number" id="volStopMult" value="1.5" step="0.1" style="width:60px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Target (multiplo R):
+              <input type="number" id="volTargetR" value="2" step="0.1" style="width:60px;">
+            </label>
+            <button class="btn primary" onclick="runVolatilityCone()">📊 CALCOLA VOLATILITÀ &amp; CONO</button>
+          </div>
+          <div id="volStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="volResultsWrap" style="display:none;">
+            <div class="cards" id="volCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:12px;"></div>
+            <div style="height:300px;"><canvas id="volConeChart"></canvas></div>
+          </div>
+        </div>
+        <div class="panel">
           <div class="panel-title">🔮 PATTERN CORRELATION FINDER</div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Cerca nello storico i periodi passati più simili (correlazione statistica) all'andamento recente, e mostra come si è evoluto il prezzo dopo quei match. Non è una previsione garantita — è un'analisi di analogia storica.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
@@ -5726,6 +5744,114 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
     avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null,
     minCorr, bestAvailableCorr, totalCandidates };
 }
+
+// ── VOLATILITÀ EWMA & CONO DI PREZZO ────────────────────────────────
+// GARCH "vero" prevede la volatilità futura stimando i parametri via
+// massima verosimiglianza — complesso da implementare in modo affidabile
+// in JS puro. L'EWMA (media mobile esponenziale) è la versione semplificata
+// usata storicamente da RiskMetrics (JP Morgan): cattura lo stesso fenomeno
+// chiave (il "volatility clustering" — periodi turbolenti seguiti da altri
+// periodi turbolenti) con un solo parametro (λ, lambda), pesando di più i
+// rendimenti più recenti rispetto a una volatilità storica "piatta".
+// Formula: σ²_oggi = λ·σ²_ieri + (1-λ)·rendimento_ieri²
+// λ=0.94 è il valore standard RiskMetrics per dati giornalieri.
+function computeEWMAVolatility(closes, lambda){
+  lambda = lambda!=null ? lambda : 0.94;
+  if(!closes || closes.length<30) return null;
+  const rets=[];
+  for(let i=1;i<closes.length;i++){ rets.push(Math.log(closes[i]/closes[i-1])); }
+  // Seed iniziale: varianza semplice sui primi 20 rendimenti disponibili
+  // (serve solo a far partire la ricorsione, il suo peso si dissolve in
+  // fretta grazie a λ).
+  const seedN=Math.min(20,rets.length);
+  let variance = rets.slice(0,seedN).reduce((s,r)=>s+r*r,0)/seedN;
+  for(let i=0;i<rets.length;i++){ variance = lambda*variance + (1-lambda)*rets[i]*rets[i]; }
+  const dailySigma=Math.sqrt(variance);
+  const annualSigma=dailySigma*Math.sqrt(252);
+
+  // Volatilità storica "semplice" sugli ultimi 60gg, per confronto — mostra
+  // se l'EWMA (più reattiva) sta segnalando un regime diverso da quello
+  // suggerito dalla finestra storica piatta.
+  const histN=Math.min(60,rets.length);
+  const recentRets=rets.slice(-histN);
+  const meanR=recentRets.reduce((a,b)=>a+b,0)/recentRets.length;
+  const histVar=recentRets.length>1 ? recentRets.reduce((s,r)=>s+(r-meanR)*(r-meanR),0)/(recentRets.length-1) : null;
+  const histDailySigma=histVar!=null?Math.sqrt(histVar):null;
+  const histAnnualSigma=histDailySigma!=null?histDailySigma*Math.sqrt(252):null;
+
+  return { dailySigma, annualSigma, histDailySigma, histAnnualSigma };
+}
+
+let volConeChartObj=null;
+window.runVolatilityCone=function(){
+  if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
+  const closes=STOCK.closes;
+  const vol=computeEWMAVolatility(closes);
+  if(!vol){ el("volStatus").textContent="❌ Storico insufficiente (servono almeno 30 giorni di prezzi)."; el("volResultsWrap").style.display="none"; return; }
+
+  const price=closes[closes.length-1];
+  const stopMult=parseFloat(el("volStopMult").value)||1.5;
+  const targetR=parseFloat(el("volTargetR").value)||2;
+
+  // Cono di prezzo: diffusione lognormale a deriva ZERO (nessuna ipotesi
+  // sulla direzione, solo sull'ampiezza) — σ scala con la radice del tempo,
+  // come in Black-Scholes. z95=1.96 e z90=1.645 sono i quantili normali
+  // standard per le bande di confidenza al 95% e 90%.
+  const horizons=[{label:"Oggi",days:0},{label:"1 settimana",days:5},{label:"1 mese",days:21},{label:"3 mesi",days:63}];
+  const z90=1.645, z95=1.96;
+  const rows=horizons.map(h=>{
+    const sigmaH=vol.dailySigma*Math.sqrt(h.days);
+    return {
+      label:h.label,
+      upper95: price*Math.exp(z95*sigmaH), lower95: price*Math.exp(-z95*sigmaH),
+      upper90: price*Math.exp(z90*sigmaH), lower90: price*Math.exp(-z90*sigmaH)
+    };
+  });
+
+  // Stop/Target dinamici basati sulla volatilità EWMA a 1 settimana, invece
+  // che su un multiplo fisso di ATR — si allargano/stringono da soli quando
+  // la volatilità del titolo cambia regime. Stessa convenzione "R" già
+  // usata nel backtest (Confronta Strategie): Target = targetR × rischio.
+  const sigma1w=vol.dailySigma*Math.sqrt(5);
+  const stopDistPct=stopMult*sigma1w*100;
+  const stopPrice=price*(1-stopMult*sigma1w);
+  const targetPrice=price*(1+targetR*stopMult*sigma1w);
+
+  const regimeRatio = vol.histAnnualSigma ? vol.annualSigma/vol.histAnnualSigma : null;
+  const regimeLabel = regimeRatio==null ? "N/D" : regimeRatio>1.15 ? "🔺 In aumento" : regimeRatio<0.85 ? "🔻 In calo" : "➡️ Stabile";
+  const regimeCol = regimeRatio==null ? "var(--dim)" : regimeRatio>1.15 ? "#ff6b6b" : regimeRatio<0.85 ? "#00d4b8" : "#ffd23f";
+
+  const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
+  el("volCardsWrap").innerHTML=
+    card("Volatilità Annua (EWMA)", (vol.annualSigma*100).toFixed(1)+"%","var(--txt)")+
+    card("Volatilità Storica (60gg)", vol.histAnnualSigma!=null?(vol.histAnnualSigma*100).toFixed(1)+"%":"--","var(--dim)")+
+    card("Regime Volatilità", regimeLabel, regimeCol, regimeRatio!=null && regimeRatio>1.15)+
+    card("Stop Loss suggerito", STOCK.currency+" "+stopPrice.toFixed(2), "#ff6b6b")+
+    card(`Target suggerito (${targetR}R)`, STOCK.currency+" "+targetPrice.toFixed(2), "#00d4b8")+
+    card("Distanza Stop", "-"+stopDistPct.toFixed(1)+"%", "var(--dim)");
+
+  const labels=rows.map(r=>r.label);
+  const ctx=el("volConeChart");
+  if(volConeChartObj) volConeChartObj.destroy();
+  volConeChartObj=new Chart(ctx.getContext("2d"),{
+    type:"line",
+    data:{labels, datasets:[
+      {label:"Banda 95%", data:rows.map(r=>r.upper95), borderColor:"rgba(255,107,107,0.45)", backgroundColor:"rgba(255,107,107,0.08)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
+      {label:"Banda 90%", data:rows.map(r=>r.upper90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
+      {label:"Prezzo attuale", data:rows.map(()=>price), borderColor:"#4fa3ff", borderWidth:2, pointRadius:0, tension:0, borderDash:[4,3]},
+      {label:"Banda 90% (inf.)", data:rows.map(r=>r.lower90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15},
+      {label:"Banda 95% (inf.)", data:rows.map(r=>r.lower95), borderColor:"rgba(255,107,107,0.45)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12},
+        filter:(item)=>item.text!=="Banda 90% (inf.)" && item.text!=="Banda 95% (inf.)"}}, // evita doppioni in legenda (le bande sup/inf hanno lo stesso colore)
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+Math.round(v)},grid:{color:"#1e2d45"}}}}
+  });
+
+  el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`;
+  el("volResultsWrap").style.display="block";
+};
 
 let patChartObj=null;
 window.runPatternSearch=async function(){
