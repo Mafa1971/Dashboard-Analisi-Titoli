@@ -22,6 +22,9 @@ body{background:var(--bg);color:var(--txt);font-family:'Manrope',sans-serif;font
 .btn-login{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#111;border:none;padding:12px;border-radius:10px;font-family:'Manrope',sans-serif;font-weight:800;font-size:13px;cursor:pointer;}
 .err{font-size:11px;color:var(--red);text-align:center;min-height:16px;margin-top:6px;}
 #appContent{display:none;}
+/* Funzioni in anteprima: visibili solo all'account proprietario (vedi isOwner) */
+[data-owner-only]{display:none !important;}
+body.is-owner [data-owner-only]{display:block !important;}
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap;gap:8px;}
 .hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-family:'Manrope',sans-serif;font-size:11px;font-weight:700;}
@@ -549,11 +552,18 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <span id="patternAnalystTargetStatus" style="font-size:10px;color:var(--gold);"></span>
           </div>
         </div>
-        <div class="panel">
+        <div class="panel" data-owner-only>
           <div class="panel-title">🌊 VOLATILITÀ EWMA &amp; CONO DI PREZZO</div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Non prevede la <em>direzione</em> del prezzo — stima quanto ampio potrebbe essere il movimento nei prossimi giorni/mesi. Usa l'EWMA (media mobile esponenziale della volatilità, λ=0,94 — lo stesso approccio di RiskMetrics/JP Morgan), che si adatta più in fretta della volatilità storica semplice quando il mercato passa da calmo a turbolento. Il cono è centrato sul prezzo attuale, senza alcuna ipotesi sulla direzione — solo l'ampiezza statisticamente attesa del movimento.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-            <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ EWMA, orizzonte 1 sett.):
+            <label style="font-size:11px;color:var(--dim);">Modello:
+              <select id="volModel">
+                <option value="both" selected>Confronto EWMA + GARCH</option>
+                <option value="ewma">Solo EWMA</option>
+                <option value="garch">Solo GARCH(1,1)</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ, orizzonte 1 sett.):
               <input type="number" id="volStopMult" value="1.5" step="0.1" style="width:60px;">
             </label>
             <label style="font-size:11px;color:var(--dim);">Target (multiplo R):
@@ -1075,6 +1085,9 @@ window.doLogin=async function(){
   if(!email || !pwd){ el("loginErr").textContent="Inserisci email e password."; return; }
   const {error}=await supabaseClient.auth.signInWithPassword({email, password:pwd});
   if(error){ el("loginErr").textContent="Accesso negato: "+(error.message||"email o password errati."); el("loginPassword").value=""; return; }
+  const {data:{session:sess}}=await supabaseClient.auth.getSession();
+  if(!(await betaAccessOk(sess))){ el("loginPassword").value=""; return; }
+  applyOwnerFlag(sess);
   showApp();
 };
 document.getElementById("forgotPwdLink").addEventListener("click", async (e)=>{
@@ -1087,9 +1100,33 @@ document.getElementById("forgotPwdLink").addEventListener("click", async (e)=>{
   if(error){ el("loginErr").style.color="var(--red)"; el("loginErr").textContent="Errore: "+error.message; return; }
   el("loginErr").textContent="✅ Se l'email è registrata, controlla la posta per il link di reset.";
 });
+// Account proprietario: le funzioni nuove marcate con data-owner-only
+// compaiono solo se il login è questo. NB: è un filtro dell'interfaccia
+// (il codice gira nel browser), non una protezione vera dei dati.
+const OWNER_EMAIL = "fabriziomarin@libero.it";
+let CURRENT_USER_EMAIL = null;
+function isOwner(){ return (CURRENT_USER_EMAIL||"").toLowerCase()===OWNER_EMAIL; }
+function applyOwnerFlag(session){
+  CURRENT_USER_EMAIL = session?.user?.email || null;
+  document.body.classList.toggle("is-owner", isOwner());
+}
+// Il sito "beta" (ramo beta di GitHub, indirizzo che inizia con "beta--")
+// è riservato al proprietario: chi entra con un altro account viene
+// disconnesso. Il controllo è sull'indirizzo, quindi resta valido anche
+// quando il file viene portato su main (lì non scatta).
+const IS_BETA_SITE = location.hostname.startsWith("beta--");
+async function betaAccessOk(session){
+  if(!IS_BETA_SITE || !session) return true;
+  if((session.user?.email||"").toLowerCase()===OWNER_EMAIL) return true;
+  await supabaseClient.auth.signOut();
+  el("loginErr").style.color="var(--red)";
+  el("loginErr").textContent="Questa è la versione di prova, riservata al proprietario. Usa l'indirizzo normale del sito.";
+  return false;
+}
 function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; }
 document.getElementById("btnLogout").addEventListener("click", async ()=>{
   await supabaseClient.auth.signOut();
+  applyOwnerFlag(null);
   el("appContent").style.display="none"; el("loginScreen").style.display="flex"; el("loginPassword").value="";
 });
 // Se Supabase ci rimanda qui con un link di reset password (#access_token=...
@@ -1097,6 +1134,7 @@ document.getElementById("btnLogout").addEventListener("click", async ()=>{
 // temporanea di recovery e chiediamo la nuova password con un semplice prompt
 // — più rapido che costruire uno schermo dedicato per un caso raro.
 supabaseClient.auth.onAuthStateChange(async (event, session)=>{
+  applyOwnerFlag(session);
   if(event==="PASSWORD_RECOVERY"){
     const newPwd=prompt("Imposta la nuova password:");
     if(newPwd){
@@ -1107,6 +1145,8 @@ supabaseClient.auth.onAuthStateChange(async (event, session)=>{
 });
 (async function(){
   const {data:{session}}=await supabaseClient.auth.getSession();
+  if(session && !(await betaAccessOk(session))) return;
+  applyOwnerFlag(session);
   if(session) showApp();
 })();
 
@@ -5782,37 +5822,102 @@ function computeEWMAVolatility(closes, lambda){
   return { dailySigma, annualSigma, histDailySigma, histAnnualSigma };
 }
 
+// ── GARCH(1,1) ──────────────────────────────────────────────────────
+// σ²ₜ = ω + α·r²ₜ₋₁ + β·σ²ₜ₋₁, con ω = (1−α−β)·V (variance targeting: V è
+// la varianza campionaria dei rendimenti, così restano da stimare solo α e
+// β). I parametri si scelgono massimizzando la log-verosimiglianza
+// gaussiana con una ricerca a griglia che si restringe due volte attorno al
+// punto migliore (niente librerie di ottimizzazione). Vincoli: α>0, β>0,
+// α+β<0.999 (stazionarietà). Differenza chiave rispetto all'EWMA: la
+// previsione a più giorni torna gradualmente verso la volatilità di lungo
+// periodo √V invece di restare piatta.
+function fitGARCH11(closes){
+  if(!closes || closes.length<250) return null; // sotto ~1 anno la stima dei parametri non è affidabile
+  const rets=[];
+  for(let i=1;i<closes.length;i++){ rets.push(Math.log(closes[i]/closes[i-1])); }
+  const n=rets.length;
+  const mean=rets.reduce((a,b)=>a+b,0)/n;
+  const x=rets.map(r=>r-mean);
+  const V=x.reduce((s,r)=>s+r*r,0)/n;
+  if(!(V>0)) return null;
+
+  const run=(alpha,beta)=>{
+    const omega=(1-alpha-beta)*V;
+    let s2=V, ll=0;
+    for(let i=0;i<n;i++){
+      if(!(s2>1e-14)) return {ll:-Infinity};
+      ll+=-0.5*(Math.log(s2)+x[i]*x[i]/s2);
+      s2=omega+alpha*x[i]*x[i]+beta*s2;
+    }
+    return {ll, s2Next:s2, omega};
+  };
+  let best={ll:-Infinity, alpha:0.08, beta:0.9};
+  const search=(aMin,aMax,bMin,bMax,steps)=>{
+    for(let i=0;i<=steps;i++){
+      const a=aMin+(aMax-aMin)*i/steps;
+      if(a<=0.001) continue;
+      for(let j=0;j<=steps;j++){
+        const b=bMin+(bMax-bMin)*j/steps;
+        if(b<=0.001 || a+b>=0.999) continue;
+        const r=run(a,b);
+        if(r.ll>best.ll) best={ll:r.ll, alpha:a, beta:b};
+      }
+    }
+  };
+  search(0.01,0.30,0.40,0.98,24);
+  for(let pass=0;pass<2;pass++){
+    const da=(pass===0?0.02:0.004), db=(pass===0?0.04:0.008);
+    search(Math.max(0.002,best.alpha-da), best.alpha+da, Math.max(0.01,best.beta-db), Math.min(0.998,best.beta+db), 16);
+  }
+  const fin=run(best.alpha,best.beta);
+  if(!isFinite(fin.ll)) return null;
+  const persistence=best.alpha+best.beta;
+  const s2Next=fin.s2Next;           // varianza prevista per domani
+  return {
+    alpha:best.alpha, beta:best.beta, omega:fin.omega, persistence,
+    longRunDailyVar:V, longRunAnnualSigma:Math.sqrt(V*252),
+    dailySigma:Math.sqrt(s2Next), annualSigma:Math.sqrt(s2Next*252),
+    halfLifeDays: persistence<1 ? Math.log(0.5)/Math.log(persistence) : null,
+    // Varianza cumulata sui prossimi H giorni: σ²ₜ₊ₕ = V + (α+β)^(h−1)·(σ²ₜ₊₁ − V)
+    cumVar:(H)=>{ let c=0; for(let h=1;h<=H;h++){ c+=V+Math.pow(persistence,h-1)*(s2Next-V); } return c; }
+  };
+}
+
 let volConeChartObj=null;
 window.runVolatilityCone=function(){
+  if(!isOwner()) return; // funzione in anteprima: solo account proprietario
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const closes=STOCK.closes;
   const vol=computeEWMAVolatility(closes);
   if(!vol){ el("volStatus").textContent="❌ Storico insufficiente (servono almeno 30 giorni di prezzi)."; el("volResultsWrap").style.display="none"; return; }
+  const modelSel=el("volModel")?el("volModel").value:"both"; // "ewma" | "garch" | "both"
+  const wantGarch = modelSel!=="ewma";
+  const wantEwma = modelSel!=="garch";
+  const garch = wantGarch ? fitGARCH11(closes) : null;
+  let garchNote="";
+  if(wantGarch && !garch) garchNote=" GARCH non calcolabile: servono almeno ~250 giorni di storico (1 anno) — mostrato solo l'EWMA.";
 
   const price=closes[closes.length-1];
   const stopMult=parseFloat(el("volStopMult").value)||1.5;
   const targetR=parseFloat(el("volTargetR").value)||2;
 
   // Cono di prezzo: diffusione lognormale a deriva ZERO (nessuna ipotesi
-  // sulla direzione, solo sull'ampiezza) — σ scala con la radice del tempo,
-  // come in Black-Scholes. z95=1.96 e z90=1.645 sono i quantili normali
-  // standard per le bande di confidenza al 95% e 90%.
+  // sulla direzione, solo sull'ampiezza). EWMA: σ costante, scala con √t.
+  // GARCH: la varianza cumulata viene dalla previsione che torna verso la
+  // media di lungo periodo. z95=1.96 e z90=1.645 sono i quantili normali.
   const horizons=[{label:"Oggi",days:0},{label:"1 settimana",days:5},{label:"1 mese",days:21},{label:"3 mesi",days:63}];
   const z90=1.645, z95=1.96;
-  const rows=horizons.map(h=>{
-    const sigmaH=vol.dailySigma*Math.sqrt(h.days);
-    return {
-      label:h.label,
-      upper95: price*Math.exp(z95*sigmaH), lower95: price*Math.exp(-z95*sigmaH),
-      upper90: price*Math.exp(z90*sigmaH), lower90: price*Math.exp(-z90*sigmaH)
-    };
+  const bands=(sigmaOf)=>horizons.map(h=>{
+    const s=sigmaOf(h.days);
+    return { upper95:price*Math.exp(z95*s), lower95:price*Math.exp(-z95*s), upper90:price*Math.exp(z90*s), lower90:price*Math.exp(-z90*s) };
   });
+  const rowsE = bands(d=>vol.dailySigma*Math.sqrt(d));
+  const rowsG = garch ? bands(d=>Math.sqrt(garch.cumVar(d))) : null;
 
-  // Stop/Target dinamici basati sulla volatilità EWMA a 1 settimana, invece
-  // che su un multiplo fisso di ATR — si allargano/stringono da soli quando
-  // la volatilità del titolo cambia regime. Stessa convenzione "R" già
-  // usata nel backtest (Confronta Strategie): Target = targetR × rischio.
-  const sigma1w=vol.dailySigma*Math.sqrt(5);
+  // Stop/Target dinamici: a 1 settimana EWMA e GARCH sono quasi identici.
+  // Con un solo modello si usa quello scelto; in confronto si usa l'EWMA.
+  const useGarchForStop = garch && modelSel==="garch";
+  const sigma1w = useGarchForStop ? Math.sqrt(garch.cumVar(5)) : vol.dailySigma*Math.sqrt(5);
   const stopDistPct=stopMult*sigma1w*100;
   const stopPrice=price*(1-stopMult*sigma1w);
   const targetPrice=price*(1+targetR*stopMult*sigma1w);
@@ -5822,34 +5927,59 @@ window.runVolatilityCone=function(){
   const regimeCol = regimeRatio==null ? "var(--dim)" : regimeRatio>1.15 ? "#ff6b6b" : regimeRatio<0.85 ? "#00d4b8" : "#ffd23f";
 
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
-  el("volCardsWrap").innerHTML=
+  let cards=
     card("Volatilità Annua (EWMA)", (vol.annualSigma*100).toFixed(1)+"%","var(--txt)")+
     card("Volatilità Storica (60gg)", vol.histAnnualSigma!=null?(vol.histAnnualSigma*100).toFixed(1)+"%":"--","var(--dim)")+
-    card("Regime Volatilità", regimeLabel, regimeCol, regimeRatio!=null && regimeRatio>1.15)+
+    card("Regime Volatilità", regimeLabel, regimeCol, regimeRatio!=null && regimeRatio>1.15);
+  if(garch){
+    cards+=
+      card("Volatilità Annua (GARCH, domani)", (garch.annualSigma*100).toFixed(1)+"%","#c77dff")+
+      card("Volatilità di Lungo Periodo (GARCH)", (garch.longRunAnnualSigma*100).toFixed(1)+"%","#c77dff")+
+      card("Persistenza α+β", garch.persistence.toFixed(3), garch.persistence>0.98?"#ff9f1c":"var(--txt)")+
+      card("Emivita shock", garch.halfLifeDays!=null?garch.halfLifeDays.toFixed(0)+" gg":"--","var(--dim)");
+  }
+  cards+=
     card("Stop Loss suggerito", STOCK.currency+" "+stopPrice.toFixed(2), "#ff6b6b")+
     card(`Target suggerito (${targetR}R)`, STOCK.currency+" "+targetPrice.toFixed(2), "#00d4b8")+
     card("Distanza Stop", "-"+stopDistPct.toFixed(1)+"%", "var(--dim)");
+  el("volCardsWrap").innerHTML=cards;
 
-  const labels=rows.map(r=>r.label);
+  const labels=horizons.map(h=>h.label);
+  const priceLine={label:"Prezzo attuale", data:horizons.map(()=>price), borderColor:"#4fa3ff", borderWidth:2, pointRadius:0, tension:0, borderDash:[4,3]};
+  let datasets;
+  if(garch && wantEwma){
+    // Confronto: solo le bande al 95% dei due modelli, senza riempimento, per leggibilità.
+    datasets=[
+      {label:"EWMA 95%", data:rowsE.map(r=>r.upper95), borderColor:"#ffd23f", borderWidth:1.5, pointRadius:0, tension:0.15},
+      {label:"GARCH 95%", data:rowsG.map(r=>r.upper95), borderColor:"#c77dff", borderWidth:1.5, pointRadius:0, tension:0.15},
+      priceLine,
+      {label:"EWMA 95% (inf.)", data:rowsE.map(r=>r.lower95), borderColor:"#ffd23f", borderWidth:1.5, pointRadius:0, tension:0.15},
+      {label:"GARCH 95% (inf.)", data:rowsG.map(r=>r.lower95), borderColor:"#c77dff", borderWidth:1.5, pointRadius:0, tension:0.15}
+    ];
+  } else {
+    const rows = (garch && !wantEwma) ? rowsG : rowsE;
+    const name = (garch && !wantEwma) ? "GARCH" : "EWMA";
+    datasets=[
+      {label:`Banda 95% (${name})`, data:rows.map(r=>r.upper95), borderColor:"rgba(255,107,107,0.45)", backgroundColor:"rgba(255,107,107,0.08)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
+      {label:`Banda 90% (${name})`, data:rows.map(r=>r.upper90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
+      priceLine,
+      {label:"Banda 90% (inf.)", data:rows.map(r=>r.lower90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15},
+      {label:"Banda 95% (inf.)", data:rows.map(r=>r.lower95), borderColor:"rgba(255,107,107,0.45)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15}
+    ];
+  }
   const ctx=el("volConeChart");
   if(volConeChartObj) volConeChartObj.destroy();
   volConeChartObj=new Chart(ctx.getContext("2d"),{
     type:"line",
-    data:{labels, datasets:[
-      {label:"Banda 95%", data:rows.map(r=>r.upper95), borderColor:"rgba(255,107,107,0.45)", backgroundColor:"rgba(255,107,107,0.08)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
-      {label:"Banda 90%", data:rows.map(r=>r.upper90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
-      {label:"Prezzo attuale", data:rows.map(()=>price), borderColor:"#4fa3ff", borderWidth:2, pointRadius:0, tension:0, borderDash:[4,3]},
-      {label:"Banda 90% (inf.)", data:rows.map(r=>r.lower90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15},
-      {label:"Banda 95% (inf.)", data:rows.map(r=>r.lower95), borderColor:"rgba(255,107,107,0.45)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15}
-    ]},
+    data:{labels, datasets},
     options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12},
-        filter:(item)=>item.text!=="Banda 90% (inf.)" && item.text!=="Banda 95% (inf.)"}}, // evita doppioni in legenda (le bande sup/inf hanno lo stesso colore)
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12,
+        filter:(item)=>!item.text.includes("(inf.)")}}}, // evita doppioni in legenda (bande sup/inf stesso colore)
       scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
               y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+Math.round(v)},grid:{color:"#1e2d45"}}}}
   });
 
-  el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`;
+  el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`+garchNote;
   el("volResultsWrap").style.display="block";
 };
 
