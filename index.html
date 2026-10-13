@@ -575,6 +575,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="volResultsWrap" style="display:none;">
             <div class="cards" id="volCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:12px;"></div>
             <div style="height:300px;"><canvas id="volConeChart"></canvas></div>
+            <div id="volHistWrap" style="display:none;margin-top:18px;">
+              <div class="panel-title" style="font-size:12px;">📊 PREZZO vs VOLATILITÀ CONDIZIONALE GARCH (storico)</div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">La linea rossa è la volatilità annualizzata stimata dal GARCH(1,1) giorno per giorno. I picchi estremi di volatilità coincidono spesso con capitolazioni e minimi di mercato: i punti rossi sul prezzo segnano i giorni col 5% di volatilità più alta dello storico. È un indicatore di <em>contesto</em>, non un segnale di timing garantito.</div>
+              <div class="cards" id="volSignalWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
+              <div style="height:340px;"><canvas id="volHistChart"></canvas></div>
+              <div style="font-size:11px;color:var(--dim);margin:12px 0 4px;">Rendimenti logaritmici giornalieri (%)</div>
+              <div style="height:170px;"><canvas id="volRetChart"></canvas></div>
+            </div>
           </div>
         </div>
         <div class="panel">
@@ -5873,8 +5881,13 @@ function fitGARCH11(closes){
   if(!isFinite(fin.ll)) return null;
   const persistence=best.alpha+best.beta;
   const s2Next=fin.s2Next;           // varianza prevista per domani
+  // Serie storica della volatilità condizionale (annualizzata, in %): il
+  // valore all'indice i+1 di closes è la σ stimata per il rendimento i
+  // (cioè usando solo l'informazione fino al giorno precedente).
+  const histVol=new Array(closes.length).fill(null);
+  { let s2=V; for(let i=0;i<n;i++){ histVol[i+1]=Math.sqrt(s2*252)*100; s2=fin.omega+best.alpha*x[i]*x[i]+best.beta*s2; } }
   return {
-    alpha:best.alpha, beta:best.beta, omega:fin.omega, persistence,
+    alpha:best.alpha, beta:best.beta, omega:fin.omega, persistence, histVol,
     longRunDailyVar:V, longRunAnnualSigma:Math.sqrt(V*252),
     dailySigma:Math.sqrt(s2Next), annualSigma:Math.sqrt(s2Next*252),
     halfLifeDays: persistence<1 ? Math.log(0.5)/Math.log(persistence) : null,
@@ -5883,7 +5896,79 @@ function fitGARCH11(closes){
   };
 }
 
-let volConeChartObj=null;
+let volConeChartObj=null, volHistChartObj=null, volRetChartObj=null;
+// Grafico storico: prezzo + volatilità condizionale GARCH (doppio asse),
+// rendimenti giornalieri e lettura del regime di volatilità.
+function renderVolHistory(closes, garch){
+  const wrap=el("volHistWrap");
+  if(!garch || !garch.histVol || !STOCK.dates || STOCK.dates.length!==closes.length){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  const dates=STOCK.dates, vol=garch.histVol;
+  const valid=vol.filter(v=>v!=null).slice().sort((a,b)=>a-b);
+  const pct=(v)=>{ // percentile storico di v (0-100)
+    let lo=0,hi=valid.length; while(lo<hi){ const m=(lo+hi)>>1; if(valid[m]<=v) lo=m+1; else hi=m; }
+    return 100*lo/valid.length;
+  };
+  const p95val=valid[Math.floor(valid.length*0.95)];
+  const cur=vol[vol.length-1];
+  const curPct=pct(cur);
+  // massimo di volatilità negli ultimi 20 giorni
+  let peak=-Infinity, peakIdx=-1;
+  for(let i=Math.max(1,vol.length-20);i<vol.length;i++){ if(vol[i]!=null && vol[i]>peak){ peak=vol[i]; peakIdx=i; } }
+  const peakPct=pct(peak);
+  const prev5=vol[vol.length-6]!=null?vol[vol.length-6]:cur;
+  const rising=cur>prev5*1.03, falling=cur<prev5*0.97;
+  let sigLabel, sigCol, sigNote;
+  if(peakPct>=90 && cur<peak*0.85){
+    sigLabel="⚠️ Picco alle spalle"; sigCol="#00d4b8";
+    sigNote=`Volatilità in calo dopo un picco al ${peakPct.toFixed(0)}° percentile (${dates[peakIdx]}): fase tipica di possibile esaurimento/inversione`;
+  } else if(curPct>=90 && rising){
+    sigLabel="🔴 Stress in aumento"; sigCol="#ff6b6b";
+    sigNote="Volatilità estrema e ancora in crescita: inversione non confermata";
+  } else if(curPct>=90){
+    sigLabel="🟠 Volatilità alta"; sigCol="#ff9f1c";
+    sigNote="Volatilità estrema ma non più in crescita: da monitorare";
+  } else if(curPct<=15){
+    sigLabel="😴 Volatilità compressa"; sigCol="#4fa3ff";
+    sigNote="Volatilità ai minimi storici: spesso precede un'espansione dei movimenti";
+  } else {
+    sigLabel="➡️ Regime normale"; sigCol="#ffd23f";
+    sigNote="Nessun estremo di volatilità";
+  }
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:16px;">${val}</div><div class="l">${label}</div></div>`;
+  el("volSignalWrap").innerHTML=
+    card("Volatilità GARCH oggi", cur.toFixed(1)+"%", "#c77dff")+
+    card("Percentile storico", curPct.toFixed(0)+"°", curPct>=90?"#ff6b6b":curPct<=15?"#4fa3ff":"var(--txt)")+
+    card("Massimo ultimi 20gg", peak.toFixed(1)+"%", "var(--dim)")+
+    card("Lettura regime", sigLabel, sigCol)+
+    `<div style="grid-column:1/-1;font-size:11px;color:${sigCol};">${sigNote}</div>`;
+
+  const extreme=closes.map((c,i)=>(vol[i]!=null && vol[i]>=p95val)?c:null);
+  const rets=closes.map((c,i)=>i===0?null:Math.log(c/closes[i-1])*100);
+  const axisX={ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10,maxRotation:0},grid:{color:"#1e2d45"}};
+  if(volHistChartObj) volHistChartObj.destroy();
+  volHistChartObj=new Chart(el("volHistChart").getContext("2d"),{
+    type:"line",
+    data:{labels:dates, datasets:[
+      {label:`Prezzo (${STOCK.ticker})`, data:closes, borderColor:"#4fa3ff", borderWidth:1.5, pointRadius:0, tension:0, yAxisID:"y"},
+      {label:"Volatilità GARCH annualizzata (%)", data:vol, borderColor:"#ff4d6d", borderWidth:1.3, pointRadius:0, tension:0, yAxisID:"y1"},
+      {label:"Volatilità estrema (top 5%)", data:extreme, borderColor:"transparent", backgroundColor:"#ff4d6d", pointRadius:2.5, pointHoverRadius:4, showLine:false, yAxisID:"y"}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}},
+      scales:{x:axisX,
+        y:{position:"left",title:{display:true,text:`Prezzo (${STOCK.currency||""})`,color:"#4fa3ff",font:{size:10}},ticks:{color:"#4fa3ff",font:{size:9}},grid:{color:"#1e2d45"}},
+        y1:{position:"right",title:{display:true,text:"Volatilità GARCH (%)",color:"#ff4d6d",font:{size:10}},ticks:{color:"#ff4d6d",font:{size:9}},grid:{drawOnChartArea:false}}}}
+  });
+  if(volRetChartObj) volRetChartObj.destroy();
+  volRetChartObj=new Chart(el("volRetChart").getContext("2d"),{
+    type:"line",
+    data:{labels:dates, datasets:[{label:"Rendimento giornaliero (%)", data:rets, borderColor:"#7b7fe8", borderWidth:0.8, pointRadius:0, tension:0}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false}},
+      scales:{x:axisX,y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}}
+  });
+}
 window.runVolatilityCone=function(){
   if(!isOwner()) return; // funzione in anteprima: solo account proprietario
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
@@ -5979,6 +6064,7 @@ window.runVolatilityCone=function(){
               y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+Math.round(v)},grid:{color:"#1e2d45"}}}}
   });
 
+  renderVolHistory(closes, garch);
   el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`+garchNote;
   el("volResultsWrap").style.display="block";
 };
