@@ -585,6 +585,29 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
           </div>
         </div>
+        <div class="panel" data-owner-only>
+          <div class="panel-title">🌊 CICLI DI HURST (cicli di minimo del titolo)</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Secondo la teoria dei cicli di Hurst il prezzo è la somma di cicli annidati di durata diversa, e i minimi di ciascuna scala tendono a ripetersi a intervalli abbastanza regolari. Qui la durata viene <em>misurata sul singolo titolo</em> (non assunta): per ogni scala si cercano i minimi locali, si misura la distanza tipica tra l'uno e l'altro e quanto è regolare, e si stima a che punto del ciclo ci troviamo oggi. È una stima statistica del <em>timing</em>, non una previsione: se la regolarità è bassa il ciclo non è affidabile per quel titolo.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Scala del ciclo:
+              <select id="hurstScale">
+                <option value="auto" selected>Automatica (la più regolare)</option>
+                <option value="5">Breve (≈ settimane)</option>
+                <option value="10">Medio-breve</option>
+                <option value="20">Medio (≈ mesi)</option>
+                <option value="40">Medio-lungo</option>
+                <option value="80">Lungo (≈ trimestri)</option>
+              </select>
+            </label>
+            <button class="btn primary" onclick="runHurstCycles()">🌊 MISURA CICLI</button>
+          </div>
+          <div id="hurstStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="hurstResultsWrap" style="display:none;">
+            <div class="cards" id="hurstCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px;"></div>
+            <div style="height:340px;"><canvas id="hurstChart"></canvas></div>
+            <div style="overflow-x:auto;margin-top:12px;"><table id="hurstTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-title">🔮 PATTERN CORRELATION FINDER</div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Cerca nello storico i periodi passati più simili (correlazione statistica) all'andamento recente, e mostra come si è evoluto il prezzo dopo quei match. Non è una previsione garantita — è un'analisi di analogia storica.</div>
@@ -1131,7 +1154,7 @@ async function betaAccessOk(session){
   el("loginErr").textContent="Questa è la versione di prova, riservata al proprietario. Usa l'indirizzo normale del sito.";
   return false;
 }
-function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; }
+function showApp(){ el("loginScreen").style.display="none"; el("appContent").style.display="block"; if(window.initCloudSync) window.initCloudSync(); }
 document.getElementById("btnLogout").addEventListener("click", async ()=>{
   await supabaseClient.auth.signOut();
   applyOwnerFlag(null);
@@ -4104,14 +4127,42 @@ function saveHistoryArr(arr){
   return syncHistoryToCloud(arr); // ritorna la Promise — i chiamanti che vogliono ASPETTARE la conferma cloud (es. cancellazioni) possono fare await
 }
 
+// ── Sincronizzazione cloud su Supabase (tabella user_data, una riga per
+// utente e per chiave: "history" / "watchlist"). Le regole di sicurezza
+// (RLS) lato Supabase fanno sì che ognuno legga/scriva SOLO le proprie righe.
+async function cloudGet(key){
+  const {data,error}=await supabaseClient.from("user_data").select("data").eq("key",key).maybeSingle();
+  if(error) throw error;
+  return data ? data.data : null; // null = mai salvato
+}
+async function cloudSet(key,arr){
+  const {data:{session}}=await supabaseClient.auth.getSession();
+  if(!session) throw new Error("nessuna sessione");
+  const {error}=await supabaseClient.from("user_data").upsert(
+    {user_id:session.user.id, key, data:arr, updated_at:new Date().toISOString()},
+    {onConflict:"user_id,key"});
+  if(error) throw error;
+}
+// Lettura della vecchia copia su Netlify Blobs, usata UNA volta per
+// migrare i dati già esistenti nel nuovo archivio Supabase.
+async function legacyCloudGet(key){
+  try{
+    const res=await fetch("/.netlify/functions/history"+(key==="watchlist"?"?key=watchlist":""));
+    if(!res.ok) return [];
+    const j=await res.json(); return Array.isArray(j)?j:[];
+  }catch(e){ return []; }
+}
+window.initCloudSync=function(){
+  loadHistoryFromCloudAndMerge();
+  loadWatchlistFromCloudAndMerge();
+};
+
 async function syncHistoryToCloud(arr){
   try{
-    const res=await fetch("/.netlify/functions/history",{
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(arr)
-    });
-    CLOUD_SYNC_STATUS = res.ok ? "sincronizzato" : "errore ("+res.status+")";
+    await cloudSet("history", arr);
+    CLOUD_SYNC_STATUS = "sincronizzato";
   }catch(e){
-    CLOUD_SYNC_STATUS = "offline / non raggiungibile";
+    CLOUD_SYNC_STATUS = "errore ("+(e.message||"offline")+")";
   }
   const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: "+CLOUD_SYNC_STATUS;
 }
@@ -4131,9 +4182,8 @@ function mergeHistories(local, cloud){
 
 async function loadHistoryFromCloudAndMerge(){
   try{
-    const res=await fetch("/.netlify/functions/history");
-    if(!res.ok) throw new Error("status "+res.status);
-    const cloud=await res.json();
+    let cloud=await cloudGet("history");
+    if(cloud===null) cloud=await legacyCloudGet("history"); // prima volta: migra dalla vecchia copia
     // IMPORTANTE: leggiamo loadAnalysisHistory() QUI, dopo la fetch (non
     // prima) — se l'utente analizza un titolo MENTRE questa richiesta è
     // ancora in corso, una copia "local" catturata all'inizio sarebbe
@@ -4145,9 +4195,7 @@ async function loadHistoryFromCloudAndMerge(){
     // RIMANDATO su cloud — altrimenti se il cloud era vuoto o incompleto
     // (es. dati mai sincronizzati prima di un fix), resta vuoto per sempre
     // e gli altri dispositivi non vedono mai lo storico "ricco" del primo.
-    await fetch("/.netlify/functions/history",{
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(merged.slice(-200))
-    }).catch(()=>{}); // se questo fallisce non blocchiamo l'utente, resta comunque salvato in locale
+    await cloudSet("history", merged.slice(-200)).catch(()=>{}); // se questo fallisce non blocchiamo l'utente, resta comunque salvato in locale
     CLOUD_SYNC_STATUS="sincronizzato";
     const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: sincronizzato ("+merged.length+" titoli)";
     if(el("tabStorico")?.classList.contains("active")) renderHistoryTab();
@@ -4156,9 +4204,7 @@ async function loadHistoryFromCloudAndMerge(){
     const el_=document.getElementById("cloudSyncStatus"); if(el_) el_.textContent="☁️ Cloud: non raggiungibile (uso solo la copia locale)";
   }
 }
-// Sincronizza subito all'apertura della pagina, così lo storico di altri
-// dispositivi è già pronto appena vai sul tab Storico.
-loadHistoryFromCloudAndMerge();
+// La sincronizzazione parte dopo il login (initCloudSync, chiamata da showApp).
 
 // ── WATCHLIST (import da file screener esterno o incolla manuale) ──────
 let WATCHLIST=[];
@@ -4174,17 +4220,13 @@ function saveWatchlist(){
   syncWatchlistToCloud(WATCHLIST);
 }
 async function syncWatchlistToCloud(list){
-  try{
-    await fetch("/.netlify/functions/history?key=watchlist",{
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(list)
-    });
-  }catch(e){ /* fallisce in silenzio, resta comunque salvata in locale */ }
+  try{ await cloudSet("watchlist", list); }
+  catch(e){ /* fallisce in silenzio, resta comunque salvata in locale */ }
 }
 async function loadWatchlistFromCloudAndMerge(){
   try{
-    const res=await fetch("/.netlify/functions/history?key=watchlist");
-    if(!res.ok) throw new Error("status "+res.status);
-    const cloud=await res.json();
+    let cloud=await cloudGet("watchlist");
+    if(cloud===null) cloud=await legacyCloudGet("watchlist"); // prima volta: migra dalla vecchia copia
     if(!Array.isArray(cloud)) return;
     // Merge per ticker: unisce locale+cloud, senza duplicati. IMPORTANTE:
     // leggiamo WATCHLIST qui, ORA (non una variabile "local" catturata
@@ -4200,7 +4242,6 @@ async function loadWatchlistFromCloudAndMerge(){
   }catch(e){ /* offline o non raggiungibile: resta la sola copia locale */ }
 }
 loadWatchlistFromStorage();
-loadWatchlistFromCloudAndMerge();
 
 window.loadWatchlistFile=function(event){
   const file=event.target.files[0];
@@ -5903,7 +5944,7 @@ function renderVolHistory(closes, garch){
   const wrap=el("volHistWrap");
   if(!garch || !garch.histVol || !STOCK.dates || STOCK.dates.length!==closes.length){ wrap.style.display="none"; return; }
   wrap.style.display="block";
-  const dates=STOCK.dates, vol=garch.histVol;
+  const dates=STOCK.dates.map(d=>d.toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"})), vol=garch.histVol;
   const valid=vol.filter(v=>v!=null).slice().sort((a,b)=>a-b);
   const pct=(v)=>{ // percentile storico di v (0-100)
     let lo=0,hi=valid.length; while(lo<hi){ const m=(lo+hi)>>1; if(valid[m]<=v) lo=m+1; else hi=m; }
@@ -6067,6 +6108,145 @@ window.runVolatilityCone=function(){
   renderVolHistory(closes, garch);
   el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`+garchNote;
   el("volResultsWrap").style.display="block";
+};
+
+
+// ── CICLI DI HURST ──────────────────────────────────────────────────
+// Minimi locali di ordine "order": barra i con close <= tutte le barre
+// entro ±order. Si richiede una distanza minima tra due minimi accettati
+// per non contare due volte un fondo "piatto".
+function hurstFindTroughs(closes, order){
+  const idx=[];
+  for(let i=order;i<closes.length-order;i++){
+    let ok=true;
+    for(let k=1;k<=order;k++){ if(closes[i-k]<closes[i] || closes[i+k]<closes[i]){ ok=false; break; } }
+    if(ok && (idx.length===0 || i-idx[idx.length-1]>=order)) idx.push(i);
+  }
+  return idx;
+}
+// Esponente di Hurst H (analisi R/S sui rendimenti log). H>0.5: tendenze
+// persistenti; H<0.5: ritorno verso la media; H≈0.5: casuale. Con pochi dati
+// il metodo R/S tende a sovrastimare di qualche centesimo: va letto come
+// indicazione, non come numero esatto.
+function hurstExponentRS(closes){
+  const r=[]; for(let i=1;i<closes.length;i++) r.push(Math.log(closes[i]/closes[i-1]));
+  const sizes=[8,16,32,64,128,256,512].filter(n=>n<=r.length/2);
+  if(sizes.length<4) return null;
+  const pts=[];
+  for(const n of sizes){
+    const chunks=Math.floor(r.length/n); let sum=0,cnt=0;
+    for(let c=0;c<chunks;c++){
+      const seg=r.slice(c*n,(c+1)*n);
+      const m=seg.reduce((a,b)=>a+b,0)/n;
+      let cum=0,mx=-Infinity,mn=Infinity,ss=0;
+      for(const v of seg){ cum+=v-m; mx=Math.max(mx,cum); mn=Math.min(mn,cum); ss+=(v-m)*(v-m); }
+      const S=Math.sqrt(ss/n); if(S>0){ sum+=(mx-mn)/S; cnt++; }
+    }
+    if(cnt>0) pts.push([Math.log(n),Math.log(sum/cnt)]);
+  }
+  if(pts.length<4) return null;
+  const mx=pts.reduce((a,p)=>a+p[0],0)/pts.length, my=pts.reduce((a,p)=>a+p[1],0)/pts.length;
+  let num=0,den=0; for(const p of pts){ num+=(p[0]-mx)*(p[1]-my); den+=(p[0]-mx)*(p[0]-mx); }
+  return den>0 ? num/den : null;
+}
+function hurstScaleStats(closes, order){
+  const t=hurstFindTroughs(closes, order);
+  if(t.length<5) return null; // servono almeno 4 intervalli per misurare una regolarità
+  const gaps=[]; for(let i=1;i<t.length;i++) gaps.push(t[i]-t[i-1]);
+  const mean=gaps.reduce((a,b)=>a+b,0)/gaps.length;
+  const sorted=gaps.slice().sort((a,b)=>a-b);
+  const median=sorted.length%2? sorted[(sorted.length-1)/2] : (sorted[sorted.length/2-1]+sorted[sorted.length/2])/2;
+  const std=Math.sqrt(gaps.reduce((s,g)=>s+(g-mean)*(g-mean),0)/gaps.length);
+  const cv=std/mean;
+  const last=t[t.length-1];
+  const barsSince=(closes.length-1)-last;
+  return { order, troughs:t, count:t.length, median, mean, std, cv, regularity:Math.max(0,1-cv), last, barsSince, phase:barsSince/median };
+}
+let hurstChartObj=null;
+window.runHurstCycles=function(){
+  if(!isOwner()) return; // funzione in anteprima: solo account proprietario
+  if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
+  const closes=STOCK.closes, dates=STOCK.dates, n=closes.length;
+  if(n<300){ el("hurstStatus").textContent="❌ Storico insufficiente: servono almeno ~300 giorni di prezzi."; el("hurstResultsWrap").style.display="none"; return; }
+  const orders=[5,10,20,40,80];
+  const all=orders.map(o=>hurstScaleStats(closes,o)).filter(Boolean);
+  if(!all.length){ el("hurstStatus").textContent="❌ Nessuna scala ha prodotto abbastanza minimi per misurare un ciclo."; el("hurstResultsWrap").style.display="none"; return; }
+  const sel=el("hurstScale").value;
+  let chosen;
+  if(sel==="auto"){
+    // la scala più regolare tra quelle con ciclo medio ≥ 8 barre
+    const cand=all.filter(s=>s.median>=8);
+    chosen=(cand.length?cand:all).slice().sort((a,b)=>a.cv-b.cv)[0];
+  } else {
+    chosen=all.find(s=>s.order===parseInt(sel));
+    if(!chosen){ el("hurstStatus").textContent="❌ Su questa scala il titolo ha troppo pochi minimi: scegli un'altra scala o 'Automatica'."; el("hurstResultsWrap").style.display="none"; return; }
+  }
+  const H=hurstExponentRS(closes);
+  const fmtD=(d)=>d.toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
+  // barre → giorni di calendario (≈ 7/5)
+  const cal=(bars)=>Math.round(bars*7/5);
+  const addDays=(d,k)=>{ const x=new Date(d.getTime()); x.setDate(x.getDate()+k); return x; };
+  const lastDate=dates[n-1];
+  const expMid=chosen.median-chosen.barsSince;           // barre al prossimo minimo atteso (può essere negativo = in ritardo)
+  const expLo=expMid-chosen.std, expHi=expMid+chosen.std;
+  const regLabel = chosen.regularity>=0.65?"Alta":chosen.regularity>=0.45?"Media":"Bassa";
+  const regCol = chosen.regularity>=0.65?"#00d4b8":chosen.regularity>=0.45?"#ffd23f":"#ff6b6b";
+  let phaseLabel, phaseCol;
+  if(chosen.phase<0.35){ phaseLabel="🌱 Inizio ciclo (dopo il minimo)"; phaseCol="#00d4b8"; }
+  else if(chosen.phase<0.7){ phaseLabel="📈 Metà ciclo"; phaseCol="#ffd23f"; }
+  else if(chosen.phase<=1.1){ phaseLabel="⏳ Ciclo maturo: minimo atteso a breve"; phaseCol="#ff9f1c"; }
+  else { phaseLabel="⌛ Ciclo esteso (oltre la durata tipica)"; phaseCol="#ff6b6b"; }
+  const nextTxt = expMid>0
+    ? `tra ~${Math.round(expMid)} barre (≈ ${fmtD(addDays(lastDate,cal(expMid)))}, finestra ${fmtD(addDays(lastDate,cal(Math.max(0,expLo))))} – ${fmtD(addDays(lastDate,cal(Math.max(0,expHi))))})`
+    : `già oltre la durata tipica di ${Math.round(-expMid)} barre`;
+
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:16px;">${val}</div><div class="l">${label}</div></div>`;
+  let hLabel="N/D", hCol="var(--dim)";
+  if(H!=null){ hLabel=H.toFixed(2)+(H>0.55?" · tendenziale":H<0.45?" · mean-reverting":" · ~casuale"); hCol=H>0.55?"#00d4b8":H<0.45?"#ff9f1c":"var(--txt)"; }
+  el("hurstCardsWrap").innerHTML=
+    card("Durata tipica ciclo (mediana)", Math.round(chosen.median)+" barre (≈ "+cal(chosen.median)+" gg)")+
+    card("Regolarità del ciclo", regLabel+" ("+(chosen.regularity*100).toFixed(0)+"%)", regCol)+
+    card("Ultimo minimo", fmtD(dates[chosen.last])+" ("+chosen.barsSince+" barre fa)")+
+    card("Fase attuale", (chosen.phase*100).toFixed(0)+"% del ciclo", phaseCol)+
+    card("Esponente di Hurst (H)", hLabel, hCol)+
+    `<div style="grid-column:1/-1;font-size:11px;color:${phaseCol};">${phaseLabel}. Prossimo minimo di scala stimato ${nextTxt}.${chosen.regularity<0.45?" ⚠️ Regolarità bassa: su questo titolo il ciclo è poco affidabile.":""}</div>`;
+
+  // Grafico: ultime ~6 durate di ciclo (min 250 barre) + proiezione
+  const view=Math.min(n, Math.max(250, Math.round(chosen.median*6)));
+  const start=n-view;
+  const futureBars=Math.max(0,Math.min(120, Math.ceil(expHi)+3));
+  const labels=[]; for(let i=start;i<n;i++) labels.push(fmtD(dates[i]));
+  { let d=lastDate, added=0; while(added<futureBars){ d=addDays(d,1); if(d.getDay()!==0&&d.getDay()!==6){ labels.push(fmtD(d)); added++; } } }
+  const priceData=closes.slice(start).concat(new Array(futureBars).fill(null));
+  const troughPts=new Array(labels.length).fill(null);
+  chosen.troughs.forEach(i=>{ if(i>=start) troughPts[i-start]=closes[i]; });
+  const bandLo=n-1-start+Math.max(0,Math.floor(expLo)), bandHi=n-1-start+Math.max(0,Math.ceil(expHi));
+  const showBand = expHi>0 && futureBars>0;
+  const bandPlugin={ id:"hurstBand", beforeDatasetsDraw(chart){
+    if(!showBand) return; const {ctx,chartArea,scales}=chart; const x0=scales.x.getPixelForValue(Math.min(bandLo,labels.length-1)), x1=scales.x.getPixelForValue(Math.min(bandHi,labels.length-1));
+    ctx.save(); ctx.fillStyle="rgba(255,159,28,0.16)"; ctx.fillRect(x0,chartArea.top,Math.max(2,x1-x0),chartArea.bottom-chartArea.top); ctx.restore(); } };
+  if(hurstChartObj) hurstChartObj.destroy();
+  hurstChartObj=new Chart(el("hurstChart").getContext("2d"),{
+    type:"line",
+    data:{labels, datasets:[
+      {label:`Prezzo (${STOCK.ticker})`, data:priceData, borderColor:"#4fa3ff", borderWidth:1.5, pointRadius:0, tension:0, spanGaps:false},
+      {label:"Minimi di ciclo", data:troughPts, borderColor:"transparent", backgroundColor:"#00d4b8", pointStyle:"triangle", pointRadius:6, showLine:false}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10,maxRotation:0},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}},
+    plugins:[bandPlugin]
+  });
+
+  const rowsHtml=all.map(s=>{
+    const sel=s.order===chosen.order;
+    const rc=s.regularity>=0.65?"#00d4b8":s.regularity>=0.45?"#ffd23f":"#ff6b6b";
+    return `<tr style="${sel?'background:rgba(79,163,255,0.12);':''}"><td style="padding:5px 8px;">${sel?'▶ ':''}ordine ${s.order}</td><td style="padding:5px 8px;text-align:right;">${s.count}</td><td style="padding:5px 8px;text-align:right;">${Math.round(s.median)} barre</td><td style="padding:5px 8px;text-align:right;color:${rc};">${(s.regularity*100).toFixed(0)}%</td><td style="padding:5px 8px;text-align:right;">${s.barsSince}</td><td style="padding:5px 8px;text-align:right;">${(s.phase*100).toFixed(0)}%</td></tr>`;
+  }).join("");
+  el("hurstTable").innerHTML=`<thead><tr style="color:var(--dim);text-align:left;"><th style="padding:5px 8px;">Scala</th><th style="padding:5px 8px;text-align:right;">Minimi</th><th style="padding:5px 8px;text-align:right;">Durata mediana</th><th style="padding:5px 8px;text-align:right;">Regolarità</th><th style="padding:5px 8px;text-align:right;">Barre dall'ultimo</th><th style="padding:5px 8px;text-align:right;">Fase</th></tr></thead><tbody>${rowsHtml}</tbody>`;
+  el("hurstStatus").textContent=`✅ Cicli misurati su ${n} barre. Scala usata: ordine ${chosen.order} (${sel==="auto"?"scelta automatica":"scelta manuale"}). La fascia arancione sul grafico è la finestra in cui è atteso il prossimo minimo.`;
+  el("hurstResultsWrap").style.display="block";
 };
 
 let patChartObj=null;
