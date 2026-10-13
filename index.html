@@ -7,6 +7,8 @@
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -579,6 +581,15 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <div class="panel-title" style="font-size:12px;">📊 PREZZO vs VOLATILITÀ CONDIZIONALE GARCH (storico)</div>
               <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">La linea rossa è la volatilità annualizzata stimata dal GARCH(1,1) giorno per giorno. I picchi estremi di volatilità coincidono spesso con capitolazioni e minimi di mercato: i punti rossi sul prezzo segnano i giorni col 5% di volatilità più alta dello storico. È un indicatore di <em>contesto</em>, non un segnale di timing garantito.</div>
               <div class="cards" id="volSignalWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                <span style="font-size:10px;color:var(--dim);">Zoom:</span>
+                <button class="btn" onclick="volZoomRange(125)">6M</button>
+                <button class="btn" onclick="volZoomRange(250)">1A</button>
+                <button class="btn" onclick="volZoomRange(750)">3A</button>
+                <button class="btn" onclick="volZoomRange(1250)">5A</button>
+                <button class="btn" onclick="volZoomRange(0)">Tutto</button>
+                <span style="font-size:10px;color:var(--dim);">oppure rotella del mouse per zoomare e trascina per spostarti</span>
+              </div>
               <div style="height:340px;"><canvas id="volHistChart"></canvas></div>
               <div style="font-size:11px;color:var(--dim);margin:12px 0 4px;">Rendimenti logaritmici giornalieri (%)</div>
               <div style="height:170px;"><canvas id="volRetChart"></canvas></div>
@@ -5976,17 +5987,33 @@ function renderVolHistory(closes, garch){
     sigLabel="➡️ Regime normale"; sigCol="#ffd23f";
     sigNote="Nessun estremo di volatilità";
   }
+  // Event study: primo giorno di ogni "ondata" di volatilità estrema
+  // (top 5%, almeno 20 barre dopo l'evento precedente) e rendimento dei
+  // 20 e 60 giorni successivi, confrontato con il rendimento medio di
+  // QUALSIASI giorno dello stesso titolo.
+  const ev=[]; for(let i=1;i<vol.length;i++){ if(vol[i]!=null && vol[i]>=p95val && (ev.length===0 || i-ev[ev.length-1]>=20)) ev.push(i); }
+  const fwd=(h)=>{ const a=[]; ev.forEach(i=>{ if(i+h<closes.length) a.push(closes[i+h]/closes[i]-1); });
+    const base=[]; for(let i=0;i+h<closes.length;i++) base.push(closes[i+h]/closes[i]-1);
+    const m=x=>x.length?x.reduce((p,q)=>p+q,0)/x.length:null;
+    return {n:a.length, avg:m(a), win:a.length?a.filter(v=>v>0).length/a.length:null, base:m(base)}; };
+  const f20=fwd(20), f60=fwd(60);
+  const fmtF=(f)=> f.n<3 ? "campione troppo piccolo" : `${(f.avg*100>=0?"+":"")}${(f.avg*100).toFixed(1)}% (media titolo ${(f.base*100>=0?"+":"")}${(f.base*100).toFixed(1)}%, positivi ${(f.win*100).toFixed(0)}%, ${f.n} eventi)`;
   const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:16px;">${val}</div><div class="l">${label}</div></div>`;
   el("volSignalWrap").innerHTML=
     card("Volatilità GARCH oggi", cur.toFixed(1)+"%", "#c77dff")+
     card("Percentile storico", curPct.toFixed(0)+"°", curPct>=90?"#ff6b6b":curPct<=15?"#4fa3ff":"var(--txt)")+
     card("Massimo ultimi 20gg", peak.toFixed(1)+"%", "var(--dim)")+
     card("Lettura regime", sigLabel, sigCol)+
-    `<div style="grid-column:1/-1;font-size:11px;color:${sigCol};">${sigNote}</div>`;
+    `<div style="grid-column:1/-1;font-size:11px;color:${sigCol};">${sigNote}</div>`+
+    `<div style="grid-column:1/-1;font-size:11px;color:var(--dim);">📐 <b>Cosa è successo storicamente su questo titolo dopo i picchi di volatilità</b> (rendimento del prezzo nei giorni successivi): a 20 giorni ${fmtF(f20)}; a 60 giorni ${fmtF(f60)}. Il GARCH usa solo i prezzi fino a ieri: sale <i>dopo</i> i movimenti forti, quindi segnala stress già in corso, non lo anticipa.</div>`;
 
   const extreme=closes.map((c,i)=>(vol[i]!=null && vol[i]>=p95val)?c:null);
   const rets=closes.map((c,i)=>i===0?null:Math.log(c/closes[i-1])*100);
   const axisX={ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10,maxRotation:0},grid:{color:"#1e2d45"}};
+  const syncX=(src,dst)=>{ if(!dst) return; dst.options.scales.x.min=src.scales.x.min; dst.options.scales.x.max=src.scales.x.max; dst.update("none"); };
+  const zoomOpts=(getOther)=>({ zoom:{ wheel:{enabled:true}, pinch:{enabled:true}, mode:"x",
+      onZoomComplete:({chart})=>syncX(chart,getOther()) },
+    pan:{ enabled:true, mode:"x", onPanComplete:({chart})=>syncX(chart,getOther()) } });
   if(volHistChartObj) volHistChartObj.destroy();
   volHistChartObj=new Chart(el("volHistChart").getContext("2d"),{
     type:"line",
@@ -5996,7 +6023,7 @@ function renderVolHistory(closes, garch){
       {label:"Volatilità estrema (top 5%)", data:extreme, borderColor:"transparent", backgroundColor:"#ff4d6d", pointRadius:2.5, pointHoverRadius:4, showLine:false, yAxisID:"y"}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
-      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}},
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}, zoom:zoomOpts(()=>volRetChartObj)},
       scales:{x:axisX,
         y:{position:"left",title:{display:true,text:`Prezzo (${STOCK.currency||""})`,color:"#4fa3ff",font:{size:10}},ticks:{color:"#4fa3ff",font:{size:9}},grid:{color:"#1e2d45"}},
         y1:{position:"right",title:{display:true,text:"Volatilità GARCH (%)",color:"#ff4d6d",font:{size:10}},ticks:{color:"#ff4d6d",font:{size:9}},grid:{drawOnChartArea:false}}}}
@@ -6006,10 +6033,20 @@ function renderVolHistory(closes, garch){
     type:"line",
     data:{labels:dates, datasets:[{label:"Rendimento giornaliero (%)", data:rets, borderColor:"#7b7fe8", borderWidth:0.8, pointRadius:0, tension:0}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false}},
-      scales:{x:axisX,y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}}
+      plugins:{legend:{display:false}, zoom:zoomOpts(()=>volHistChartObj)},
+      scales:{x:{...axisX},y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}}
   });
 }
+window.volZoomRange=function(bars){
+  const c=volHistChartObj; if(!c) return;
+  const n=c.data.labels.length;
+  [c,volRetChartObj].forEach(ch=>{
+    if(!ch) return;
+    if(bars>0 && bars<n){ ch.options.scales.x.min=n-bars; ch.options.scales.x.max=n-1; }
+    else { delete ch.options.scales.x.min; delete ch.options.scales.x.max; if(ch.resetZoom) ch.resetZoom("none"); }
+    ch.update("none");
+  });
+};
 window.runVolatilityCone=function(){
   if(!isOwner()) return; // funzione in anteprima: solo account proprietario
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
@@ -6115,11 +6152,13 @@ window.runVolatilityCone=function(){
 // Minimi locali di ordine "order": barra i con close <= tutte le barre
 // entro ±order. Si richiede una distanza minima tra due minimi accettati
 // per non contare due volte un fondo "piatto".
-function hurstFindTroughs(closes, order){
+function hurstFindTroughs(closes, order, peaks){
   const idx=[];
   for(let i=order;i<closes.length-order;i++){
     let ok=true;
-    for(let k=1;k<=order;k++){ if(closes[i-k]<closes[i] || closes[i+k]<closes[i]){ ok=false; break; } }
+    for(let k=1;k<=order;k++){
+      if(peaks ? (closes[i-k]>closes[i] || closes[i+k]>closes[i]) : (closes[i-k]<closes[i] || closes[i+k]<closes[i])){ ok=false; break; }
+    }
     if(ok && (idx.length===0 || i-idx[idx.length-1]>=order)) idx.push(i);
   }
   return idx;
@@ -6160,7 +6199,17 @@ function hurstScaleStats(closes, order){
   const cv=std/mean;
   const last=t[t.length-1];
   const barsSince=(closes.length-1)-last;
-  return { order, troughs:t, count:t.length, median, mean, std, cv, regularity:Math.max(0,1-cv), last, barsSince, phase:barsSince/median };
+  const pk=hurstFindTroughs(closes, order, true);
+  const lastPeak=pk.length?pk[pk.length-1]:null;
+  // Minimo provvisorio: se l'ultimo estremo confermato è un massimo, il punto
+  // più basso da allora è un probabile minimo ancora NON confermato (servono
+  // "order" barre successive per confermarlo).
+  let provisional=null;
+  if(lastPeak!=null && lastPeak>last){
+    let mi=lastPeak; for(let i=lastPeak;i<closes.length;i++) if(closes[i]<closes[mi]) mi=i;
+    provisional=mi;
+  }
+  return { order, troughs:t, peaks:pk, lastPeak, provisional, count:t.length, median, mean, std, cv, regularity:Math.max(0,1-cv), last, barsSince, phase:barsSince/median };
 }
 let hurstChartObj=null;
 window.runHurstCycles=function(){
@@ -6207,9 +6256,10 @@ window.runHurstCycles=function(){
     card("Durata tipica ciclo (mediana)", Math.round(chosen.median)+" barre (≈ "+cal(chosen.median)+" gg)")+
     card("Regolarità del ciclo", regLabel+" ("+(chosen.regularity*100).toFixed(0)+"%)", regCol)+
     card("Ultimo minimo", fmtD(dates[chosen.last])+" ("+chosen.barsSince+" barre fa)")+
+    (chosen.lastPeak!=null?card("Ultimo massimo", fmtD(dates[chosen.lastPeak])+" ("+((n-1)-chosen.lastPeak)+" barre fa)", "#ff6b6b"):"")+
     card("Fase attuale", (chosen.phase*100).toFixed(0)+"% del ciclo", phaseCol)+
     card("Esponente di Hurst (H)", hLabel, hCol)+
-    `<div style="grid-column:1/-1;font-size:11px;color:${phaseCol};">${phaseLabel}. Prossimo minimo di scala stimato ${nextTxt}.${chosen.regularity<0.45?" ⚠️ Regolarità bassa: su questo titolo il ciclo è poco affidabile.":""}</div>`;
+    `<div style="grid-column:1/-1;font-size:11px;color:${phaseCol};">${phaseLabel}. Prossimo minimo di scala stimato ${nextTxt}.${chosen.regularity<0.45?" ⚠️ Regolarità bassa: su questo titolo il ciclo è poco affidabile.":""}${chosen.provisional!=null?` 🔻 Dopo l'ultimo massimo (${fmtD(dates[chosen.lastPeak])}) il punto più basso è ${fmtD(dates[chosen.provisional])} a ${closes[chosen.provisional].toFixed(2)}: è un minimo <b>provvisorio</b>, diventa confermato solo dopo ${chosen.order} barre senza nuovi minimi (finora ${(n-1)-chosen.provisional}).`:""}</div>`;
 
   // Grafico: ultime ~6 durate di ciclo (min 250 barre) + proiezione
   const view=Math.min(n, Math.max(250, Math.round(chosen.median*6)));
@@ -6220,6 +6270,10 @@ window.runHurstCycles=function(){
   const priceData=closes.slice(start).concat(new Array(futureBars).fill(null));
   const troughPts=new Array(labels.length).fill(null);
   chosen.troughs.forEach(i=>{ if(i>=start) troughPts[i-start]=closes[i]; });
+  const peakPts=new Array(labels.length).fill(null);
+  chosen.peaks.forEach(i=>{ if(i>=start) peakPts[i-start]=closes[i]; });
+  const provPts=new Array(labels.length).fill(null);
+  if(chosen.provisional!=null && chosen.provisional>=start) provPts[chosen.provisional-start]=closes[chosen.provisional];
   const bandLo=n-1-start+Math.max(0,Math.floor(expLo)), bandHi=n-1-start+Math.max(0,Math.ceil(expHi));
   const showBand = expHi>0 && futureBars>0;
   const bandPlugin={ id:"hurstBand", beforeDatasetsDraw(chart){
@@ -6230,10 +6284,13 @@ window.runHurstCycles=function(){
     type:"line",
     data:{labels, datasets:[
       {label:`Prezzo (${STOCK.ticker})`, data:priceData, borderColor:"#4fa3ff", borderWidth:1.5, pointRadius:0, tension:0, spanGaps:false},
-      {label:"Minimi di ciclo", data:troughPts, borderColor:"transparent", backgroundColor:"#00d4b8", pointStyle:"triangle", pointRadius:6, showLine:false}
+      {label:"Minimi di ciclo", data:troughPts, borderColor:"transparent", backgroundColor:"#00d4b8", pointStyle:"triangle", pointRadius:6, showLine:false},
+      {label:"Massimi di ciclo", data:peakPts, borderColor:"transparent", backgroundColor:"#ff6b6b", pointStyle:"triangle", pointRotation:180, pointRadius:6, showLine:false},
+      {label:"Minimo provvisorio (non confermato)", data:provPts, borderColor:"#00d4b8", backgroundColor:"rgba(0,0,0,0)", pointStyle:"triangle", pointRadius:7, borderWidth:2, showLine:false}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}},
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}},
+        zoom:{ zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:"x"}, pan:{enabled:true,mode:"x"} }},
       scales:{x:{ticks:{color:"#7d8aa3",font:{size:9},maxTicksLimit:10,maxRotation:0},grid:{color:"#1e2d45"}},
               y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}},
     plugins:[bandPlugin]
@@ -6242,7 +6299,7 @@ window.runHurstCycles=function(){
   const rowsHtml=all.map(s=>{
     const sel=s.order===chosen.order;
     const rc=s.regularity>=0.65?"#00d4b8":s.regularity>=0.45?"#ffd23f":"#ff6b6b";
-    return `<tr style="${sel?'background:rgba(79,163,255,0.12);':''}"><td style="padding:5px 8px;">${sel?'▶ ':''}ordine ${s.order}</td><td style="padding:5px 8px;text-align:right;">${s.count}</td><td style="padding:5px 8px;text-align:right;">${Math.round(s.median)} barre</td><td style="padding:5px 8px;text-align:right;color:${rc};">${(s.regularity*100).toFixed(0)}%</td><td style="padding:5px 8px;text-align:right;">${s.barsSince}</td><td style="padding:5px 8px;text-align:right;">${(s.phase*100).toFixed(0)}%</td></tr>`;
+    return `<tr style="${sel?'background:rgba(79,163,255,0.12);':''}"><td style="padding:5px 8px;">${sel?'▶ ':''}ordine ${s.order}</td><td style="padding:5px 8px;text-align:right;">${s.count} min / ${s.peaks.length} max</td><td style="padding:5px 8px;text-align:right;">${Math.round(s.median)} barre</td><td style="padding:5px 8px;text-align:right;color:${rc};">${(s.regularity*100).toFixed(0)}%</td><td style="padding:5px 8px;text-align:right;">${s.barsSince}</td><td style="padding:5px 8px;text-align:right;">${(s.phase*100).toFixed(0)}%</td></tr>`;
   }).join("");
   el("hurstTable").innerHTML=`<thead><tr style="color:var(--dim);text-align:left;"><th style="padding:5px 8px;">Scala</th><th style="padding:5px 8px;text-align:right;">Minimi</th><th style="padding:5px 8px;text-align:right;">Durata mediana</th><th style="padding:5px 8px;text-align:right;">Regolarità</th><th style="padding:5px 8px;text-align:right;">Barre dall'ultimo</th><th style="padding:5px 8px;text-align:right;">Fase</th></tr></thead><tbody>${rowsHtml}</tbody>`;
   el("hurstStatus").textContent=`✅ Cicli misurati su ${n} barre. Scala usata: ordine ${chosen.order} (${sel==="auto"?"scelta automatica":"scelta manuale"}). La fascia arancione sul grafico è la finestra in cui è atteso il prossimo minimo.`;
