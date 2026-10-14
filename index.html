@@ -176,7 +176,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                   <option value="trend">Cambio trend a blocchi</option>
                   <option value="blocks">Blocchi fissi</option>
                 </select></label>
-              <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se la chiusura rompe il massimo raggiunto dopo l'ultimo POC accettato"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> Richiedi rottura del massimo</label>
+              <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se la chiusura sta sopra il livello dell'ultimo POC accettato (rottura al rialzo)"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> Richiedi rottura del POC precedente</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="3" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
@@ -1659,17 +1659,18 @@ function computeTrendPOCs(S, blockLen, gapPct){
 // al rialzo la soglia (Momento Balistico) parte un Volume Profile continuato
 // da quella barra fino all'ultima; il suo POC è un livello statico che
 // nasce alla barra del trigger. Filtri: (1) con "richiedi rottura" un nuovo
-// trigger vale solo se la chiusura supera il massimo raggiunto dopo l'ultimo
-// POC accettato (cambio di trend confermato, non rumore); (2) un POC a meno
+// trigger vale solo se la chiusura sta sopra l'ultimo POC accettato (rottura
+// al rialzo, cambio di trend confermato, non rumore); (2) un POC a meno
 // di gapPct% da uno già accettato viene scartato.
 function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct){
   const z=computeRegressionZ(S.closes,W), n=S.closes.length, acc=[];
   let lastIdx=null;
   for(let t=1;t<n;t++){
     if(!(z[t]!=null && z[t-1]!=null && z[t-1]<thr && z[t]>=thr)) continue;
-    if(lastIdx!=null && requireBreak){
-      let mx=-Infinity; for(let i=lastIdx;i<t;i++) if(S.highs[i]>mx) mx=S.highs[i];
-      if(!(S.closes[t]>mx)) continue;
+    if(acc.length && requireBreak){
+      // cambio di trend: la chiusura del trigger deve stare SOPRA il livello
+      // dell'ultimo POC accettato (cioè il prezzo ha rotto quel POC verso l'alto)
+      if(!(S.closes[t]>acc[acc.length-1].poc)) continue;
     }
     const vp=computeVolumeProfile(S.closes.slice(t), S.volumes.slice(t), 24);
     if(!vp) continue;
