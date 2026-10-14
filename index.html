@@ -168,15 +168,17 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <span data-owner-only style="display:flex;gap:14px;flex-wrap:wrap;">
               <label class="chk"><input type="checkbox" id="chkZScore" checked onchange="renderZChart()"> <span style="color:#29b6f6;">■</span> Z-Score regressione</label>
               <label class="chk"><input type="checkbox" id="chkPocStatic" checked onchange="renderPocLevels()"> <span style="color:#ff9f1c;">■</span> POC statici filtrati</label>
-              <label style="font-size:10px;color:var(--dim);">Finestra Z <input type="number" id="zWindow" value="504" min="60" max="1500" style="width:60px;" onchange="renderZChart()"></label>
-              <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart()"></label>
+              <label style="font-size:10px;color:var(--dim);">Finestra Z <input type="number" id="zWindow" value="50" min="20" max="1500" style="width:60px;" onchange="renderZChart();renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart();renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);">Modo POC
                 <select id="pocMode" onchange="renderPocLevels()">
-                  <option value="trend" selected>Cambio trend (rottura del massimo)</option>
+                  <option value="ztrigger" selected>Da trigger Z-Score (come lo screen)</option>
+                  <option value="trend">Cambio trend a blocchi</option>
                   <option value="blocks">Blocchi fissi</option>
                 </select></label>
+              <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se la chiusura rompe il massimo raggiunto dopo l'ultimo POC accettato"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> Richiedi rottura del massimo</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="5" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="3" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -1652,13 +1654,40 @@ function computeTrendPOCs(S, blockLen, gapPct){
   }
   return acc;
 }
+
+// POC da trigger Z-Score (come lo screen): ogni volta che lo Z-Score incrocia
+// al rialzo la soglia (Momento Balistico) parte un Volume Profile continuato
+// da quella barra fino all'ultima; il suo POC è un livello statico che
+// nasce alla barra del trigger. Filtri: (1) con "richiedi rottura" un nuovo
+// trigger vale solo se la chiusura supera il massimo raggiunto dopo l'ultimo
+// POC accettato (cambio di trend confermato, non rumore); (2) un POC a meno
+// di gapPct% da uno già accettato viene scartato.
+function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct){
+  const z=computeRegressionZ(S.closes,W), n=S.closes.length, acc=[];
+  let lastIdx=null;
+  for(let t=1;t<n;t++){
+    if(!(z[t]!=null && z[t-1]!=null && z[t-1]<thr && z[t]>=thr)) continue;
+    if(lastIdx!=null && requireBreak){
+      let mx=-Infinity; for(let i=lastIdx;i<t;i++) if(S.highs[i]>mx) mx=S.highs[i];
+      if(!(S.closes[t]>mx)) continue;
+    }
+    const vp=computeVolumeProfile(S.closes.slice(t), S.volumes.slice(t), 24);
+    if(!vp) continue;
+    if(acc.some(a=>Math.abs(a.poc/vp.poc-1)<gapPct/100)) continue;
+    acc.push({poc:vp.poc, startIdx:t}); lastIdx=t;
+  }
+  return acc;
+}
 window.renderPocLevels=function(){
   pocStaticSeries.forEach(sr=>{ try{ chart.removeSeries(sr); }catch(e){} });
   pocStaticSeries=[];
   if(!isOwner() || !STOCK || !chart || !el("chkPocStatic").checked) return;
   const blk=parseInt(el("pocBlock").value)||60;
   const gap=parseFloat(el("pocGap").value); const gapPct=isNaN(gap)?5:gap;
-  const lv = (el("pocMode").value==="blocks") ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2) : computeTrendPOCs(STOCK, blk, gapPct).slice(-6);
+  const mode=el("pocMode").value;
+  const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
+           : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
+           : computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct).slice(-6);
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
     const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:"POC "+l.poc.toFixed(2)});
