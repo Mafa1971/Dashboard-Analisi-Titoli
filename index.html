@@ -176,7 +176,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                   <option value="trend">Cambio trend a blocchi</option>
                   <option value="blocks">Blocchi fissi</option>
                 </select></label>
-              <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se la chiusura sta sopra il livello dell'ultimo POC accettato (rottura al rialzo)"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> Richiedi rottura del POC precedente</label>
+              <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se il suo POC sta più in alto (oltre la distanza minima) dell'ultimo POC accettato: i livelli salgono a gradini, come nello screen"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> POC solo crescenti (rottura del precedente)</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="3" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
@@ -1674,7 +1674,7 @@ function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct, diag){
     const rec={idx:t, close:S.closes[t], z:z[t], poc:vp?vp.poc:null, status:""};
     if(diag) diag.push(rec);
     if(!vp){ rec.status="scartato: profilo troppo corto"; continue; }
-    if(acc.length && requireBreak && !(S.closes[t]>acc[acc.length-1].poc)){ rec.status="scartato: chiusura sotto il POC precedente"; continue; }
+    if(acc.length && requireBreak && !(vp.poc>acc[acc.length-1].poc*(1+gapPct/100))){ rec.status="scartato: POC non più alto di "+acc[acc.length-1].poc.toFixed(2); continue; }
     const near=acc.find(a=>Math.abs(a.poc/vp.poc-1)<gapPct/100);
     if(near){ rec.status="scartato: POC vicino a "+near.poc.toFixed(2); continue; }
     acc.push({poc:vp.poc, startIdx:t}); rec.status="ACCETTATO";
