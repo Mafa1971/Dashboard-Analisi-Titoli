@@ -170,7 +170,13 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label class="chk"><input type="checkbox" id="chkPocStatic" checked onchange="renderPocLevels()"> <span style="color:#ff9f1c;">■</span> POC statici filtrati</label>
               <label style="font-size:10px;color:var(--dim);">Finestra Z <input type="number" id="zWindow" value="504" min="60" max="1500" style="width:60px;" onchange="renderZChart()"></label>
               <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart()"></label>
+              <label style="font-size:10px;color:var(--dim);">Modo POC
+                <select id="pocMode" onchange="renderPocLevels()">
+                  <option value="trend" selected>Cambio trend (rottura del massimo)</option>
+                  <option value="blocks">Blocchi fissi</option>
+                </select></label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="5" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -1623,12 +1629,36 @@ function computeStaticPOCs(closes, volumes, blockLen, keep, mergePct){
   for(const l of levels){ if(!kept.some(k=>Math.abs(k.poc/l.poc-1)<mergePct/100)) kept.push(l); }
   return kept.slice(0,keep);
 }
+
+// POC "a cambio trend" (sequenziale): la storia viene divisa in blocchi
+// consecutivi; il primo blocco fissa il primo POC e il suo massimo. Un
+// blocco successivo diventa un NUOVO livello solo se il prezzo ROMPE il
+// massimo dell'ultimo POC accettato (cambio di trend confermato) e il suo
+// POC è almeno gapPct% sopra quello precedente. Il livello parte dalla
+// barra in cui avviene la rottura e resta statico fino all'ultima barra.
+function computeTrendPOCs(S, blockLen, gapPct){
+  const n=S.closes.length, acc=[];
+  for(let st=0; st<n; st+=blockLen){
+    const en=Math.min(n,st+blockLen); if(en-st<Math.max(20,Math.floor(blockLen/2))) break;
+    const vp=computeVolumeProfile(S.closes.slice(st,en), S.volumes.slice(st,en), 24);
+    if(!vp) continue;
+    let hi=-Infinity; for(let i=st;i<en;i++) if(S.highs[i]>hi) hi=S.highs[i];
+    if(!acc.length){ acc.push({poc:vp.poc, hi, startIdx:st}); continue; }
+    const last=acc[acc.length-1];
+    if(hi>last.hi && vp.poc>last.poc*(1+gapPct/100)){
+      let br=st; for(let i=st;i<en;i++){ if(S.highs[i]>last.hi){ br=i; break; } } // barra della rottura
+      acc.push({poc:vp.poc, hi, startIdx:br});
+    }
+  }
+  return acc;
+}
 window.renderPocLevels=function(){
   pocStaticSeries.forEach(sr=>{ try{ chart.removeSeries(sr); }catch(e){} });
   pocStaticSeries=[];
   if(!isOwner() || !STOCK || !chart || !el("chkPocStatic").checked) return;
   const blk=parseInt(el("pocBlock").value)||60;
-  const lv=computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2);
+  const gap=parseFloat(el("pocGap").value); const gapPct=isNaN(gap)?5:gap;
+  const lv = (el("pocMode").value==="blocks") ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2) : computeTrendPOCs(STOCK, blk, gapPct).slice(-6);
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
     const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:"POC "+l.poc.toFixed(2)});
