@@ -563,6 +563,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <option value="both" selected>Confronto EWMA + GARCH</option>
                 <option value="ewma">Solo EWMA</option>
                 <option value="garch">Solo GARCH(1,1)</option>
+                <option value="gjr">Solo GJR-GARCH (asimmetrico)</option>
+                <option value="all">Confronto EWMA + GARCH + GJR</option>
               </select>
             </label>
             <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ, orizzonte 1 sett.):
@@ -571,12 +573,20 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label style="font-size:11px;color:var(--dim);">Target (multiplo R):
               <input type="number" id="volTargetR" value="2" step="0.1" style="width:60px;">
             </label>
+            <label style="font-size:11px;color:var(--dim);" title="Se nello storico ci sono variazioni giornaliere enormi (tipicamente split non corretti o errori nei dati) falsano EWMA e GARCH. Spuntando, quei giorni vengono trattati come variazione zero nel calcolo della volatilità."><input type="checkbox" id="volCleanOutliers"> Ignora rendimenti anomali (oltre ±30%)</label>
             <button class="btn primary" onclick="runVolatilityCone()">📊 CALCOLA VOLATILITÀ &amp; CONO</button>
           </div>
           <div id="volStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
           <div id="volResultsWrap" style="display:none;">
             <div class="cards" id="volCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:12px;"></div>
             <div style="height:300px;"><canvas id="volConeChart"></canvas></div>
+            <div id="volProbWrap" style="display:none;margin-top:18px;">
+              <div class="panel-title" style="font-size:12px;">🎲 PROBABILITÀ SIMULATE (distribuzione reale del titolo)</div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Simulazione storica filtrata: i rendimenti passati del titolo vengono “ripuliti” dalla volatilità del giorno e ripescati a caso migliaia di volte sulla volatilità prevista oggi. Le code (i crolli e i balzi veri) sono quelle storiche del titolo, non quelle di una curva a campana. Deriva zero: misura ampiezza e rischio, non direzione. Stop e target sono quelli calcolati sopra e vengono toccati sulle <em>chiusure</em> giornaliere.</div>
+              <div class="cards" id="volProbCards" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
+              <div id="volProbNote" style="font-size:11px;color:var(--dim);margin-bottom:8px;"></div>
+              <div style="overflow-x:auto;"><table id="volProbTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
+            </div>
             <div id="volHistWrap" style="display:none;margin-top:18px;">
               <div class="panel-title" style="font-size:12px;">📊 PREZZO vs VOLATILITÀ CONDIZIONALE GARCH (storico)</div>
               <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">La linea rossa è la volatilità annualizzata stimata dal GARCH(1,1) giorno per giorno. I picchi estremi di volatilità coincidono spesso con capitolazioni e minimi di mercato: i punti rossi sul prezzo segnano i giorni col 5% di volatilità più alta dello storico. È un indicatore di <em>contesto</em>, non un segnale di timing garantito.</div>
@@ -588,6 +598,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <button class="btn" onclick="volZoomRange(750)">3A</button>
                 <button class="btn" onclick="volZoomRange(1250)">5A</button>
                 <button class="btn" onclick="volZoomRange(0)">Tutto</button>
+                <label style="font-size:11px;color:var(--dim);margin-left:8px;"><input type="checkbox" id="volLogScale" onchange="volToggleLog()"> prezzo in scala logaritmica</label>
                 <span style="font-size:10px;color:var(--dim);">oppure rotella del mouse per zoomare e trascina per spostarti</span>
               </div>
               <div style="height:340px;"><canvas id="volHistChart"></canvas></div>
@@ -5936,10 +5947,13 @@ function fitGARCH11(closes){
   // Serie storica della volatilità condizionale (annualizzata, in %): il
   // valore all'indice i+1 di closes è la σ stimata per il rendimento i
   // (cioè usando solo l'informazione fino al giorno precedente).
+  const flt=garchFilter(x,fin.omega,best.alpha,0,best.beta,V);
   const histVol=new Array(closes.length).fill(null);
-  { let s2=V; for(let i=0;i<n;i++){ histVol[i+1]=Math.sqrt(s2*252)*100; s2=fin.omega+best.alpha*x[i]*x[i]+best.beta*s2; } }
+  for(let i=0;i<n;i++) histVol[i+1]=Math.sqrt(flt.s2[i]*252)*100;
+  const stdResid=garchStdResid(x,flt.s2);
   return {
     alpha:best.alpha, beta:best.beta, omega:fin.omega, persistence, histVol,
+    kind:"GARCH", gamma:0, V, s2Next, stdResid, s2Ext:flt.s2.concat([flt.s2Next]),
     longRunDailyVar:V, longRunAnnualSigma:Math.sqrt(V*252),
     dailySigma:Math.sqrt(s2Next), annualSigma:Math.sqrt(s2Next*252),
     halfLifeDays: persistence<1 ? Math.log(0.5)/Math.log(persistence) : null,
@@ -5948,10 +5962,172 @@ function fitGARCH11(closes){
   };
 }
 
+
+// ── Filtro GARCH/GJR comune, GJR-GARCH, simulazione e calibrazione ──────
+// σ²ₜ = ω + (α + γ·1[rₜ₋₁<0])·r²ₜ₋₁ + β·σ²ₜ₋₁   (γ=0 → GARCH(1,1) classico)
+function garchFilter(x,omega,alpha,gamma,beta,V){
+  const n=x.length, s2=new Array(n); let v=V, ll=0;
+  for(let i=0;i<n;i++){
+    if(!(v>1e-14)) return null;
+    s2[i]=v; ll+=-0.5*(Math.log(v)+x[i]*x[i]/v);
+    v=omega+(alpha+(x[i]<0?gamma:0))*x[i]*x[i]+beta*v;
+  }
+  return {s2,ll,s2Next:v};
+}
+// Rendimenti "ripuliti" dalla volatilità del giorno, con media 0 e varianza 1.
+function garchStdResid(x,s2){
+  const z=x.map((v,i)=>v/Math.sqrt(s2[i]));
+  const m=z.reduce((a,b)=>a+b,0)/z.length;
+  const sd=Math.sqrt(z.reduce((a,b)=>a+(b-m)*(b-m),0)/z.length);
+  return z.map(v=>(v-m)/sd);
+}
+// GJR-GARCH(1,1): come il GARCH ma con un parametro γ in più che pesa di più
+// i rendimenti NEGATIVI (effetto leva: i ribassi alzano la volatilità più
+// dei rialzi). Variance targeting: ω=V·(1−α−γ/2−β). Stima a griglia che si
+// restringe 3 volte attorno al punto migliore (verosimiglianza gaussiana,
+// consistente anche con code grosse).
+function fitGJR(closes){
+  if(!closes || closes.length<250) return null;
+  const rets=[]; for(let i=1;i<closes.length;i++) rets.push(Math.log(closes[i]/closes[i-1]));
+  const n=rets.length;
+  const mean=rets.reduce((a,b)=>a+b,0)/n;
+  const x=rets.map(r=>r-mean);
+  const V=x.reduce((s,r)=>s+r*r,0)/n;
+  if(!(V>0)) return null;
+  const llOf=(a,g,b)=>{
+    const p=a+g/2+b; if(a<0||g<0||b<0||p>=0.999) return -Infinity;
+    const f=garchFilter(x,V*(1-p),a,g,b,V); return f?f.ll:-Infinity;
+  };
+  let best={ll:-Infinity,a:0.03,g:0.08,b:0.88};
+  const search=(aR,gR,bR,steps)=>{
+    for(let i=0;i<=steps;i++){ const a=aR[0]+(aR[1]-aR[0])*i/steps;
+      for(let j=0;j<=steps;j++){ const g=gR[0]+(gR[1]-gR[0])*j/steps;
+        for(let k=0;k<=steps;k++){ const b=bR[0]+(bR[1]-bR[0])*k/steps;
+          const ll=llOf(a,g,b); if(ll>best.ll) best={ll,a,g,b}; } } }
+  };
+  search([0,0.15],[0,0.30],[0.55,0.97],14);
+  const da=[0.02,0.008,0.003], dg=[0.04,0.016,0.006], db=[0.05,0.02,0.008];
+  for(let pass=0;pass<3;pass++){
+    search([Math.max(0,best.a-da[pass]),best.a+da[pass]],[Math.max(0,best.g-dg[pass]),best.g+dg[pass]],[Math.max(0.3,best.b-db[pass]),Math.min(0.995,best.b+db[pass])],8);
+  }
+  if(!isFinite(best.ll)) return null;
+  const persistence=best.a+best.g/2+best.b;
+  const omega=V*(1-persistence);
+  const f=garchFilter(x,omega,best.a,best.g,best.b,V);
+  if(!f) return null;
+  const histVol=new Array(closes.length).fill(null);
+  for(let i=0;i<n;i++) histVol[i+1]=Math.sqrt(f.s2[i]*252)*100;
+  const s2Next=f.s2Next;
+  return {
+    kind:"GJR", alpha:best.a, gamma:best.g, beta:best.b, omega, persistence, histVol,
+    longRunDailyVar:V, longRunAnnualSigma:Math.sqrt(V*252), V,
+    dailySigma:Math.sqrt(s2Next), annualSigma:Math.sqrt(s2Next*252), s2Next,
+    halfLifeDays: persistence<1 ? Math.log(0.5)/Math.log(persistence) : null,
+    stdResid:garchStdResid(x,f.s2), s2Ext:f.s2.concat([s2Next]),
+    cumVar:(H)=>{ let c=0; for(let h=1;h<=H;h++){ c+=V+Math.pow(persistence,h-1)*(s2Next-V); } return c; }
+  };
+}
+function findReturnOutliers(closes, dates, thr){
+  const out=[];
+  for(let i=1;i<closes.length;i++){
+    const r=Math.log(closes[i]/closes[i-1]);
+    if(Math.abs(r)>thr) out.push({i, pct:(closes[i]/closes[i-1]-1)*100, date:dates&&dates[i]?dates[i].toLocaleDateString("it-IT"):"?"});
+  }
+  return out;
+}
+function cleanReturnOutliers(c,thr){
+  const out=[c[0]];
+  for(let i=1;i<c.length;i++){ let r=Math.log(c[i]/c[i-1]); if(!isFinite(r)||Math.abs(r)>thr) r=0; out.push(out[i-1]*Math.exp(r)); }
+  const k=c[c.length-1]/out[out.length-1];
+  return out.map(v=>v*k);
+}
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// Simulazione storica filtrata: 5000 percorsi a 63 giorni. Ogni giorno si
+// pesca a caso uno shock standardizzato STORICO del titolo e lo si scala per
+// la volatilità del giorno, che poi si aggiorna col modello (GARCH o GJR).
+function simulateFHS(model, price, stopPrice, targetPrice, nPaths){
+  const H=63, rnd=mulberry32(20260101), z=model.stdResid, nz=z.length;
+  const stopLog=Math.log(stopPrice/price), tgtLog=Math.log(targetPrice/price);
+  const term={5:[],21:[],63:[]}, cnt={21:{stop:0,tgt:0},63:{stop:0,tgt:0}};
+  for(let k=0;k<nPaths;k++){
+    let s2=model.s2Next, lp=0, stopDay=0, tgtDay=0;
+    for(let d=1;d<=H;d++){
+      const xx=Math.sqrt(s2)*z[(rnd()*nz)|0];
+      lp+=xx;
+      s2=model.omega+(model.alpha+(xx<0?model.gamma:0))*xx*xx+model.beta*s2;
+      if(!stopDay && lp<=stopLog) stopDay=d;
+      if(!tgtDay && lp>=tgtLog) tgtDay=d;
+      if(d===5||d===21||d===63) term[d].push(lp);
+    }
+    [21,63].forEach(h=>{
+      const sOK=stopDay&&stopDay<=h, tOK=tgtDay&&tgtDay<=h;
+      if(sOK && (!tOK || stopDay<=tgtDay)) cnt[h].stop++; else if(tOK) cnt[h].tgt++;
+    });
+  }
+  const q={};
+  [5,21,63].forEach(h=>{
+    const a=term[h].slice().sort((u,v)=>u-v), at=(f)=>a[Math.min(a.length-1,Math.max(0,Math.floor(f*(a.length-1))))];
+    q[h]={ lo95:price*Math.exp(at(0.025)), lo90:price*Math.exp(at(0.05)), med:price*Math.exp(at(0.5)), hi90:price*Math.exp(at(0.95)), hi95:price*Math.exp(at(0.975)),
+           loss10:a.filter(v=>Math.exp(v)-1<=-0.10).length/a.length, gain10:a.filter(v=>Math.exp(v)-1>=0.10).length/a.length };
+    const cut=at(0.05), tail=a.filter(v=>v<=cut);
+    q[h].var95=1-Math.exp(cut);
+    q[h].es95=1-Math.exp(tail.reduce((p,c)=>p+c,0)/tail.length);
+  });
+  return { n:nPaths, q, stop21:cnt[21].stop/nPaths, tgt21:cnt[21].tgt/nPaths, stop63:cnt[63].stop/nPaths, tgt63:cnt[63].tgt/nPaths };
+}
+// Controllo di calibrazione del cono NORMALE a 21 giorni: a ogni data
+// (passo 3 giorni, dopo 250 barre) si confronta il rendimento realizzato nei
+// 21 giorni successivi con la volatilità che il modello prevedeva ALLORA
+// (usando solo dati fino a quella data; i parametri però sono stimati su
+// tutto lo storico). I campioni si sovrappongono: serve come indicazione.
+function calibrateCone(model, closes, H){
+  const n=closes.length, p=model.persistence, V=model.V, s2e=model.s2Ext, w=[];
+  for(let t=250;t+H<n;t+=3){
+    const s0=s2e[t]; if(!(s0>0)) continue;
+    let cv=0; for(let h=1;h<=H;h++) cv+=V+Math.pow(p,h-1)*(s0-V);
+    w.push(Math.log(closes[t+H]/closes[t])/Math.sqrt(cv));
+  }
+  if(w.length<30) return null;
+  const sorted=w.slice().sort((a,b)=>a-b), q=(f)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor(f*sorted.length)))];
+  return { n:w.length, c95:w.filter(v=>Math.abs(v)<=1.96).length/w.length,
+           below:w.filter(v=>v<-1.96).length/w.length, above:w.filter(v=>v>1.96).length/w.length, zLo:q(0.025), zHi:q(0.975) };
+}
+function renderVolProb(sim, model, closes, price, stopPrice, targetPrice){
+  const wrap=el("volProbWrap");
+  if(!sim){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  const pc=(v)=>(v*100).toFixed(1)+"%", cur=STOCK.currency||"";
+  const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:16px;">${val}</div><div class="l">${label}</div></div>`;
+  const q21=sim.q[21];
+  el("volProbCards").innerHTML=
+    card("Stop toccato per primo (21 gg)", pc(sim.stop21), "#ff6b6b")+
+    card("Target toccato per primo (21 gg)", pc(sim.tgt21), "#00d4b8")+
+    card("Stop toccato per primo (63 gg)", pc(sim.stop63), "#ff6b6b")+
+    card("Target toccato per primo (63 gg)", pc(sim.tgt63), "#00d4b8")+
+    card("Prob. perdita oltre −10% (21 gg)", pc(q21.loss10), "#ff9f1c")+
+    card("Prob. guadagno oltre +10% (21 gg)", pc(q21.gain10), "var(--txt)")+
+    card("VaR 95% a 21 gg", "−"+pc(q21.var95), "#ff9f1c")+
+    card("Perdita media nel 5% peggiore (21 gg)", "−"+pc(q21.es95), "#ff6b6b");
+  const cal=calibrateCone(model, closes, 21);
+  let calTxt="";
+  if(cal){
+    const ok=cal.c95>=0.935, low=cal.c95<0.935;
+    calTxt=`🧪 <b>Calibrazione del cono normale a 21 giorni</b> (${cal.n} verifiche sovrapposte sullo storico): il prezzo è rimasto dentro la banda al 95% nel <b style="color:${ok?'#00d4b8':'#ff6b6b'}">${pc(cal.c95)}</b> dei casi${low?" — il cono normale è troppo ottimista":" — cono ben calibrato"}; ha sfondato al ribasso ${pc(cal.below)} e al rialzo ${pc(cal.above)} (attesi 2,5% ciascuno). Il moltiplicatore che avrebbe dato davvero il 95% è ${cal.zLo.toFixed(2)} / +${cal.zHi.toFixed(2)} invece di ±1,96.`;
+  }
+  el("volProbNote").innerHTML=`Modello usato: ${model.kind==="GJR"?"GJR-GARCH":"GARCH(1,1)"} · ${sim.n} percorsi simulati · deriva zero.`+(calTxt?"<br>"+calTxt:"");
+  const rows=[5,21,63].map(h=>{
+    const r=sim.q[h], sg=Math.sqrt(model.cumVar(h));
+    const nlo=price*Math.exp(-1.96*sg), nhi=price*Math.exp(1.96*sg);
+    return `<tr><td style="padding:5px 8px;">${h} gg</td><td style="padding:5px 8px;text-align:right;">${cur} ${r.lo95.toFixed(2)}</td><td style="padding:5px 8px;text-align:right;">${cur} ${r.lo90.toFixed(2)}</td><td style="padding:5px 8px;text-align:right;">${cur} ${r.med.toFixed(2)}</td><td style="padding:5px 8px;text-align:right;">${cur} ${r.hi90.toFixed(2)}</td><td style="padding:5px 8px;text-align:right;">${cur} ${r.hi95.toFixed(2)}</td><td style="padding:5px 8px;text-align:right;color:var(--dim);">${nlo.toFixed(2)} – ${nhi.toFixed(2)}</td></tr>`;
+  }).join("");
+  el("volProbTable").innerHTML=`<thead><tr style="color:var(--dim);text-align:left;"><th style="padding:5px 8px;">Orizzonte</th><th style="padding:5px 8px;text-align:right;">2,5% peggiori</th><th style="padding:5px 8px;text-align:right;">5%</th><th style="padding:5px 8px;text-align:right;">Mediana</th><th style="padding:5px 8px;text-align:right;">95%</th><th style="padding:5px 8px;text-align:right;">97,5%</th><th style="padding:5px 8px;text-align:right;">Cono normale 95%</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
 let volConeChartObj=null, volHistChartObj=null, volRetChartObj=null;
 // Grafico storico: prezzo + volatilità condizionale GARCH (doppio asse),
 // rendimenti giornalieri e lettura del regime di volatilità.
-function renderVolHistory(closes, garch){
+function renderVolHistory(closes, garch, extra){
+  const mname=garch&&garch.kind==='GJR'?'GJR-GARCH':'GARCH';
   const wrap=el("volHistWrap");
   if(!garch || !garch.histVol || !STOCK.dates || STOCK.dates.length!==closes.length){ wrap.style.display="none"; return; }
   wrap.style.display="block";
@@ -6000,7 +6176,7 @@ function renderVolHistory(closes, garch){
   const fmtF=(f)=> f.n<3 ? "campione troppo piccolo" : `${(f.avg*100>=0?"+":"")}${(f.avg*100).toFixed(1)}% (media titolo ${(f.base*100>=0?"+":"")}${(f.base*100).toFixed(1)}%, positivi ${(f.win*100).toFixed(0)}%, ${f.n} eventi)`;
   const card=(label,val,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:16px;">${val}</div><div class="l">${label}</div></div>`;
   el("volSignalWrap").innerHTML=
-    card("Volatilità GARCH oggi", cur.toFixed(1)+"%", "#c77dff")+
+    card("Volatilità "+mname+" oggi", cur.toFixed(1)+"%", "#c77dff")+
     card("Percentile storico", curPct.toFixed(0)+"°", curPct>=90?"#ff6b6b":curPct<=15?"#4fa3ff":"var(--txt)")+
     card("Massimo ultimi 20gg", peak.toFixed(1)+"%", "var(--dim)")+
     card("Lettura regime", sigLabel, sigCol)+
@@ -6019,14 +6195,15 @@ function renderVolHistory(closes, garch){
     type:"line",
     data:{labels:dates, datasets:[
       {label:`Prezzo (${STOCK.ticker})`, data:closes, borderColor:"#4fa3ff", borderWidth:1.5, pointRadius:0, tension:0, yAxisID:"y"},
-      {label:"Volatilità GARCH annualizzata (%)", data:vol, borderColor:"#ff4d6d", borderWidth:1.3, pointRadius:0, tension:0, yAxisID:"y1"},
+      {label:"Volatilità "+mname+" annualizzata (%)", data:vol, borderColor:"#ff4d6d", borderWidth:1.3, pointRadius:0, tension:0, yAxisID:"y1"},
+      ...(extra&&extra.histVol?[{label:"Volatilità GJR-GARCH annualizzata (%)", data:extra.histVol, borderColor:"#ff9f1c", borderWidth:1, pointRadius:0, tension:0, yAxisID:"y1"}]:[]),
       {label:"Volatilità estrema (top 5%)", data:extreme, borderColor:"transparent", backgroundColor:"#ff4d6d", pointRadius:2.5, pointHoverRadius:4, showLine:false, yAxisID:"y"}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
       plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},boxWidth:12}}, zoom:zoomOpts(()=>volRetChartObj)},
       scales:{x:axisX,
         y:{position:"left",title:{display:true,text:`Prezzo (${STOCK.currency||""})`,color:"#4fa3ff",font:{size:10}},ticks:{color:"#4fa3ff",font:{size:9}},grid:{color:"#1e2d45"}},
-        y1:{position:"right",title:{display:true,text:"Volatilità GARCH (%)",color:"#ff4d6d",font:{size:10}},ticks:{color:"#ff4d6d",font:{size:9}},grid:{drawOnChartArea:false}}}}
+        y1:{position:"right",title:{display:true,text:"Volatilità condizionale (%)",color:"#ff4d6d",font:{size:10}},ticks:{color:"#ff4d6d",font:{size:9}},grid:{drawOnChartArea:false}}}}
   });
   if(volRetChartObj) volRetChartObj.destroy();
   volRetChartObj=new Chart(el("volRetChart").getContext("2d"),{
@@ -6037,6 +6214,11 @@ function renderVolHistory(closes, garch){
       scales:{x:{...axisX},y:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}}}}
   });
 }
+window.volToggleLog=function(){
+  const c=volHistChartObj; if(!c) return;
+  c.options.scales.y.type = el("volLogScale").checked ? "logarithmic" : "linear";
+  c.update("none");
+};
 window.volZoomRange=function(bars){
   const c=volHistChartObj; if(!c) return;
   const n=c.data.labels.length;
@@ -6050,15 +6232,20 @@ window.volZoomRange=function(bars){
 window.runVolatilityCone=function(){
   if(!isOwner()) return; // funzione in anteprima: solo account proprietario
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
-  const closes=STOCK.closes;
+  const closesRaw=STOCK.closes;
+  const outl=findReturnOutliers(closesRaw, STOCK.dates, 0.30);
+  const cleanOn=!!(el("volCleanOutliers") && el("volCleanOutliers").checked);
+  const closes = (cleanOn && outl.length) ? cleanReturnOutliers(closesRaw,0.30) : closesRaw;
   const vol=computeEWMAVolatility(closes);
   if(!vol){ el("volStatus").textContent="❌ Storico insufficiente (servono almeno 30 giorni di prezzi)."; el("volResultsWrap").style.display="none"; return; }
   const modelSel=el("volModel")?el("volModel").value:"both"; // "ewma" | "garch" | "both"
-  const wantGarch = modelSel!=="ewma";
-  const wantEwma = modelSel!=="garch";
+  const wantGarch = modelSel==="both"||modelSel==="garch"||modelSel==="all";
+  const wantGjr = modelSel==="gjr"||modelSel==="all";
+  const wantEwma = modelSel==="both"||modelSel==="ewma"||modelSel==="all";
   const garch = wantGarch ? fitGARCH11(closes) : null;
+  const gjr = wantGjr ? fitGJR(closes) : null;
   let garchNote="";
-  if(wantGarch && !garch) garchNote=" GARCH non calcolabile: servono almeno ~250 giorni di storico (1 anno) — mostrato solo l'EWMA.";
+  if((wantGarch && !garch)||(wantGjr && !gjr)) garchNote=" GARCH/GJR non calcolabili: servono almeno ~250 giorni di storico (1 anno) — mostrato solo l'EWMA.";
 
   const price=closes[closes.length-1];
   const stopMult=parseFloat(el("volStopMult").value)||1.5;
@@ -6076,11 +6263,12 @@ window.runVolatilityCone=function(){
   });
   const rowsE = bands(d=>vol.dailySigma*Math.sqrt(d));
   const rowsG = garch ? bands(d=>Math.sqrt(garch.cumVar(d))) : null;
+  const rowsJ = gjr ? bands(d=>Math.sqrt(gjr.cumVar(d))) : null;
 
   // Stop/Target dinamici: a 1 settimana EWMA e GARCH sono quasi identici.
   // Con un solo modello si usa quello scelto; in confronto si usa l'EWMA.
-  const useGarchForStop = garch && modelSel==="garch";
-  const sigma1w = useGarchForStop ? Math.sqrt(garch.cumVar(5)) : vol.dailySigma*Math.sqrt(5);
+  const stopModel = (modelSel==="gjr" && gjr) ? gjr : (modelSel==="garch" && garch) ? garch : null;
+  const sigma1w = stopModel ? Math.sqrt(stopModel.cumVar(5)) : vol.dailySigma*Math.sqrt(5);
   const stopDistPct=stopMult*sigma1w*100;
   const stopPrice=price*(1-stopMult*sigma1w);
   const targetPrice=price*(1+targetR*stopMult*sigma1w);
@@ -6101,6 +6289,12 @@ window.runVolatilityCone=function(){
       card("Persistenza α+β", garch.persistence.toFixed(3), garch.persistence>0.98?"#ff9f1c":"var(--txt)")+
       card("Emivita shock", garch.halfLifeDays!=null?garch.halfLifeDays.toFixed(0)+" gg":"--","var(--dim)");
   }
+  if(gjr){
+    cards+=
+      card("Volatilità Annua (GJR, domani)", (gjr.annualSigma*100).toFixed(1)+"%","#ff9f1c")+
+      card("Asimmetria γ (ribassi vs rialzi)", gjr.gamma.toFixed(3)+(gjr.gamma>0.02?" · i ribassi pesano di più":" · quasi simmetrico"), gjr.gamma>0.02?"#ff9f1c":"var(--dim)")+
+      card("Persistenza GJR", gjr.persistence.toFixed(3), gjr.persistence>0.98?"#ff9f1c":"var(--txt)");
+  }
   cards+=
     card("Stop Loss suggerito", STOCK.currency+" "+stopPrice.toFixed(2), "#ff6b6b")+
     card(`Target suggerito (${targetR}R)`, STOCK.currency+" "+targetPrice.toFixed(2), "#00d4b8")+
@@ -6109,25 +6303,35 @@ window.runVolatilityCone=function(){
 
   const labels=horizons.map(h=>h.label);
   const priceLine={label:"Prezzo attuale", data:horizons.map(()=>price), borderColor:"#4fa3ff", borderWidth:2, pointRadius:0, tension:0, borderDash:[4,3]};
+  // Probabilità simulate con le code reali (usa GJR se disponibile, altrimenti GARCH)
+  const simModel = gjr || garch;
+  const sim = simModel ? simulateFHS(simModel, price, stopPrice, targetPrice, 5000) : null;
+  const simRows = sim ? horizons.map(h=>h.days===0?{upper95:price,lower95:price}:{upper95:sim.q[h.days].hi95,lower95:sim.q[h.days].lo95}) : null;
+  const M=[];
+  if(wantEwma) M.push({key:"EWMA",color:"#ffd23f",rows:rowsE});
+  if(garch && wantGarch) M.push({key:"GARCH",color:"#c77dff",rows:rowsG});
+  if(gjr) M.push({key:"GJR",color:"#ff9f1c",rows:rowsJ});
+  if(!M.length) M.push({key:"EWMA",color:"#ffd23f",rows:rowsE});
   let datasets;
-  if(garch && wantEwma){
-    // Confronto: solo le bande al 95% dei due modelli, senza riempimento, per leggibilità.
+  if(M.length>=2){
+    // Confronto: solo le bande al 95% dei modelli, senza riempimento, per leggibilità.
     datasets=[
-      {label:"EWMA 95%", data:rowsE.map(r=>r.upper95), borderColor:"#ffd23f", borderWidth:1.5, pointRadius:0, tension:0.15},
-      {label:"GARCH 95%", data:rowsG.map(r=>r.upper95), borderColor:"#c77dff", borderWidth:1.5, pointRadius:0, tension:0.15},
+      ...M.map(m=>({label:m.key+" 95%", data:m.rows.map(r=>r.upper95), borderColor:m.color, borderWidth:1.5, pointRadius:0, tension:0.15})),
+      ...(sim?[{label:"Simulato reale 95%", data:simRows.map(r=>r.upper95), borderColor:"#00d4b8", borderWidth:2, borderDash:[6,3], pointRadius:0, tension:0.15}]:[]),
       priceLine,
-      {label:"EWMA 95% (inf.)", data:rowsE.map(r=>r.lower95), borderColor:"#ffd23f", borderWidth:1.5, pointRadius:0, tension:0.15},
-      {label:"GARCH 95% (inf.)", data:rowsG.map(r=>r.lower95), borderColor:"#c77dff", borderWidth:1.5, pointRadius:0, tension:0.15}
+      ...M.map(m=>({label:m.key+" 95% (inf.)", data:m.rows.map(r=>r.lower95), borderColor:m.color, borderWidth:1.5, pointRadius:0, tension:0.15})),
+      ...(sim?[{label:"Simulato reale 95% (inf.)", data:simRows.map(r=>r.lower95), borderColor:"#00d4b8", borderWidth:2, borderDash:[6,3], pointRadius:0, tension:0.15}]:[])
     ];
   } else {
-    const rows = (garch && !wantEwma) ? rowsG : rowsE;
-    const name = (garch && !wantEwma) ? "GARCH" : "EWMA";
+    const rows=M[0].rows, name=M[0].key;
     datasets=[
       {label:`Banda 95% (${name})`, data:rows.map(r=>r.upper95), borderColor:"rgba(255,107,107,0.45)", backgroundColor:"rgba(255,107,107,0.08)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
       {label:`Banda 90% (${name})`, data:rows.map(r=>r.upper90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"+1", tension:0.15},
+      ...(sim?[{label:"Simulato reale 95%", data:simRows.map(r=>r.upper95), borderColor:"#00d4b8", borderWidth:2, borderDash:[6,3], pointRadius:0, tension:0.15}]:[]),
       priceLine,
       {label:"Banda 90% (inf.)", data:rows.map(r=>r.lower90), borderColor:"rgba(255,210,63,0.55)", backgroundColor:"rgba(255,210,63,0.12)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15},
-      {label:"Banda 95% (inf.)", data:rows.map(r=>r.lower95), borderColor:"rgba(255,107,107,0.45)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15}
+      {label:"Banda 95% (inf.)", data:rows.map(r=>r.lower95), borderColor:"rgba(255,107,107,0.45)", borderWidth:1, pointRadius:0, fill:"-1", tension:0.15},
+      ...(sim?[{label:"Simulato reale 95% (inf.)", data:simRows.map(r=>r.lower95), borderColor:"#00d4b8", borderWidth:2, borderDash:[6,3], pointRadius:0, tension:0.15}]:[])
     ];
   }
   const ctx=el("volConeChart");
@@ -6142,8 +6346,10 @@ window.runVolatilityCone=function(){
               y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+Math.round(v)},grid:{color:"#1e2d45"}}}}
   });
 
-  renderVolHistory(closes, garch);
-  el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`+garchNote;
+  renderVolProb(sim, simModel, closes, price, stopPrice, targetPrice);
+  { const histM = (modelSel==="gjr" || (!garch && gjr)) ? gjr : garch;
+    renderVolHistory(closesRaw, histM, (histM===garch && gjr) ? gjr : null); }
+  el("volStatus").textContent=`✅ Volatilità calcolata su ${closes.length} barre di storico — cono centrato sul prezzo attuale (nessuna ipotesi sulla direzione, solo sull'ampiezza attesa del movimento).`+garchNote+(outl.length ? ` ⚠️ Trovati ${outl.length} rendimenti giornalieri anomali (oltre ±30%): ${outl.slice(0,3).map(o=>o.date+" "+(o.pct>=0?"+":"")+o.pct.toFixed(0)+"%").join(", ")}${outl.length>3?"…":""}. Possibili split non corretti o errori nei dati: falsano EWMA e GARCH. ${cleanOn?"Sono stati ignorati nel calcolo.":"Spunta «Ignora rendimenti anomali» e ricalcola per escluderli."}` : "");
   el("volResultsWrap").style.display="block";
 };
 
