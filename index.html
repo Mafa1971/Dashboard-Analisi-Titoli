@@ -200,6 +200,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="margin-top:6px;font-size:9px;color:var(--dim);">Z-SCORE DEI RESIDUI DELLA REGRESSIONE (log-prezzo, finestra mobile) — <span style="color:#29b6f6;">─</span> Z <span style="color:#ff4d4d;">┄</span> Soglia di ingresso</div>
             <div id="zChart"></div>
           </div>
+          <details id="pocDiag" data-owner-only style="margin:8px 0;">
+            <summary style="cursor:pointer;font-size:11px;color:var(--gold);">📋 Trigger Z-Score e POC (diagnostica)</summary>
+            <div id="pocDiagBody"></div>
+          </details>
           <div style="margin-top:6px;font-size:9px;color:var(--dim);">VOLUME — <span style="color:#00d4b8;">■</span> Rialzo <span style="color:#ff6b6b;">■</span> Ribasso <span style="color:#ffd23f;">─</span> Media 20gg</div>
           <div id="volumeChart"></div>
           <div id="volumeSignal" style="margin-top:8px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;"></div>
@@ -1662,22 +1666,27 @@ function computeTrendPOCs(S, blockLen, gapPct){
 // trigger vale solo se la chiusura sta sopra l'ultimo POC accettato (rottura
 // al rialzo, cambio di trend confermato, non rumore); (2) un POC a meno
 // di gapPct% da uno già accettato viene scartato.
-function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct){
+function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct, diag){
   const z=computeRegressionZ(S.closes,W), n=S.closes.length, acc=[];
-  let lastIdx=null;
   for(let t=1;t<n;t++){
     if(!(z[t]!=null && z[t-1]!=null && z[t-1]<thr && z[t]>=thr)) continue;
-    if(acc.length && requireBreak){
-      // cambio di trend: la chiusura del trigger deve stare SOPRA il livello
-      // dell'ultimo POC accettato (cioè il prezzo ha rotto quel POC verso l'alto)
-      if(!(S.closes[t]>acc[acc.length-1].poc)) continue;
-    }
     const vp=computeVolumeProfile(S.closes.slice(t), S.volumes.slice(t), 24);
-    if(!vp) continue;
-    if(acc.some(a=>Math.abs(a.poc/vp.poc-1)<gapPct/100)) continue;
-    acc.push({poc:vp.poc, startIdx:t}); lastIdx=t;
+    const rec={idx:t, close:S.closes[t], z:z[t], poc:vp?vp.poc:null, status:""};
+    if(diag) diag.push(rec);
+    if(!vp){ rec.status="scartato: profilo troppo corto"; continue; }
+    if(acc.length && requireBreak && !(S.closes[t]>acc[acc.length-1].poc)){ rec.status="scartato: chiusura sotto il POC precedente"; continue; }
+    const near=acc.find(a=>Math.abs(a.poc/vp.poc-1)<gapPct/100);
+    if(near){ rec.status="scartato: POC vicino a "+near.poc.toFixed(2); continue; }
+    acc.push({poc:vp.poc, startIdx:t}); rec.status="ACCETTATO";
   }
   return acc;
+}
+function renderPocDiag(diag){
+  const box=el("pocDiagBody"); if(!box) return;
+  if(!diag){ box.innerHTML='<div style="font-size:11px;color:var(--dim);padding:6px;">Disponibile nel modo «Da trigger Z-Score».</div>'; return; }
+  const fmtD=(i)=>STOCK.dates[i].toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
+  const rows=diag.map(r=>`<tr style="${r.status==='ACCETTATO'?'background:rgba(255,159,28,0.15);':''}"><td style="padding:3px 8px;">${fmtD(r.idx)}</td><td style="padding:3px 8px;text-align:right;">${r.close.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.z.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.poc!=null?r.poc.toFixed(2):'--'}</td><td style="padding:3px 8px;">${r.status}</td></tr>`).join("");
+  box.innerHTML=`<div style="font-size:10px;color:var(--dim);margin:6px 0;">Ogni riga è un incrocio dello Z-Score sopra la soglia. «POC da qui a oggi» è il POC del volume profile calcolato da quella barra fino all'ultima. Le righe evidenziate sono quelle che diventano livelli sul grafico.</div><div style="overflow-x:auto;max-height:320px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="color:var(--dim);text-align:left;"><th style="padding:3px 8px;">Data trigger</th><th style="padding:3px 8px;text-align:right;">Chiusura</th><th style="padding:3px 8px;text-align:right;">Z</th><th style="padding:3px 8px;text-align:right;">POC da qui a oggi</th><th style="padding:3px 8px;">Esito</th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="padding:8px;color:var(--dim);">Nessun incrocio della soglia.</td></tr>'}</tbody></table></div>`;
 }
 window.renderPocLevels=function(){
   pocStaticSeries.forEach(sr=>{ try{ chart.removeSeries(sr); }catch(e){} });
@@ -1688,7 +1697,8 @@ window.renderPocLevels=function(){
   const mode=el("pocMode").value;
   const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
            : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
-           : computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct).slice(-6);
+           : (()=>{ const diag=[]; const r=computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct, diag); renderPocDiag(diag); return r.slice(-6); })();
+  if(mode!=="ztrigger") renderPocDiag(null);
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
     const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:"POC "+l.poc.toFixed(2)});
