@@ -172,12 +172,20 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart();renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);">Modo POC
                 <select id="pocMode" onchange="renderPocLevels()">
-                  <option value="ztrigger" selected>Da trigger Z-Score (come lo screen)</option>
+                  <option value="anchor" selected>Ancora swing low + trigger Z-Score (nuova logica)</option>
+                  <option value="ztrigger">Da trigger Z-Score (come lo screen)</option>
                   <option value="trend">Cambio trend a blocchi</option>
                   <option value="blocks">Blocchi fissi</option>
                 </select></label>
               <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se il suo POC sta più in alto (oltre la distanza minima) dell'ultimo POC accettato: i livelli salgono a gradini, come nello screen"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> POC solo crescenti (rottura del precedente)</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini si tiene il più vecchio">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="1.5" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: dove finisce il volume profile che genera il POC">Profilo fino a
+                <select id="pocEnd" onchange="renderPocLevels()"><option value="trigger" selected>trigger (congelato)</option><option value="today">oggi (come lo screen)</option></select></label>
+              <label class="chk" title="Marca sul grafico i pattern di candele: engulfing a 2 e 3 candele, stella del mattino/sera"><input type="checkbox" id="chkPatterns" checked onchange="renderPatterns()"> 🕯 Pattern candele</label>
+              <label style="font-size:10px;color:var(--dim);">Mostra
+                <select id="patShow" onchange="renderPatterns()"><option value="level" selected>solo su livello POC</option><option value="all">tutti</option></select></label>
+              <label class="chk" title="Un pattern rialzista conta solo dopo un calo (chiusura sotto quella di 5 barre prima); uno ribassista solo dopo un rialzo"><input type="checkbox" id="patCtx" checked onchange="renderPatterns()"> con contesto di trend</label>
               <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="3" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
@@ -200,6 +208,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <div style="margin-top:6px;font-size:9px;color:var(--dim);">Z-SCORE DEI RESIDUI DELLA REGRESSIONE (log-prezzo, finestra mobile) — <span style="color:#29b6f6;">─</span> Z <span style="color:#ff4d4d;">┄</span> Soglia di ingresso</div>
             <div id="zChart"></div>
           </div>
+          <details id="patDiag" data-owner-only style="margin:8px 0;" open>
+            <summary style="cursor:pointer;font-size:11px;color:var(--gold);">🕯 Pattern di candele: come si sono comportati su questo titolo</summary>
+            <div id="patDiagBody"></div>
+          </details>
           <details id="pocDiag" data-owner-only style="margin:8px 0;">
             <summary style="cursor:pointer;font-size:11px;color:var(--gold);">📋 Trigger Z-Score e POC (diagnostica)</summary>
             <div id="pocDiagBody"></div>
@@ -1681,14 +1693,53 @@ function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct, diag){
   }
   return acc;
 }
+// Nuova logica POC. (1) Evento: lo Z-Score incrocia al rialzo la soglia.
+// (2) Ancora: il minimo di swing più basso (pivot a 5 barre per lato) nelle
+// 60 barre precedenti = inizio della gamba rialzista. (3) Il volume profile
+// va dall'ancora al trigger (congelato) oppure a oggi. (4) Un livello nuovo
+// vale solo se la chiusura del trigger rompe il massimo del livello
+// precedente e il suo POC sta sopra quello precedente; (5) se è a meno di
+// gapAtr x ATR da un livello già accettato, si tiene il più vecchio.
+function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, diag){
+  const n=S.closes.length, z=computeRegressionZ(S.closes,W), atr=calcATR(S.highs,S.lows,S.closes,14);
+  const LB=60, K=5, MINLEN=10, acc=[];
+  for(let t=1;t<n;t++){
+    if(!(z[t]!=null && z[t-1]!=null && z[t-1]<thr && z[t]>=thr)) continue;
+    const from=Math.max(0,t-LB); let a=-1, lo=Infinity;
+    for(let i=from+K;i<=t-K;i++){
+      let piv=true; for(let j=i-K;j<=i+K;j++){ if(S.lows[j]<S.lows[i]){ piv=false; break; } }
+      if(piv && S.lows[i]<lo){ lo=S.lows[i]; a=i; }
+    }
+    if(a<0){ lo=Infinity; for(let i=from;i<=t;i++) if(S.lows[i]<lo){ lo=S.lows[i]; a=i; } }
+    a=Math.max(0,Math.min(a,t-MINLEN+1));
+    const end=toToday?n:t+1;
+    const vp=computeVolumeProfile(S.closes.slice(a,end), S.volumes.slice(a,end), 24);
+    let hi=-Infinity; for(let i=a;i<=t;i++) if(S.highs[i]>hi) hi=S.highs[i];
+    const rec={idx:t, anchor:a, close:S.closes[t], z:z[t], poc:vp?vp.poc:null, status:""};
+    if(diag) diag.push(rec);
+    if(!vp){ rec.status="scartato: profilo troppo corto"; continue; }
+    if(acc.length){
+      const last=acc[acc.length-1];
+      if(!(S.closes[t]>last.hi)){ rec.status="scartato: non rompe il massimo del livello "+last.poc.toFixed(2)+" ("+last.hi.toFixed(2)+")"; continue; }
+      if(!(vp.poc>last.poc)){ rec.status="scartato: POC non sopra "+last.poc.toFixed(2); continue; }
+    }
+    const tol=gapAtr*(atr[t]||0);
+    const near=acc.find(x=>Math.abs(x.poc-vp.poc)<tol);
+    if(near){ rec.status="scartato: troppo vicino a "+near.poc.toFixed(2); continue; }
+    acc.push({poc:vp.poc, startIdx:a, trigIdx:t, hi}); rec.status="ACCETTATO";
+  }
+  return acc;
+}
 function renderPocDiag(diag){
   const box=el("pocDiagBody"); if(!box) return;
-  if(!diag){ box.innerHTML='<div style="font-size:11px;color:var(--dim);padding:6px;">Disponibile nel modo «Da trigger Z-Score».</div>'; return; }
+  if(!diag){ box.innerHTML='<div style="font-size:11px;color:var(--dim);padding:6px;">Disponibile nei modi «Ancora swing low» e «Da trigger Z-Score».</div>'; return; }
   const fmtD=(i)=>STOCK.dates[i].toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
-  const rows=diag.map(r=>`<tr style="${r.status==='ACCETTATO'?'background:rgba(255,159,28,0.15);':''}"><td style="padding:3px 8px;">${fmtD(r.idx)}</td><td style="padding:3px 8px;text-align:right;">${r.close.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.z.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.poc!=null?r.poc.toFixed(2):'--'}</td><td style="padding:3px 8px;">${r.status}</td></tr>`).join("");
-  box.innerHTML=`<div style="font-size:10px;color:var(--dim);margin:6px 0;">Ogni riga è un incrocio dello Z-Score sopra la soglia. «POC da qui a oggi» è il POC del volume profile calcolato da quella barra fino all'ultima. Le righe evidenziate sono quelle che diventano livelli sul grafico.</div><div style="overflow-x:auto;max-height:320px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="color:var(--dim);text-align:left;"><th style="padding:3px 8px;">Data trigger</th><th style="padding:3px 8px;text-align:right;">Chiusura</th><th style="padding:3px 8px;text-align:right;">Z</th><th style="padding:3px 8px;text-align:right;">POC da qui a oggi</th><th style="padding:3px 8px;">Esito</th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="padding:8px;color:var(--dim);">Nessun incrocio della soglia.</td></tr>'}</tbody></table></div>`;
+  const rows=diag.map(r=>`<tr style="${r.status==='ACCETTATO'?'background:rgba(255,159,28,0.15);':''}"><td style="padding:3px 8px;">${fmtD(r.idx)}</td><td style="padding:3px 8px;">${r.anchor!=null?fmtD(r.anchor):'--'}</td><td style="padding:3px 8px;text-align:right;">${r.close.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.z.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.poc!=null?r.poc.toFixed(2):'--'}</td><td style="padding:3px 8px;">${r.status}</td></tr>`).join("");
+  box.innerHTML=`<div style="font-size:10px;color:var(--dim);margin:6px 0;">Ogni riga è un incrocio dello Z-Score sopra la soglia. La colonna POC è quello del volume profile (dall'ancora o dal trigger, fino al trigger o a oggi secondo le impostazioni). Le righe evidenziate sono quelle che diventano livelli sul grafico.</div><div style="overflow-x:auto;max-height:320px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="color:var(--dim);text-align:left;"><th style="padding:3px 8px;">Data trigger</th><th style="padding:3px 8px;">Ancora (swing low)</th><th style="padding:3px 8px;text-align:right;">Chiusura</th><th style="padding:3px 8px;text-align:right;">Z</th><th style="padding:3px 8px;text-align:right;">POC da qui a oggi</th><th style="padding:3px 8px;">Esito</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="padding:8px;color:var(--dim);">Nessun incrocio della soglia.</td></tr>'}</tbody></table></div>`;
 }
-window.renderPocLevels=function(){
+window.renderPocLevels=function(){ renderPocLevelsCore(); renderPatterns(); };
+function renderPocLevelsCore(){
+  window._pocLv=[];
   pocStaticSeries.forEach(sr=>{ try{ chart.removeSeries(sr); }catch(e){} });
   pocStaticSeries=[];
   if(!isOwner() || !STOCK || !chart || !el("chkPocStatic").checked) return;
@@ -1697,14 +1748,86 @@ window.renderPocLevels=function(){
   const mode=el("pocMode").value;
   const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
            : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
+           : mode==="anchor" ? (()=>{ const diag=[]; const ga=parseFloat(el("pocGapAtr").value); const r=computeAnchoredPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(ga)?1.5:ga, el("pocEnd").value==="today", diag); renderPocDiag(diag); return r.slice(-6); })()
            : (()=>{ const diag=[]; const r=computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct, diag); renderPocDiag(diag); return r.slice(-6); })();
-  if(mode!=="ztrigger") renderPocDiag(null);
+  if(mode!=="ztrigger" && mode!=="anchor") renderPocDiag(null);
+  window._pocLv=lv;
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
     const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:"POC "+l.poc.toFixed(2)});
     sr.setData([{time:STOCK.dates[l.startIdx].toISOString().slice(0,10),value:l.poc},{time:last,value:l.poc}]);
     pocStaticSeries.push(sr);
   });
+}
+
+// ---- Pattern di candele (solo grafico + statistica; nessuna strategia) ----
+// eng2: la 2a candela, di colore opposto, ingloba il CORPO della 1a.
+// eng3: la 3a candela ingloba i corpi delle due precedenti (la 1a di colore
+//       opposto alla 3a, e non è già un engulfing a 2 candele).
+// star: stella del mattino/sera: grande candela contro trend, candela a
+//       corpo piccolo (<=35% della prima), grande candela opposta che
+//       chiude oltre la metà del corpo della prima.
+function detectCandlePatterns(S, useCtx){
+  const n=S.closes.length, O=S.opens, C=S.closes, atr=calcATR(S.highs,S.lows,S.closes,14), out=[];
+  const bt=i=>Math.max(O[i],C[i]), bb=i=>Math.min(O[i],C[i]), bd=i=>Math.abs(C[i]-O[i]);
+  for(let i=6;i<n;i++){
+    if(O[i]==null||C[i]==null||!(atr[i]>0)) continue;
+    const up=C[i]>O[i], dn=C[i]<O[i];
+    const ctxBull=!useCtx || C[i-1]<C[i-6], ctxBear=!useCtx || C[i-1]>C[i-6];
+    // engulfing 2
+    let e2=false;
+    if(up && C[i-1]<O[i-1] && O[i]<=C[i-1] && C[i]>=O[i-1] && ctxBull){ out.push({idx:i,type:"eng2",dir:1}); e2=true; }
+    else if(dn && C[i-1]>O[i-1] && O[i]>=C[i-1] && C[i]<=O[i-1] && ctxBear){ out.push({idx:i,type:"eng2",dir:-1}); e2=true; }
+    // engulfing 3
+    if(!e2){
+      if(up && C[i-2]<O[i-2] && bb(i)<=Math.min(bb(i-1),bb(i-2)) && bt(i)>=Math.max(bt(i-1),bt(i-2)) && (!useCtx||C[i-2]<C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:1});
+      else if(dn && C[i-2]>O[i-2] && bb(i)<=Math.min(bb(i-1),bb(i-2)) && bt(i)>=Math.max(bt(i-1),bt(i-2)) && (!useCtx||C[i-2]>C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:-1});
+    }
+    // stella
+    const big=bd(i-2)>=0.5*atr[i], small=bd(i-1)<=0.35*bd(i-2);
+    if(big && small){
+      const mid=(O[i-2]+C[i-2])/2;
+      if(C[i-2]<O[i-2] && up && C[i]>mid && bt(i-1)<=O[i-2] && bd(i)>=0.5*atr[i]) out.push({idx:i,type:"star",dir:1});
+      else if(C[i-2]>O[i-2] && dn && C[i]<mid && bb(i-1)>=O[i-2] && bd(i)>=0.5*atr[i]) out.push({idx:i,type:"star",dir:-1});
+    }
+  }
+  return out;
+}
+window.applyChartMarkers=function(){
+  const mk=(window._stratMarkers||[]).concat(window._patMarkers||[]);
+  mk.sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0);
+  try{ candleSeries.setMarkers(mk); }catch(e){}
+};
+window.renderPatterns=function(){
+  window._patMarkers=[];
+  const body=el("patDiagBody");
+  if(!isOwner() || !STOCK || !candleSeries || !el("chkPatterns")){ return; }
+  if(!el("chkPatterns").checked){ applyChartMarkers(); if(body) body.innerHTML=""; return; }
+  const S=STOCK, n=S.closes.length, atr=calcATR(S.highs,S.lows,S.closes,14);
+  const pats=detectCandlePatterns(S, el("patCtx").checked), lv=window._pocLv||[];
+  const onLevel=(p)=>lv.some(l=>l.trigIdx!=null? p.idx>=l.trigIdx : p.idx>=l.startIdx) && lv.some(l=>(l.trigIdx!=null?p.idx>=l.trigIdx:p.idx>=l.startIdx) && l.poc>=S.lows[p.idx]-0.5*atr[p.idx] && l.poc<=S.highs[p.idx]+0.5*atr[p.idx]);
+  const names={eng2:"Engulfing 2",eng3:"Engulfing 3",star:"Stella"}, H=[5,10,20];
+  const onlyLv=el("patShow").value==="level";
+  const iso=(i)=>S.dates[i].toISOString().slice(0,10);
+  const stats={};
+  pats.forEach(p=>{
+    p.on=onLevel(p);
+    const key=p.type+"|"+p.dir+"|"+(p.on?1:0); const st=stats[key]||(stats[key]={n:0,r:{5:[],10:[],20:[]}}); st.n++;
+    H.forEach(h=>{ if(p.idx+h<n) st.r[h].push((S.closes[p.idx+h]/S.closes[p.idx]-1)*100*p.dir); });
+    if(!onlyLv || p.on){
+      const sym=p.type==="eng2"?"E2":p.type==="eng3"?"E3":"★";
+      window._patMarkers.push({time:iso(p.idx),position:p.dir>0?"belowBar":"aboveBar",color:p.on?"#ffd23f":(p.dir>0?"#7bd88f":"#ff9f9f"),shape:p.dir>0?"arrowUp":"arrowDown",text:sym});
+    }
+  });
+  applyChartMarkers();
+  const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const cell=(a)=>{ if(a.length<1) return '<td style="padding:3px 8px;text-align:right;color:var(--dim);">--</td>'; const m=avg(a), w=a.filter(v=>v>0).length/a.length*100; return `<td style="padding:3px 8px;text-align:right;color:${m>=0?'#00d4b8':'#ff6b6b'};">${m>=0?'+':''}${m.toFixed(2)}% · ${w.toFixed(0)}%</td>`; };
+  let rows="";
+  ["eng2","eng3","star"].forEach(t=>[1,-1].forEach(d=>[1,0].forEach(on=>{
+    const st=stats[t+"|"+d+"|"+on]; if(!st) return;
+    rows+=`<tr><td style="padding:3px 8px;">${names[t]} ${d>0?'rialzista':'ribassista'}</td><td style="padding:3px 8px;">${on?'su livello POC':'fuori livello'}</td><td style="padding:3px 8px;text-align:right;">${st.n}</td>${cell(st.r[5])}${cell(st.r[10])}${cell(st.r[20])}</tr>`;
+  })));
+  if(body) body.innerHTML=`<div style="font-size:10px;color:var(--dim);margin:6px 0;">Dopo ogni pattern: rendimento medio <b>a favore della direzione del pattern</b> · % di casi positivi, a 5, 10 e 20 giorni (chiusura del giorno del pattern come riferimento). Sul grafico: frecce gialle = pattern su un livello POC (il POC cade nel range della candela ±0,5 ATR, solo dopo la nascita del livello). Senza commissioni; campioni piccoli (meno di ~20 casi) non sono affidabili. Il test serve a vedere se «su livello» fa meglio di «fuori livello».</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="color:var(--dim);text-align:left;"><th style="padding:3px 8px;">Pattern</th><th style="padding:3px 8px;">Posizione</th><th style="padding:3px 8px;text-align:right;">N</th><th style="padding:3px 8px;text-align:right;">5 gg</th><th style="padding:3px 8px;text-align:right;">10 gg</th><th style="padding:3px 8px;text-align:right;">20 gg</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="padding:8px;color:var(--dim);">Nessun pattern trovato.</td></tr>'}</tbody></table></div>`;
 };
 
 // Simulazione della strategia sullo storico del titolo (S = STOCK).
@@ -1794,7 +1917,7 @@ window.runZStrategy=function(){
   });
   if(r.open) mk.push({time:iso(r.open.entryIdx),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:"Z (aperto)"});
   mk.sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0);
-  try{ candleSeries.setMarkers(mk); }catch(e){}
+  window._stratMarkers=mk; applyChartMarkers();
   el("zsStatus").textContent=`✅ Simulazione completata: ${r.n} operazioni chiuse${r.open?" + 1 aperta":""}. Le frecce sono sul grafico a candele (verde = ingresso, rosso/verde in alto = uscita).`;
   el("zsResultsWrap").style.display="block";
 };
