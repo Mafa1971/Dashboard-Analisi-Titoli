@@ -172,14 +172,17 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart();renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);">Modo POC
                 <select id="pocMode" onchange="renderPocLevels()">
-                  <option value="anchor" selected>Ancora swing low + trigger Z-Score (nuova logica)</option>
+                  <option value="screen" selected>Replica esatta dello screen (Streamlit)</option>
+                  <option value="anchor">Ancora swing low + trigger Z-Score (nuova logica)</option>
                   <option value="ztrigger">Da trigger Z-Score (come lo screen)</option>
                   <option value="trend">Cambio trend a blocchi</option>
                   <option value="blocks">Blocchi fissi</option>
                 </select></label>
               <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se il suo POC sta più in alto (oltre la distanza minima) dell'ultimo POC accettato: i livelli salgono a gradini, come nello screen"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> POC solo crescenti (rottura del precedente)</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini si tiene il più vecchio">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="3" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini (stessa zona) vale il più recente">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="3" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Replica screen»: considera solo i trigger dell'ultimo periodo (come l'orizzonte storico dello screen)">Orizzonte
+                <select id="pocHorizon" onchange="renderPocLevels()"><option value="0">tutto</option><option value="5">5 anni</option><option value="3" selected>3 anni</option><option value="1">1 anno</option></select></label>
               <label class="chk" title="Solo modo «Ancora swing low»: un nuovo livello nasce solo se dopo il livello precedente il prezzo ha chiuso almeno una volta sotto di esso (struttura persa e poi riconquistata = cambio di trend, non semplice prosecuzione)"><input type="checkbox" id="pocLoss" checked onchange="renderPocLevels()"> Richiedi livello precedente perso</label>
               <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: dove finisce il volume profile che genera il POC">Profilo fino a
                 <select id="pocEnd" onchange="renderPocLevels()"><option value="trigger" selected>trigger (congelato)</option><option value="today">oggi (come lo screen)</option></select></label>
@@ -187,7 +190,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Mostra
                 <select id="patShow" onchange="renderPatterns()"><option value="level" selected>solo su livello POC</option><option value="all">tutti</option></select></label>
               <label class="chk" title="Un pattern rialzista conta solo dopo un calo (chiusura sotto quella di 5 barre prima); uno ribassista solo dopo un rialzo"><input type="checkbox" id="patCtx" checked onchange="renderPatterns()"> con contesto di trend</label>
-              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="3" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="1" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -1701,7 +1704,8 @@ function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct, diag){
 // vale solo se la chiusura del trigger rompe il massimo del livello
 // precedente, il suo POC sta sopra quello precedente e (opzione) il livello
 // precedente è stato perso almeno una volta dopo la sua nascita; (5) se è a meno di
-// gapAtr x ATR da un livello già accettato, si tiene il più vecchio.
+// gapAtr x ATR da un livello già accettato è la stessa zona: se è l'ultimo
+// livello lo sostituisce (vale il più recente), altrimenti si scarta.
 function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, requireLoss, diag){
   const n=S.closes.length, z=computeRegressionZ(S.closes,W), atr=calcATR(S.highs,S.lows,S.closes,14);
   const LB=60, K=5, MINLEN=10, acc=[];
@@ -1720,6 +1724,16 @@ function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, requireLoss, diag){
     const rec={idx:t, anchor:a, close:S.closes[t], z:z[t], poc:vp?vp.poc:null, status:""};
     if(diag) diag.push(rec);
     if(!vp){ rec.status="scartato: profilo troppo corto"; continue; }
+    const tol=gapAtr*(atr[t]||0);
+    const near=acc.find(x=>Math.abs(x.origin-vp.poc)<tol);
+    if(near){
+      // stessa zona: si tiene il PIÙ RECENTE (sostituisce l'ultimo livello), se è più vecchio si scarta
+      if(near===acc[acc.length-1]){
+        rec.status="SOSTITUISCE "+near.poc.toFixed(2)+" (stessa zona, vale il più recente)";
+        near.poc=vp.poc; near.startIdx=a; near.trigIdx=t; near.hi=Math.max(near.hi,hi);
+      } else rec.status="scartato: zona già coperta da "+near.poc.toFixed(2);
+      continue;
+    }
     if(acc.length){
       const last=acc[acc.length-1];
       if(!(S.closes[t]>last.hi)){ rec.status="scartato: non rompe il massimo del livello "+last.poc.toFixed(2)+" ("+last.hi.toFixed(2)+")"; continue; }
@@ -1729,12 +1743,70 @@ function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, requireLoss, diag){
         if(!lost){ rec.status="scartato: il livello "+last.poc.toFixed(2)+" non è mai stato perso (stesso trend)"; continue; }
       }
     }
-    const tol=gapAtr*(atr[t]||0);
-    const near=acc.find(x=>Math.abs(x.poc-vp.poc)<tol);
-    if(near){ rec.status="scartato: troppo vicino a "+near.poc.toFixed(2); continue; }
-    acc.push({poc:vp.poc, startIdx:a, trigIdx:t, hi}); rec.status="ACCETTATO";
+    acc.push({poc:vp.poc, origin:vp.poc, startIdx:a, trigIdx:t, hi}); rec.status="ACCETTATO";
   }
   return acc;
+}
+// ---- Replica esatta dell'algoritmo dello screen (POC Scanner Pro, tab 2) ----
+// Z-Score: regressione lineare su prezzi grezzi (non log) negli ultimi W giorni
+// con x=0..W-1; il prezzo teorico è m*W+q (cioè un passo OLTRE l'ultima barra,
+// come nello screen); Z=(close-teorico)/dev.std dei residui; prima di W barre Z=0.
+function computeScreenZ(closes, W){
+  const n=closes.length, z=new Array(n).fill(0);
+  const sx=W*(W-1)/2, sx2=(W-1)*W*(2*W-1)/6, den=W*sx2-sx*sx, mx=sx/W, vx=sx2/W-mx*mx;
+  for(let t=W-1;t<n;t++){
+    let sy=0, sy2=0, sxy=0;
+    for(let i=0;i<W;i++){ const y=closes[t-W+1+i]; sy+=y; sy2+=y*y; sxy+=y*i; }
+    const m=(W*sxy-sx*sy)/den, q=(sx2*sy-sx*sxy)/den, fit=m*W+q;
+    const my=sy/W, vy=sy2/W-my*my, cov=sxy/W-mx*my;
+    const vr=vy-2*m*cov+m*m*vx, sd=Math.sqrt(Math.max(vr,0.00001));
+    z[t]=(closes[t]-fit)/sd;
+  }
+  return z;
+}
+// Volume profile dello screen (calc_vp): 200 fasce tra minimo e massimo, il
+// volume di ogni barra è distribuito sulle fasce coperte dal suo range
+// [low, high]; POC = centro della fascia con più volume.
+function calcVpScreen(S, from, div){
+  div=div||200; const n=S.closes.length;
+  let pmin=Infinity, pmax=-Infinity;
+  for(let i=from;i<n;i++){ if(S.lows[i]<pmin) pmin=S.lows[i]; if(S.highs[i]>pmax) pmax=S.highs[i]; }
+  if(!(pmax-pmin>0)) return pmin<Infinity?pmin:null;
+  const step=(pmax-pmin)/div, vols=new Array(div).fill(0);
+  for(let i=from;i<n;i++){
+    const v=S.volumes[i], h=S.highs[i], l=S.lows[i];
+    if(!(v>0) || h===l) continue;
+    // fasce j con bordo alto >= l e bordo basso <= h
+    let j0=Math.max(0,Math.ceil((l-pmin)/step)-1), j1=Math.min(div-1,Math.floor((h-pmin)/step));
+    while(j0<div-1 && pmin+(j0+1)*step<l) j0++;
+    while(j1>0 && pmin+j1*step>h) j1--;
+    const cnt=j1-j0+1; if(cnt<1) continue;
+    for(let j=j0;j<=j1;j++) vols[j]+=v/cnt;
+  }
+  let bi=0; for(let j=1;j<div;j++) if(vols[j]>vols[bi]) bi=j;
+  return pmin+(bi+0.5)*step;
+}
+function computeScreenPOCs(S, W, thr, tolPct, horizonYears, diag){
+  const n=S.closes.length, z=computeScreenZ(S.closes,W), saved=[];
+  const minIdx=horizonYears>0?Math.max(W,n-Math.round(horizonYears*252)):W;
+  let prev=0;
+  for(let i=W;i<n;i++){
+    const cur=z[i]>=thr?1:0;
+    if(cur===1 && prev===0 && i>=minIdx){
+      const poc=calcVpScreen(S,i,200);
+      if(poc!=null){
+        const rec={idx:i, close:S.closes[i], z:z[i], poc, status:""};
+        if(diag) diag.push(rec);
+        const hit=saved.find(x=>Math.abs(poc-x.poc)/x.poc<=tolPct/100);
+        if(hit){
+          if(i>hit.trigIdx){ rec.status="SOSTITUISCE "+hit.poc.toFixed(2)+" (stessa zona, vale il più recente)"; if(hit.rec) hit.rec.status="sostituito dal trigger del "+S.dates[i].toLocaleDateString("it-IT"); hit.poc=poc; hit.startIdx=i; hit.trigIdx=i; hit.rec=rec; }
+          else rec.status="scartato: stessa zona di "+hit.poc.toFixed(2);
+        } else { rec.status="ACCETTATO"; saved.push({poc, startIdx:i, trigIdx:i, rec}); }
+      }
+    }
+    prev=cur;
+  }
+  return saved;
 }
 function renderPocDiag(diag){
   const box=el("pocDiagBody"); if(!box) return;
@@ -1754,9 +1826,10 @@ function renderPocLevelsCore(){
   const mode=el("pocMode").value;
   const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
            : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
+           : mode==="screen" ? (()=>{ const diag=[]; const r=computeScreenPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(gap)?1:gap, parseInt(el("pocHorizon").value)||0, diag); renderPocDiag(diag); return r; })()
            : mode==="anchor" ? (()=>{ const diag=[]; const ga=parseFloat(el("pocGapAtr").value); const r=computeAnchoredPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(ga)?3:ga, el("pocEnd").value==="today", el("pocLoss").checked, diag); renderPocDiag(diag); return r.slice(-6); })()
            : (()=>{ const diag=[]; const r=computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct, diag); renderPocDiag(diag); return r.slice(-6); })();
-  if(mode!=="ztrigger" && mode!=="anchor") renderPocDiag(null);
+  if(mode!=="ztrigger" && mode!=="anchor" && mode!=="screen") renderPocDiag(null);
   window._pocLv=lv;
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
