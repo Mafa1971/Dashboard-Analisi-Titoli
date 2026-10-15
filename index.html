@@ -228,6 +228,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">🚀 STRATEGIA Z-SCORE — ACCELERAZIONE (simulazione sul titolo)</div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ingresso LONG alla chiusura del giorno in cui lo Z-Score incrocia al rialzo la soglia. Stop = ingresso − moltiplicatore × range della candela; Target = rapporto rischio/rendimento × distanza dello stop; uscita anticipata se lo Z-Score torna sotto zero. Posizione dimensionata sul rischio per trade (% del capitale). Se nella stessa candela toccasse sia stop sia target si assume lo stop (ipotesi prudente); se apre oltre lo stop/target l'uscita avviene all'apertura.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <label style="font-size:11px;color:var(--dim);" title="«Pattern su POC»: ingresso long quando compare il pattern scelto vicino a un livello POC (il POC cade nel range della candela ±0,5 ATR e la chiusura è sopra il POC). Stop sotto il minimo della candela o del POC (il più basso) meno 0,25 ATR; target = R × distanza stop. Usa i livelli del modo POC attivo sopra il grafico.">Ingresso
+              <select id="zsMode"><option value="poc" selected>Pattern su POC</option><option value="z">Z-Score (originale)</option></select></label>
+            <label style="font-size:11px;color:var(--dim);">Pattern
+              <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (rialzista)</option><option value="star">Stella del mattino</option></select></label>
             <label style="font-size:11px;color:var(--dim);">Moltiplicatore stop (×range) <input type="number" id="zsSlMult" value="1.5" step="0.1" style="width:55px;"></label>
             <label style="font-size:11px;color:var(--dim);">Rischio/rendimento (R) <input type="number" id="zsRR" value="3" step="0.1" style="width:55px;"></label>
             <label style="font-size:11px;color:var(--dim);">Rischio per trade (%) <input type="number" id="zsRisk" value="1" step="0.1" style="width:55px;"></label>
@@ -1756,7 +1760,9 @@ function computeScreenZ(closes, W){
   const sx=W*(W-1)/2, sx2=(W-1)*W*(2*W-1)/6, den=W*sx2-sx*sx, mx=sx/W, vx=sx2/W-mx*mx;
   for(let t=W-1;t<n;t++){
     let sy=0, sy2=0, sxy=0;
-    for(let i=0;i<W;i++){ const y=closes[t-W+1+i]; sy+=y; sy2+=y*y; sxy+=y*i; }
+    let bad=false;
+    for(let i=0;i<W;i++){ const y=closes[t-W+1+i]; if(y==null||!isFinite(y)){ bad=true; break; } sy+=y; sy2+=y*y; sxy+=y*i; }
+    if(bad) continue;
     const m=(W*sxy-sx*sy)/den, q=(sx2*sy-sx*sxy)/den, fit=m*W+q;
     const my=sy/W, vy=sy2/W-my*my, cov=sxy/W-mx*my;
     const vr=vy-2*m*cov+m*m*vx, sd=Math.sqrt(Math.max(vr,0.00001));
@@ -1770,12 +1776,14 @@ function computeScreenZ(closes, W){
 function calcVpScreen(S, from, div){
   div=div||200; const n=S.closes.length;
   let pmin=Infinity, pmax=-Infinity;
-  for(let i=from;i<n;i++){ if(S.lows[i]<pmin) pmin=S.lows[i]; if(S.highs[i]>pmax) pmax=S.highs[i]; }
-  if(!(pmax-pmin>0)) return pmin<Infinity?pmin:null;
+  const ok=(i)=>isFinite(S.lows[i]) && isFinite(S.highs[i]) && S.lows[i]!=null && S.highs[i]!=null && S.lows[i]>0 && S.highs[i]>=S.lows[i];
+  for(let i=from;i<n;i++){ if(!ok(i)) continue; if(S.lows[i]<pmin) pmin=S.lows[i]; if(S.highs[i]>pmax) pmax=S.highs[i]; }
+  if(pmin===Infinity) return null;
+  if(!(pmax-pmin>0)) return pmin;
   const step=(pmax-pmin)/div, vols=new Array(div).fill(0);
   for(let i=from;i<n;i++){
     const v=S.volumes[i], h=S.highs[i], l=S.lows[i];
-    if(!(v>0) || h===l) continue;
+    if(!ok(i) || !(v>0) || h===l) continue;
     // fasce j con bordo alto >= l e bordo basso <= h
     let j0=Math.max(0,Math.ceil((l-pmin)/step)-1), j1=Math.min(div-1,Math.floor((h-pmin)/step));
     while(j0<div-1 && pmin+(j0+1)*step<l) j0++;
@@ -1833,8 +1841,10 @@ function renderPocLevelsCore(){
   window._pocLv=lv;
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   lv.forEach(l=>{
-    const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title:"POC "+l.poc.toFixed(2)});
-    sr.setData([{time:STOCK.dates[l.startIdx].toISOString().slice(0,10),value:l.poc},{time:last,value:l.poc}]);
+    const t0=STOCK.dates[l.startIdx].toISOString().slice(0,10);
+    const sr=chart.addLineSeries({color:"#ff9f1c",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+    sr.setData([{time:t0,value:l.poc},{time:last,value:l.poc}]);
+    try{ sr.setMarkers([{time:t0,position:"aboveBar",color:"#ff9f1c",shape:"circle",size:0.5,text:"POC "+l.poc.toFixed(2)}]); }catch(e){}
     pocStaticSeries.push(sr);
   });
 }
@@ -1922,16 +1932,36 @@ function simulateZStrategy(S, p){
     trades.push({entryIdx:pos.i, exitIdx:t, entry:pos.entry, exit:price, sl:pos.sl, tp:pos.tp, reason, pnl, R:(price-pos.entry)/(pos.entry-pos.sl), days:t-pos.i, shares:pos.shares});
     pos=null;
   };
+  const isPoc=p.mode==="poc";
+  const atr14=isPoc?calcATR(S.highs,S.lows,S.closes,14):null;
+  const patAt={}; if(isPoc){ detectCandlePatterns(S,p.ctx).forEach(q=>{ if(q.dir===1 && q.type===p.pattern) patAt[q.idx]=q; }); }
   for(let t=0;t<n;t++){
     if(z[t]!=null && firstZ==null) firstZ=t;
-    if(pos){
+    if(isPoc && !pos && patAt[t] && atr14[t]>0){
+      let best=null;
+      (p.levels||[]).forEach(l=>{
+        const act=l.trigIdx!=null?l.trigIdx:l.startIdx;
+        if(t<act) return;
+        if(l.poc>=S.lows[t]-0.5*atr14[t] && l.poc<=S.highs[t]+0.5*atr14[t] && S.closes[t]>=l.poc){
+          if(!best || Math.abs(S.closes[t]-l.poc)<Math.abs(S.closes[t]-best.poc)) best=l;
+        }
+      });
+      if(best){
+        const entry=S.closes[t], sl=Math.min(S.lows[t],best.poc)-0.25*atr14[t], slDist=entry-sl;
+        if(slDist>0 && sl>0){
+          let shares=equity*p.riskPct/100/slDist; shares=Math.min(shares, equity*p.maxPos/100/entry);
+          if(shares>0) pos={i:t, entry, sl, tp:entry+p.rr*slDist, shares};
+        }
+      }
+    }
+    if(pos && pos.i<t){
       if(S.opens[t]<=pos.sl) closeTrade(t,S.opens[t],"Stop");
       else if(S.lows[t]<=pos.sl) closeTrade(t,pos.sl,"Stop");
       else if(S.opens[t]>=pos.tp) closeTrade(t,S.opens[t],"Target");
       else if(S.highs[t]>=pos.tp) closeTrade(t,pos.tp,"Target");
-      else if(z[t]!=null && z[t]<0) closeTrade(t,S.closes[t],"Z<0");
+      else if(!isPoc && z[t]!=null && z[t]<0) closeTrade(t,S.closes[t],"Z<0");
     }
-    if(!pos && t>0 && z[t]!=null && z[t-1]!=null && z[t-1]<p.thr && z[t]>=p.thr){
+    if(!isPoc && !pos && t>0 && z[t]!=null && z[t-1]!=null && z[t-1]<p.thr && z[t]>=p.thr){
       const entry=S.closes[t];
       let range=S.highs[t]-S.lows[t];
       if(atr && atr[t]!=null) range=Math.max(range,atr[t]);
@@ -1958,7 +1988,9 @@ window.runZStrategy=function(){
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const p={ W:parseInt(el("zWindow").value)||504, thr:parseFloat(el("zThr").value)||2,
     slMult:parseFloat(el("zsSlMult").value)||1.5, rr:parseFloat(el("zsRR").value)||3,
-    riskPct:parseFloat(el("zsRisk").value)||1, maxPos:parseFloat(el("zsMaxPos").value)||100, atrFloor:el("zsAtrFloor").checked };
+    riskPct:parseFloat(el("zsRisk").value)||1, maxPos:parseFloat(el("zsMaxPos").value)||100, atrFloor:el("zsAtrFloor").checked,
+    mode:el("zsMode").value, pattern:el("zsPattern").value, ctx:el("patCtx")?el("patCtx").checked:true, levels:window._pocLv||[] };
+  if(p.mode==="poc" && !p.levels.length){ el("zsStatus").textContent="❌ Nessun livello POC sul grafico: attiva «POC statici filtrati» e controlla il modo POC."; el("zsResultsWrap").style.display="none"; return; }
   if(STOCK.closes.length<p.W+30){ el("zsStatus").textContent=`❌ Storico insufficiente: servono almeno ${p.W+30} barre con finestra Z = ${p.W}.`; el("zsResultsWrap").style.display="none"; return; }
   const r=simulateZStrategy(STOCK,p);
   const iso=(i)=>STOCK.dates[i].toISOString().slice(0,10);
@@ -1991,10 +2023,10 @@ window.runZStrategy=function(){
   // frecce sul grafico a candele
   const mk=[];
   r.trades.forEach(t=>{
-    mk.push({time:iso(t.entryIdx),position:"belowBar",color:"#00d4b8",shape:"arrowUp",text:"Z"});
+    mk.push({time:iso(t.entryIdx),position:"belowBar",color:"#00d4b8",shape:"arrowUp",text:p.mode==="poc"?"P":"Z"});
     mk.push({time:iso(t.exitIdx),position:"aboveBar",color:t.pnl>0?"#00d4b8":"#ff6b6b",shape:"arrowDown",text:t.reason+" "+(t.R>=0?"+":"")+t.R.toFixed(1)+"R"});
   });
-  if(r.open) mk.push({time:iso(r.open.entryIdx),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:"Z (aperto)"});
+  if(r.open) mk.push({time:iso(r.open.entryIdx),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:(p.mode==="poc"?"P (aperto)":"Z (aperto)")});
   mk.sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0);
   window._stratMarkers=mk; applyChartMarkers();
   el("zsStatus").textContent=`✅ Simulazione completata: ${r.n} operazioni chiuse${r.open?" + 1 aperta":""}. Le frecce sono sul grafico a candele (verde = ingresso, rosso/verde in alto = uscita).`;
