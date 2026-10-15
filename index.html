@@ -179,7 +179,8 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 </select></label>
               <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se il suo POC sta più in alto (oltre la distanza minima) dell'ultimo POC accettato: i livelli salgono a gradini, come nello screen"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> POC solo crescenti (rottura del precedente)</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini si tiene il più vecchio">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="1.5" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini si tiene il più vecchio">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="3" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label class="chk" title="Solo modo «Ancora swing low»: un nuovo livello nasce solo se dopo il livello precedente il prezzo ha chiuso almeno una volta sotto di esso (struttura persa e poi riconquistata = cambio di trend, non semplice prosecuzione)"><input type="checkbox" id="pocLoss" checked onchange="renderPocLevels()"> Richiedi livello precedente perso</label>
               <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: dove finisce il volume profile che genera il POC">Profilo fino a
                 <select id="pocEnd" onchange="renderPocLevels()"><option value="trigger" selected>trigger (congelato)</option><option value="today">oggi (come lo screen)</option></select></label>
               <label class="chk" title="Marca sul grafico i pattern di candele: engulfing a 2 e 3 candele, stella del mattino/sera"><input type="checkbox" id="chkPatterns" checked onchange="renderPatterns()"> 🕯 Pattern candele</label>
@@ -1698,9 +1699,10 @@ function computeZTriggerPOCs(S, W, thr, requireBreak, gapPct, diag){
 // 60 barre precedenti = inizio della gamba rialzista. (3) Il volume profile
 // va dall'ancora al trigger (congelato) oppure a oggi. (4) Un livello nuovo
 // vale solo se la chiusura del trigger rompe il massimo del livello
-// precedente e il suo POC sta sopra quello precedente; (5) se è a meno di
+// precedente, il suo POC sta sopra quello precedente e (opzione) il livello
+// precedente è stato perso almeno una volta dopo la sua nascita; (5) se è a meno di
 // gapAtr x ATR da un livello già accettato, si tiene il più vecchio.
-function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, diag){
+function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, requireLoss, diag){
   const n=S.closes.length, z=computeRegressionZ(S.closes,W), atr=calcATR(S.highs,S.lows,S.closes,14);
   const LB=60, K=5, MINLEN=10, acc=[];
   for(let t=1;t<n;t++){
@@ -1722,6 +1724,10 @@ function computeAnchoredPOCs(S, W, thr, gapAtr, toToday, diag){
       const last=acc[acc.length-1];
       if(!(S.closes[t]>last.hi)){ rec.status="scartato: non rompe il massimo del livello "+last.poc.toFixed(2)+" ("+last.hi.toFixed(2)+")"; continue; }
       if(!(vp.poc>last.poc)){ rec.status="scartato: POC non sopra "+last.poc.toFixed(2); continue; }
+      if(requireLoss){
+        let lost=false; for(let i=last.trigIdx+1;i<t;i++){ if(S.closes[i]<last.poc){ lost=true; break; } }
+        if(!lost){ rec.status="scartato: il livello "+last.poc.toFixed(2)+" non è mai stato perso (stesso trend)"; continue; }
+      }
     }
     const tol=gapAtr*(atr[t]||0);
     const near=acc.find(x=>Math.abs(x.poc-vp.poc)<tol);
@@ -1748,7 +1754,7 @@ function renderPocLevelsCore(){
   const mode=el("pocMode").value;
   const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
            : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
-           : mode==="anchor" ? (()=>{ const diag=[]; const ga=parseFloat(el("pocGapAtr").value); const r=computeAnchoredPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(ga)?1.5:ga, el("pocEnd").value==="today", diag); renderPocDiag(diag); return r.slice(-6); })()
+           : mode==="anchor" ? (()=>{ const diag=[]; const ga=parseFloat(el("pocGapAtr").value); const r=computeAnchoredPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(ga)?3:ga, el("pocEnd").value==="today", el("pocLoss").checked, diag); renderPocDiag(diag); return r.slice(-6); })()
            : (()=>{ const diag=[]; const r=computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct, diag); renderPocDiag(diag); return r.slice(-6); })();
   if(mode!=="ztrigger" && mode!=="anchor") renderPocDiag(null);
   window._pocLv=lv;
