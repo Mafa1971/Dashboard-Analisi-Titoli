@@ -190,7 +190,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Mostra
                 <select id="patShow" onchange="renderPatterns()"><option value="level" selected>solo su livello POC</option><option value="all">tutti</option></select></label>
               <label class="chk" title="Un pattern rialzista conta solo dopo un calo (chiusura sotto quella di 5 barre prima); uno ribassista solo dopo un rialzo"><input type="checkbox" id="patCtx" checked onchange="renderPatterns()"> con contesto di trend</label>
-              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="1" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="5" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
           <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -229,7 +229,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ingresso LONG alla chiusura del giorno in cui lo Z-Score incrocia al rialzo la soglia. Stop = ingresso − moltiplicatore × range della candela; Target = rapporto rischio/rendimento × distanza dello stop; uscita anticipata se lo Z-Score torna sotto zero. Posizione dimensionata sul rischio per trade (% del capitale). Se nella stessa candela toccasse sia stop sia target si assume lo stop (ipotesi prudente); se apre oltre lo stop/target l'uscita avviene all'apertura.</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
             <label style="font-size:11px;color:var(--dim);" title="«Pattern su POC»: ingresso long quando compare il pattern scelto vicino a un livello POC (il POC cade nel range della candela ±0,5 ATR e la chiusura è sopra il POC). Stop sotto il minimo della candela o del POC (il più basso) meno 0,25 ATR; target = R × distanza stop. Usa i livelli del modo POC attivo sopra il grafico.">Ingresso
-              <select id="zsMode"><option value="z" selected>Z-Score (originale)</option><option value="poc">Pattern su POC (sperimentale)</option></select></label>
+              <select id="zsMode"><option value="bounce" selected>Rimbalzo sul POC (long e short)</option><option value="z">Z-Score (originale)</option></select></label>
+            <label style="font-size:11px;color:var(--dim);" title="Rimbalzo sul POC: il prezzo torna su un livello senza romperlo (entro 8 barre) e arriva la conferma. Long se il prezzo sta sopra il livello, short se sta sotto. Stop a 1 ATR oltre il livello.">Conferma
+              <select id="zsConfirm"><option value="pattern" selected>Pattern di inversione</option><option value="z">Z-Score che gira</option><option value="any">Uno dei due</option><option value="both">Entrambi insieme</option></select></label>
+            <label style="font-size:11px;color:var(--dim);" title="Z che gira: per il long Z risale sopra questa soglia, per lo short scende sotto la soglia col segno opposto">Soglia Z conferma <input type="number" id="zsZTh" value="0" step="0.1" style="width:50px;"></label>
+            <label style="font-size:11px;color:var(--dim);" title="Due livelli entro questa distanza (%) contano come uno solo: vale il più recente">Unisci livelli (%) <input type="number" id="zsMerge" value="5" step="0.5" min="0" style="width:50px;"></label>
             <label style="font-size:11px;color:var(--dim);">Pattern
               <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (rialzista)</option><option value="star">Stella del mattino</option></select></label>
             <label style="font-size:11px;color:var(--dim);">Moltiplicatore stop (×range) <input type="number" id="zsSlMult" value="1.5" step="0.1" style="width:55px;"></label>
@@ -1983,16 +1987,94 @@ function simulateZStrategy(S, p){
     avgR:avg(trades.map(t=>t.R)), pf: gl>0?gp/gl:(gp>0?Infinity:null), totalReturn:equity/capital0-1, maxDD,
     avgDays:avg(trades.map(t=>t.days)), bh, exits:{Stop:by("Stop"),Target:by("Target"),"Z<0":by("Z<0")} };
 }
+// Rimbalzo sul POC (long e short). Livello attivo dal trigger; 2+ livelli entro
+// mergePct% = uno solo (il più recente). Long: il prezzo era sopra il livello,
+// lo tocca (minimo <= L+0,5ATR) entro le ultime 8 barre senza chiudere sotto
+// L-0,5ATR e arriva la conferma (pattern rialzista e/o Z che risale). Short
+// speculare. Stop a 1 ATR oltre il livello, target = R x distanza stop.
+function simulateBounceStrategy(S, p){
+  const n=S.closes.length, z=computeRegressionZ(S.closes,p.W), atr=calcATR(S.highs,S.lows,S.closes,14);
+  const patAt={}; detectCandlePatterns(S,p.ctx).forEach(q=>{ if(q.type===p.pattern){ (patAt[q.idx]=patAt[q.idx]||{})[q.dir]=true; } });
+  const lv=(p.levels||[]).map(l=>({poc:l.poc, act:l.trigIdx!=null?l.trigIdx:l.startIdx}));
+  const capital0=100000; let equity=capital0, peak=capital0, maxDD=0, pos=null;
+  const trades=[]; const mp=p.mergePct/100, LB=8;
+  let firstAct=lv.length?Math.min(...lv.map(l=>l.act)):null;
+  const closeTrade=(t,price,reason)=>{
+    const pnl=(price-pos.entry)*pos.dir*pos.shares; equity+=pnl;
+    peak=Math.max(peak,equity); maxDD=Math.max(maxDD,(peak-equity)/peak);
+    trades.push({entryIdx:pos.i, exitIdx:t, entry:pos.entry, exit:price, sl:pos.sl, tp:pos.tp, reason, pnl, R:(price-pos.entry)*pos.dir/Math.abs(pos.entry-pos.sl), days:t-pos.i, shares:pos.shares, dir:pos.dir});
+    pos=null;
+  };
+  const activeLevels=(t)=>{
+    const act=lv.filter(l=>l.act<=t).sort((a,b)=>b.act-a.act), keep=[];
+    act.forEach(l=>{ if(!keep.some(k=>Math.abs(k.poc/l.poc-1)<mp)) keep.push(l); });
+    return keep;
+  };
+  const zCross=(t,dir)=>{ if(z[t]==null||z[t-1]==null) return false; return dir>0 ? (z[t-1]<p.zTh && z[t]>=p.zTh) : (z[t-1]>-p.zTh && z[t]<=-p.zTh); };
+  for(let t=1;t<n;t++){
+    if(pos && pos.i<t){
+      if(pos.dir>0){
+        if(S.opens[t]<=pos.sl) closeTrade(t,S.opens[t],"Stop");
+        else if(S.lows[t]<=pos.sl) closeTrade(t,pos.sl,"Stop");
+        else if(S.opens[t]>=pos.tp) closeTrade(t,S.opens[t],"Target");
+        else if(S.highs[t]>=pos.tp) closeTrade(t,pos.tp,"Target");
+      } else {
+        if(S.opens[t]>=pos.sl) closeTrade(t,S.opens[t],"Stop");
+        else if(S.highs[t]>=pos.sl) closeTrade(t,pos.sl,"Stop");
+        else if(S.opens[t]<=pos.tp) closeTrade(t,S.opens[t],"Target");
+        else if(S.lows[t]<=pos.tp) closeTrade(t,pos.tp,"Target");
+      }
+    }
+    if(pos || !(atr[t]>0) || t<LB+1) continue;
+    const a=atr[t], pt=patAt[t]||{};
+    for(const L of activeLevels(t)){
+      for(const dir of [1,-1]){
+        const confP=!!pt[dir], confZ=zCross(t,dir);
+        const ok = p.confirm==="pattern"?confP : p.confirm==="z"?confZ : p.confirm==="both"?(confP&&confZ) : (confP||confZ);
+        if(!ok) continue;
+        const c=S.closes[t];
+        if(dir>0 ? !(c>=L.poc && c-L.poc<=1.5*a) : !(c<=L.poc && L.poc-c<=1.5*a)) continue;
+        let touched=false;
+        for(let k=t-LB;k<=t && !touched;k++){
+          if(k<1) continue;
+          const hit = dir>0 ? (S.lows[k]<=L.poc+0.5*a && S.closes[k-1]>L.poc) : (S.highs[k]>=L.poc-0.5*a && S.closes[k-1]<L.poc);
+          if(!hit) continue;
+          let broken=false;
+          for(let m=k;m<=t;m++){ if(dir>0 ? S.closes[m]<L.poc-0.5*a : S.closes[m]>L.poc+0.5*a){ broken=true; break; } }
+          if(!broken) touched=true;
+        }
+        if(!touched) continue;
+        const sl = dir>0 ? L.poc-a : L.poc+a, slDist=Math.abs(c-sl);
+        if(!(slDist>0) || sl<=0) continue;
+        let shares=equity*p.riskPct/100/slDist; shares=Math.min(shares, equity*p.maxPos/100/c);
+        if(!(shares>0)) continue;
+        pos={i:t, entry:c, dir, sl, tp:c+dir*p.rr*slDist, shares, level:L.poc};
+        break;
+      }
+      if(pos) break;
+    }
+  }
+  const open = pos ? {entryIdx:pos.i, entry:pos.entry, sl:pos.sl, tp:pos.tp, dir:pos.dir, R:(S.closes[n-1]-pos.entry)*pos.dir/Math.abs(pos.entry-pos.sl), days:n-1-pos.i} : null;
+  const wins=trades.filter(t=>t.pnl>0), losses=trades.filter(t=>t.pnl<=0);
+  const gp=wins.reduce((x,t)=>x+t.pnl,0), gl=-losses.reduce((x,t)=>x+t.pnl,0);
+  const avg=(a)=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const by=(r)=>{ const a=trades.filter(t=>t.reason===r); return {n:a.length, avgR:avg(a.map(t=>t.R))}; };
+  const longs=trades.filter(t=>t.dir>0), shorts=trades.filter(t=>t.dir<0);
+  return { z, trades, open, firstZ:firstAct, n:trades.length, winRate:trades.length?wins.length/trades.length:null,
+    avgR:avg(trades.map(t=>t.R)), pf: gl>0?gp/gl:(gp>0?Infinity:null), totalReturn:equity/capital0-1, maxDD,
+    avgDays:avg(trades.map(t=>t.days)), bh:(firstAct!=null)?S.closes[n-1]/S.closes[firstAct]-1:null,
+    exits:{Stop:by("Stop"),Target:by("Target"),"Z<0":{n:0,avgR:null}}, nLong:longs.length, nShort:shorts.length, avgRLong:avg(longs.map(t=>t.R)), avgRShort:avg(shorts.map(t=>t.R)) };
+}
 window.runZStrategy=function(){
   if(!isOwner()) return; // funzione in anteprima: solo account proprietario
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const p={ W:parseInt(el("zWindow").value)||504, thr:parseFloat(el("zThr").value)||2,
     slMult:parseFloat(el("zsSlMult").value)||1.5, rr:parseFloat(el("zsRR").value)||3,
     riskPct:parseFloat(el("zsRisk").value)||1, maxPos:parseFloat(el("zsMaxPos").value)||100, atrFloor:el("zsAtrFloor").checked,
-    mode:el("zsMode").value, pattern:el("zsPattern").value, ctx:el("patCtx")?el("patCtx").checked:true, levels:window._pocLv||[] };
-  if(p.mode==="poc" && !p.levels.length){ el("zsStatus").textContent="❌ Nessun livello POC sul grafico: attiva «POC statici filtrati» e controlla il modo POC."; el("zsResultsWrap").style.display="none"; return; }
+    mode:el("zsMode").value, confirm:el("zsConfirm").value, zTh:parseFloat(el("zsZTh").value)||0, mergePct:parseFloat(el("zsMerge").value)||0, pattern:el("zsPattern").value, ctx:el("patCtx")?el("patCtx").checked:true, levels:window._pocLv||[] };
+  if(p.mode==="bounce" && !p.levels.length){ el("zsStatus").textContent="❌ Nessun livello POC sul grafico: attiva «POC statici filtrati» e controlla il modo POC."; el("zsResultsWrap").style.display="none"; return; }
   if(STOCK.closes.length<p.W+30){ el("zsStatus").textContent=`❌ Storico insufficiente: servono almeno ${p.W+30} barre con finestra Z = ${p.W}.`; el("zsResultsWrap").style.display="none"; return; }
-  const r=simulateZStrategy(STOCK,p);
+  const r=p.mode==="bounce"?simulateBounceStrategy(STOCK,p):simulateZStrategy(STOCK,p);
   const iso=(i)=>STOCK.dates[i].toISOString().slice(0,10);
   const fmtD=(i)=>STOCK.dates[i].toLocaleDateString("it-IT",{day:"2-digit",month:"short",year:"2-digit"});
   const pc=(v,d=1)=>v==null?"--":(v*100).toFixed(d)+"%";
@@ -2011,22 +2093,24 @@ window.runZStrategy=function(){
   let note=`Uscite: <b style="color:#ff6b6b;">Stop ${ex.Stop.n}</b>${ex.Stop.avgR!=null?` (media ${ex.Stop.avgR.toFixed(2)}R)`:""} · <b style="color:#00d4b8;">Target ${ex.Target.n}</b>${ex.Target.avgR!=null?` (media ${ex.Target.avgR.toFixed(2)}R)`:""} · <b style="color:#ffd23f;">Z&lt;0 ${ex["Z<0"].n}</b>${ex["Z<0"].avgR!=null?` (media ${ex["Z<0"].avgR.toFixed(2)}R)`:""}. `;
   const zNow=r.z[r.z.length-1];
   note+=`Z-Score oggi: <b>${zNow==null?"--":zNow.toFixed(2)}</b> (soglia ${p.thr}).`;
+  if(r.nLong!=null) note+=`Long ${r.nLong} (R medio ${r.avgRLong==null?"--":r.avgRLong.toFixed(2)}) · Short ${r.nShort} (R medio ${r.avgRShort==null?"--":r.avgRShort.toFixed(2)}). `;
   if(r.open) note+=` 📍 Trade aperto dal ${fmtD(r.open.entryIdx)}: ingresso ${cur} ${r.open.entry.toFixed(2)}, stop ${r.open.sl.toFixed(2)}, target ${r.open.tp.toFixed(2)} (${r.open.R>=0?"+":""}${r.open.R.toFixed(2)} R finora).`;
   if(r.n<20) note+=` ⚠️ Solo ${r.n} operazioni: campione piccolo, il risultato non è statisticamente affidabile.`;
   note+=` Risultati su storico, senza commissioni né slippage; il drawdown considera solo le chiusure dei trade.`;
   el("zsNote").innerHTML=note;
   const rows=r.trades.slice(-20).reverse().map(t=>{
     const col=t.pnl>0?"#00d4b8":"#ff6b6b";
-    return `<tr><td style="padding:4px 8px;">${fmtD(t.entryIdx)}</td><td style="padding:4px 8px;">${fmtD(t.exitIdx)}</td><td style="padding:4px 8px;text-align:right;">${t.entry.toFixed(2)}</td><td style="padding:4px 8px;text-align:right;">${t.exit.toFixed(2)}</td><td style="padding:4px 8px;">${t.reason}</td><td style="padding:4px 8px;text-align:right;color:${col};">${t.R>=0?"+":""}${t.R.toFixed(2)} R</td><td style="padding:4px 8px;text-align:right;">${t.days} gg</td></tr>`;
+    return `<tr><td style="padding:4px 8px;">${fmtD(t.entryIdx)}</td><td style="padding:4px 8px;">${fmtD(t.exitIdx)}</td><td style="padding:4px 8px;text-align:right;">${t.entry.toFixed(2)}</td><td style="padding:4px 8px;text-align:right;">${t.exit.toFixed(2)}</td><td style="padding:4px 8px;">${t.dir<0?"SHORT ":(t.dir>0?"LONG ":"")}${t.reason}</td><td style="padding:4px 8px;text-align:right;color:${col};">${t.R>=0?"+":""}${t.R.toFixed(2)} R</td><td style="padding:4px 8px;text-align:right;">${t.days} gg</td></tr>`;
   }).join("");
   el("zsTable").innerHTML=`<thead><tr style="color:var(--dim);text-align:left;"><th style="padding:4px 8px;">Ingresso</th><th style="padding:4px 8px;">Uscita</th><th style="padding:4px 8px;text-align:right;">Prezzo in</th><th style="padding:4px 8px;text-align:right;">Prezzo out</th><th style="padding:4px 8px;">Motivo</th><th style="padding:4px 8px;text-align:right;">Risultato</th><th style="padding:4px 8px;text-align:right;">Durata</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="padding:8px;color:var(--dim);">Nessuna operazione generata con questi parametri.</td></tr>'}</tbody>`;
   // frecce sul grafico a candele
   const mk=[];
   r.trades.forEach(t=>{
-    mk.push({time:iso(t.entryIdx),position:"belowBar",color:"#00d4b8",shape:"arrowUp",text:p.mode==="poc"?"P":"Z"});
-    mk.push({time:iso(t.exitIdx),position:"aboveBar",color:t.pnl>0?"#00d4b8":"#ff6b6b",shape:"arrowDown",text:t.reason+" "+(t.R>=0?"+":"")+t.R.toFixed(1)+"R"});
+    const sh=t.dir<0;
+    mk.push({time:iso(t.entryIdx),position:sh?"aboveBar":"belowBar",color:sh?"#ff6b6b":"#00d4b8",shape:sh?"arrowDown":"arrowUp",text:p.mode==="bounce"?(sh?"S":"L"):"Z"});
+    mk.push({time:iso(t.exitIdx),position:sh?"belowBar":"aboveBar",color:t.pnl>0?"#00d4b8":"#ff6b6b",shape:sh?"arrowUp":"arrowDown",text:t.reason+" "+(t.R>=0?"+":"")+t.R.toFixed(1)+"R"});
   });
-  if(r.open) mk.push({time:iso(r.open.entryIdx),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:(p.mode==="poc"?"P (aperto)":"Z (aperto)")});
+  if(r.open) mk.push({time:iso(r.open.entryIdx),position:"belowBar",color:"#ffd23f",shape:"arrowUp",text:(p.mode==="bounce"?(r.open.dir<0?"S (aperto)":"L (aperto)"):"Z (aperto)")});
   mk.sort((a,b)=>a.time<b.time?-1:a.time>b.time?1:0);
   window._stratMarkers=mk; applyChartMarkers();
   el("zsStatus").textContent=`✅ Simulazione completata: ${r.n} operazioni chiuse${r.open?" + 1 aperta":""}. Le frecce sono sul grafico a candele (verde = ingresso, rosso/verde in alto = uscita).`;
