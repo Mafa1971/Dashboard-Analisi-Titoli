@@ -4569,8 +4569,8 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 - Swing Low sotto il prezzo (target Short / stop Long): ${swingLowsBelow.length?swingLowsBelow.slice(0,4).join(", "):"nessuno"}
 - Swing Low sopra il prezzo (stop alt. Short): ${swingLowsAbove.length?swingLowsAbove.slice(0,3).join(", "):"nessuno"}
 - Swing High sotto il prezzo (target alt. Short): ${swingHighsBelow.length?swingHighsBelow.slice(0,3).join(", "):"nessuno"}
-- LONG: Score ${l.score!=null?l.score+"/100":"N/D"}, stop ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}, rischio ${l.riskPct!=null?l.riskPct.toFixed(1)+"%":"N/D"}
-- SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}, rischio ${s.riskPct!=null?s.riskPct.toFixed(1)+"%":"N/D"}
+- LONG: Score ${l.score!=null?l.score+"/100":"N/D"}, stop a mercato (solo se si entra al prezzo attuale) ${l.stop!=null?l.stop.toFixed(2)+" ("+l.stopType+")":"N/D"}, rischio ${l.riskPct!=null?l.riskPct.toFixed(1)+"%":"N/D"}
+- SHORT: Score ${s.score!=null?s.score+"/100":"N/D"}, stop a mercato (solo se si entra al prezzo attuale) ${s.stop!=null?s.stop.toFixed(2)+" ("+s.stopType+")":"N/D"}, rischio ${s.riskPct!=null?s.riskPct.toFixed(1)+"%":"N/D"}
 - Componenti LONG: ${l.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Componenti SHORT: ${s.components.map(c=>`${c.label}=${c.val!=null?c.val.toFixed(0):"N/D"}`).join(", ")}
 - Aggiustamento stagionale già incluso nel punteggio: LONG ${l.seasonal?.yearsUsed>=MIN_SEASONAL_YEARS?(l.seasonal.adj>0?"+":"")+l.seasonal.adj:"N/D (storico insufficiente)"}, SHORT ${s.seasonal?.yearsUsed>=MIN_SEASONAL_YEARS?(s.seasonal.adj>0?"+":"")+s.seasonal.adj:"N/D (storico insufficiente)"} (basato su come il titolo si muove questo mese vs la media storica dello stesso mese)
@@ -4581,15 +4581,17 @@ DATI DISPONIBILI (usa SOLO questi numeri per i livelli, non inventarne altri):
 ${(()=>{
   const lines=[];
   const addZoneLines=(res,label)=>{
-    if(res.zoneA!=null) lines.push(`- ${label} Zona A (retest): ${res.zoneA.toFixed(2)}`);
-    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — pattern ${res.patternBreakout.patternType} non rotto: stesso livello per breakout E ritest`:""}: ${res.zoneB.toFixed(2)}`);
-    if(res.zoneC!=null) lines.push(`- ${label} Zona C: ${res.zoneC.toFixed(2)}`);
+    const stp=(v)=>v!=null?` | STOP per questa entry: ${v.toFixed(2)}`:"";
+    if(res.zoneA!=null) lines.push(`- ${label} Zona A (retest): ${res.zoneA.toFixed(2)}${stp(res.zoneAStop)}`);
+    if(res.zoneB!=null) lines.push(`- ${label} Zona B (breakout)${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` — pattern ${res.patternBreakout.patternType} non rotto: stesso livello per breakout E ritest`:""}: ${res.zoneB.toFixed(2)}${stp(res.zoneBStop)}`);
+    if(res.zoneC!=null) lines.push(`- ${label} Zona C: ${res.zoneC.toFixed(2)}${stp(res.zoneCStop)}`);
   };
   addZoneLines(l,"LONG"); addZoneLines(s,"SHORT");
   return lines.join("\n");
 })()}
 
 REGOLE: Target = uno dei livelli reali sopra (mai entry±N×ATR). Entry Point = Zone A/B/C sopra, non inventarne altre. R/R=(Target-Entry)/(Entry-Stop).
+COERENZA OBBLIGATORIA: LONG → stop SOTTO l'entry e target SOPRA l'entry. SHORT → stop SOPRA l'entry e target SOTTO l'entry. Per un'entry su Zona A/B/C usa SOLO lo "STOP per questa entry" scritto accanto a quella zona; lo stop "a mercato" delle righe LONG/SHORT vale solo per entrare al prezzo attuale. Prima di scrivere il piano controlla l'ordine dei numeri: se non rispetta stop/entry/target, non scriverlo.
 
 IMPORTANTE — RISPOSTA BREVE: i numeri sono già visibili nelle card sopra la Strategia, qui servono SOLO le conclusioni operative, non ripetere i dati. Max ~130 parole totali, telegrafico, 5 sezioni con questi titoli esatti:
 
@@ -8903,6 +8905,26 @@ function computeEntryScore(direction,horizon){
   return computeEntryScoreCore(STOCK,direction,horizon);
 }
 
+// Stop COERENTE con l'entry: ogni zona d'ingresso (A/B/C) ha il suo stop,
+// calcolato dalla zona e non dal prezzo attuale. LONG: stop sotto la zona;
+// SHORT: stop sopra la zona. (Prima si usava lo stop "a mercato" anche per
+// le zone: con prezzo 155 e Zona A long a 121 lo stop restava a 138, sopra
+// l'entry, cioè un piano impossibile.)
+function attachZoneStops(res,direction){
+  const atr=res.atr, ss=res.structuralStop;
+  ["A","B","C"].forEach(k=>{
+    const z=res["zone"+k]; res["zone"+k+"Stop"]=null;
+    if(z==null||!(atr>0)) return;
+    let st = direction==="long" ? z-1.5*atr : z+1.5*atr;
+    if(ss!=null){
+      if(direction==="long" && ss<z) st=Math.max(ss,st);
+      else if(direction==="short" && ss>z) st=Math.min(ss,st);
+    }
+    if(direction==="long" ? !(st<z) : !(st>z)) st = direction==="long" ? z-1.5*atr : z+1.5*atr;
+    res["zone"+k+"Stop"]=st;
+  });
+}
+
 // Calcola le zone A (retest/pullback) e B (breakout) come DATI concreti,
 // usando gli stessi livelli reali del prompt AI (Swing, Pivot, Trendline) —
 // necessario per poterle disegnare sul grafico, non solo scriverle nel testo.
@@ -9626,6 +9648,7 @@ window.calcStrategy=function(){
   const short=computeEntryScore("short",horizon);
   Object.assign(long, computeApproachZones("long"));
   Object.assign(short, computeApproachZones("short"));
+  attachZoneStops(long,"long"); attachZoneStops(short,"short");
   LAST_STRATEGY_LONG=long; LAST_STRATEGY_SHORT=short;
 
   function renderCard(res,dirLabel,color){
@@ -9642,8 +9665,8 @@ window.calcStrategy=function(){
       <div style="font-size:11px;color:var(--dim);">Prezzo attuale: <strong style="color:var(--txt);">${STOCK.currency} ${res.price.toFixed(2)}</strong></div>
       <div style="font-size:11px;color:var(--dim);">Invalidazione (stop): <strong style="color:#ff6b6b;">${res.stop!=null?STOCK.currency+" "+res.stop.toFixed(2):"N/D"}</strong> ${res.stopType?"("+res.stopType+")":""}</div>
       <div style="font-size:11px;color:var(--dim);">Rischio dall'attuale: <strong style="color:#ff9f1c;">${res.riskPct!=null?res.riskPct.toFixed(1)+"%":"N/D"}</strong></div>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">Zona A (retest/pullback): <strong style="color:#c77dff;">${res.zoneA!=null?STOCK.currency+" "+res.zoneA.toFixed(2):"nessun livello reale trovato"}</strong></div>
-      <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong>${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` <span style="color:#f9c74f;">— confine ${res.patternBreakout.patternType}, non ancora rotto</span>`:""}</div>
+      <div style="font-size:11px;color:var(--dim);margin-top:8px;padding-top:8px;border-top:1px solid var(--line);">Zona A (retest/pullback): <strong style="color:#c77dff;">${res.zoneA!=null?STOCK.currency+" "+res.zoneA.toFixed(2):"nessun livello reale trovato"}</strong>${res.zoneAStop!=null?` — stop <strong style="color:#ff6b6b;">${res.zoneAStop.toFixed(2)}</strong>`:""}</div>
+      <div style="font-size:11px;color:var(--dim);">Zona B (breakout): <strong style="color:#4fa3ff;">${res.zoneB!=null?STOCK.currency+" "+res.zoneB.toFixed(2):"nessun livello reale trovato"}</strong>${res.zoneBStop!=null?` — stop <strong style="color:#ff6b6b;">${res.zoneBStop.toFixed(2)}</strong>`:""}${res.patternBreakout&&!res.patternBreakout.alreadyBroken?` <span style="color:#f9c74f;">— confine ${res.patternBreakout.patternType}, non ancora rotto</span>`:""}</div>
       ${res.seasonal && res.seasonal.yearsUsed>=MIN_SEASONAL_YEARS ? (()=>{
         const monthNamesFull=["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
         const s=res.seasonal, adjColor=s.adj>0.5?"#00d4b8":s.adj<-0.5?"#ff6b6b":"var(--dim)";
