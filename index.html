@@ -172,6 +172,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart();renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);">Modo POC
                 <select id="pocMode" onchange="renderPocLevels()">
+                  <option value="vpseg">Volume Profile a tratti (come Coma Screen)</option>
                   <option value="screen" selected>Replica esatta dello screen (Streamlit)</option>
                   <option value="anchor">Ancora swing low + trigger Z-Score (nuova logica)</option>
                   <option value="ztrigger">Da trigger Z-Score (come lo screen)</option>
@@ -187,6 +188,15 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label class="chk" title="Solo modo «Ancora swing low»: un nuovo livello nasce solo se dopo il livello precedente il prezzo ha chiuso almeno una volta sotto di esso (struttura persa e poi riconquistata = cambio di trend, non semplice prosecuzione)"><input type="checkbox" id="pocLoss" checked onchange="renderPocLevels()"> Richiedi livello precedente perso</label>
               <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: dove finisce il volume profile che genera il POC">Profilo fino a
                 <select id="pocEnd" onchange="renderPocLevels()"><option value="trigger" selected>trigger (congelato)</option><option value="today">oggi (come lo screen)</option></select></label>
+              <span id="vpSegBox" style="display:none;gap:10px;flex-wrap:wrap;align-items:center;">
+                <label style="font-size:10px;color:var(--dim);" title="Il massimo conta solo se dopo scende almeno di questa %">Correzione dal max % <input type="number" id="vpCorr" value="10" min="3" max="60" style="width:46px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Rialzo minimo (%) per riconoscere lo swing che parte dal minimo">Swing rialzo % <input type="number" id="vpSwing" value="20" min="5" max="80" style="width:46px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Rimbalzo minimo (%) dopo il massimo per riconoscere l'ultimo minimo importante">Rimbalzo dopo max % <input type="number" id="vpReb" value="30" min="5" max="100" style="width:46px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Se due POC sono più vicini di questa % si cercano swing più importanti o si uniscono i tratti (0 = non unire)">POC vicini entro % <input type="number" id="vpTol" value="3" min="0" max="20" step="0.5" style="width:46px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);">Livelli <input type="number" id="vpRows" value="100" min="30" max="300" step="10" style="width:50px;" onchange="renderPocLevels()"></label>
+                <label class="chk"><input type="checkbox" id="vpHist" checked onchange="renderPocLevels()"> Istogramma</label>
+                <span style="font-size:10px;color:#ff9f1c;">⚠ il profilo di ogni tratto usa anche dati successivi al suo inizio: va bene per leggere il grafico, non per backtest</span>
+              </span>
               <label class="chk" title="Marca sul grafico i pattern di candele: engulfing a 2 e 3 candele, stella del mattino/sera"><input type="checkbox" id="chkPatterns" checked onchange="renderPatterns()"> 🕯 Pattern candele</label>
               <label style="font-size:10px;color:var(--dim);">Mostra
                 <select id="patShow" onchange="renderPatterns()"><option value="level" selected>solo su livello POC</option><option value="all">tutti</option></select></label>
@@ -206,6 +216,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="chartLegend" style="display:flex;gap:14px;flex-wrap:wrap;font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px;min-height:16px;"></div>
           <div style="position:relative;isolation:isolate;">
             <div id="candleChart"></div>
+            <canvas id="vpOverlay" style="position:absolute;top:0;left:0;pointer-events:none;z-index:4;"></canvas>
             <canvas id="ictOverlay" style="position:absolute;top:0;left:0;pointer-events:none;z-index:5;"></canvas>
           </div>
           <div id="rsiChart"></div>
@@ -1800,6 +1811,198 @@ function calcVpScreen(S, from, div){
   let bi=0; for(let j=1;j<div;j++) if(vols[j]>vols[bi]) bi=j;
   return pmin+(bi+0.5)*step;
 }
+// ---- Volume Profile a tratti (porting di volprofile.js di Coma Screener) ----
+// volprofile.js — Volume Profile "a tratti" con linea del POC.
+// Funzioni pure (si provano anche in Node). Barre: [data, apertura, max, min, chiusura, volume].
+(function (root) {
+  "use strict";
+
+  // Zigzag sui massimi/minimi: pivot confermati quando il prezzo inverte di almeno `pct` (0.2 = 20%).
+  // Ritorna [{i, type:'H'|'L', price, tentative?}]. L'ultimo estremo non ancora confermato e' segnato tentative.
+  function zigzag(bars, pct) {
+    const N = bars.length, piv = [];
+    if (N < 2) return piv;
+    let hi = { i: 0, p: bars[0][2] }, lo = { i: 0, p: bars[0][3] }, dir = 0;
+    for (let i = 1; i < N; i++) {
+      const h = bars[i][2], l = bars[i][3];
+      if (dir === 0) {
+        if (h > hi.p) hi = { i, p: h };
+        if (l < lo.p) lo = { i, p: l };
+        if (hi.i > lo.i && hi.p >= lo.p * (1 + pct)) { piv.push({ i: lo.i, type: "L", price: lo.p }); dir = 1; }
+        else if (lo.i > hi.i && lo.p <= hi.p * (1 - pct)) { piv.push({ i: hi.i, type: "H", price: hi.p }); dir = -1; }
+      } else if (dir === 1) {
+        if (h > hi.p) hi = { i, p: h };
+        else if (l <= hi.p * (1 - pct)) { piv.push({ i: hi.i, type: "H", price: hi.p }); dir = -1; lo = { i, p: l }; }
+      } else {
+        if (l < lo.p) lo = { i, p: l };
+        else if (h >= lo.p * (1 + pct)) { piv.push({ i: lo.i, type: "L", price: lo.p }); dir = 1; hi = { i, p: h }; }
+      }
+    }
+    if (dir === 1) piv.push({ i: hi.i, type: "H", price: hi.p, tentative: true });
+    else if (dir === -1) piv.push({ i: lo.i, type: "L", price: lo.p, tentative: true });
+    return piv;
+  }
+
+  // Tratti su cui costruire i profili.
+  //  1) dal minimo che ha dato il via all'ultimo rialzo (swing >= swingPct) fino al massimo assoluto
+  //  2) dal massimo assoluto all'ultimo minimo importante (rimbalzo >= reboundPct, poi ridisceso)
+  //  3) da quel minimo a oggi
+  // Il massimo conta solo se dopo c'e' una correzione >= corrPct; se dopo il massimo non c'e'
+  // un minimo importante, il tratto 2 va dal massimo a oggi. Senza correzione: un tratto fino a oggi.
+  function segments(bars, corrPct, swingPct, reboundPct) {
+    const N = bars.length;
+    if (N < 2) return [];
+    reboundPct = reboundPct || swingPct;
+    let ath = 0;
+    for (let i = 1; i < N; i++) if (bars[i][2] > bars[ath][2]) ath = i;
+    // minimo di partenza dell'ultimo rialzo verso il massimo
+    let start = 0;
+    if (ath > 0) {
+      const pre = zigzag(bars.slice(0, ath + 1), swingPct);
+      for (let k = 0; k < pre.length; k++) if (pre[k].type === "L" && pre[k].i < ath) start = pre[k].i;
+    }
+    let minAfter = Infinity;
+    for (let i = ath + 1; i < N; i++) if (bars[i][3] < minAfter) minAfter = bars[i][3];
+    if (!(minAfter <= bars[ath][2] * (1 - corrPct))) return [{ i0: start, i1: N - 1 }];
+    const segs = [];
+    if (ath - start >= 5) segs.push({ i0: start, i1: ath });
+    const post = zigzag(bars.slice(ath), reboundPct);
+    let low = null;
+    for (let k = 0; k < post.length - 1; k++) {
+      if (post[k].type === "L" && post[k + 1].type === "H" && !post[k + 1].tentative) low = { i: post[k].i + ath };
+    }
+    if (low) {
+      segs.push({ i0: ath, i1: low.i });
+      segs.push({ i0: low.i, i1: N - 1 });
+    } else {
+      segs.push({ i0: ath, i1: N - 1 });
+    }
+    return segs;
+  }
+
+  // Profilo di un tratto: il volume di ogni barra e' spalmato sui livelli di prezzo toccati dalla barra.
+  function profile(bars, i0, i1, pMin, rowH) {
+    const map = new Map();
+    for (let i = i0; i <= i1; i++) {
+      const b = bars[i], lo = b[3], hi = b[2], vol = b[5] || 0;
+      if (!(vol > 0)) continue;
+      const a = Math.floor((lo - pMin) / rowH), z = Math.floor((hi - pMin) / rowH);
+      if (hi <= lo || a === z) { map.set(a, (map.get(a) || 0) + vol); continue; }
+      const span = hi - lo;
+      for (let k = a; k <= z; k++) {
+        const ov = Math.min(hi, pMin + (k + 1) * rowH) - Math.max(lo, pMin + k * rowH);
+        if (ov > 0) map.set(k, (map.get(k) || 0) + (vol * ov) / span);
+      }
+    }
+    const rows = [];
+    let pocK = null, pocV = -1;
+    map.forEach((v, k) => {
+      rows.push({ p0: pMin + k * rowH, p1: pMin + (k + 1) * rowH, v });
+      if (v > pocV) { pocV = v; pocK = k; }
+    });
+    return { rows, poc: pocK === null ? null : pMin + (pocK + 0.5) * rowH, pocVol: pocV, maxVol: pocV };
+  }
+
+  // Tutti i profili: stessa altezza di riga per tutti (rows = quanti livelli copre tutto lo storico).
+  function build(bars, segs, rows) {
+    if (!bars.length || !segs.length) return [];
+    let gMin = Infinity, gMax = -Infinity;
+    bars.forEach((b) => { if (b[3] < gMin) gMin = b[3]; if (b[2] > gMax) gMax = b[2]; });
+    const rowH = Math.max((gMax - gMin) / Math.max(10, rows || 100), 1e-9);
+    return segs.map((s) => Object.assign({ i0: s.i0, i1: s.i1 }, profile(bars, s.i0, s.i1, gMin, rowH)));
+  }
+
+  const tooClose = (a, b, tol) => a.poc !== null && b.poc !== null && Math.abs(a.poc - b.poc) / Math.max(b.poc, 1e-9) <= tol;
+  const hasClose = (prof, tol) => {
+    for (let i = 0; i < prof.length; i++) for (let j = i + 1; j < prof.length; j++) if (tooClose(prof[i], prof[j], tol)) return true;
+    return false;
+  };
+
+  // Come segments+build, ma se due POC sono vicini (entro tolPct) non li tiene entrambi:
+  // prima cerca massimi/minimi piu' importanti (soglie piu' alte), poi, se restano vicini, unisce i tratti.
+  function auto(bars, corrPct, swingPct, reboundPct, rows, tolPct) {
+    const tol = tolPct || 0;
+    let sw = swingPct, rb = reboundPct || swingPct, segs = segments(bars, corrPct, sw, rb), prof = build(bars, segs, rows);
+    if (!(tol > 0)) return prof;
+    for (let it = 0; it < 8 && prof.length > 1 && hasClose(prof, tol) && sw < 0.9; it++) {
+      sw = Math.min(0.9, sw + 0.1); rb = Math.min(0.9, rb + 0.1);
+      segs = segments(bars, corrPct, sw, rb); prof = build(bars, segs, rows);
+    }
+    // ancora vicini: unisce i tratti consecutivi con POC vicino
+    let guard = 0;
+    while (prof.length > 1 && guard++ < 10) {
+      let k = -1;
+      for (let i = 0; i < prof.length - 1; i++) if (tooClose(prof[i], prof[i + 1], tol)) { k = i; break; }
+      if (k < 0) break;
+      segs = prof.map((p) => ({ i0: p.i0, i1: p.i1 }));
+      segs.splice(k, 2, { i0: segs[k].i0, i1: segs[k + 1].i1 });
+      prof = build(bars, segs, rows);
+    }
+    return prof;
+  }
+
+  const api = { zigzag, segments, profile, build, auto };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.ComaVP = api;
+})(typeof window !== "undefined" ? window : globalThis);
+
+function computeVpSegPOCs(S){
+  const g=(id,d)=>{ const v=parseFloat(el(id).value); return isNaN(v)?d:v; };
+  const bars=S.dates.map((d,i)=>[d.toISOString().slice(0,10),S.opens[i],S.highs[i],S.lows[i],S.closes[i],S.volumes[i]]);
+  const corr=Math.max(3,g("vpCorr",10))/100, swing=Math.max(5,g("vpSwing",20))/100, reb=Math.max(5,g("vpReb",30))/100;
+  const tol=Math.max(0,g("vpTol",3))/100, rows=Math.max(30,parseInt(el("vpRows").value,10)||100);
+  const prof=ComaVP.auto(bars,corr,swing,reb,rows,tol);
+  window._vpSegs=prof;
+  return prof.filter(p=>p.poc!=null).map(p=>({poc:p.poc,startIdx:p.i0,trigIdx:p.i0,endIdx:p.i1}));
+}
+const VP_COL=[{fill:"rgba(248,113,113,.30)",line:"#f87171",dash:[]},{fill:"rgba(96,165,250,.30)",line:"#60a5fa",dash:[8,5]},{fill:"rgba(52,211,153,.32)",line:"#34d399",dash:[2,4]}];
+function drawVpSeg(){
+  const cv=el("vpOverlay"), box=el("candleChart");
+  if(!cv||!box) return;
+  const w=box.clientWidth, h=box.clientHeight, dpr=window.devicePixelRatio||1;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr); cv.style.width=w+"px"; cv.style.height=h+"px"; }
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const segs=window._vpSegs;
+  if(!segs||!segs.length||!chart||!candleSeries||!el("vpHist")||!el("vpHist").checked||el("pocMode").value!=="vpseg"||!el("chkPocStatic").checked) return;
+  const ts=chart.timeScale();
+  let psw=72, tsh=26;
+  try{ psw=chart.priceScale("right").width()||psw; }catch(e){}
+  try{ if(typeof ts.height==="function") tsh=ts.height()||tsh; }catch(e){}
+  const plotR=w-psw, plotB=h-tsh;
+  g.save(); g.beginPath(); g.rect(0,0,plotR,plotB); g.clip();
+  segs.forEach((seg,k)=>{
+    const c=VP_COL[k%VP_COL.length];
+    const x0=ts.logicalToCoordinate(seg.i0), x1=ts.logicalToCoordinate(seg.i1);
+    if(x0==null||x1==null||x1<0) return;
+    const xs=Math.max(x0,0), maxW=Math.max(30,Math.min(plotR*0.22,(Math.max(x1,plotR)-xs)*0.9));
+    g.fillStyle=c.fill;
+    seg.rows.forEach(r=>{
+      const ya=candleSeries.priceToCoordinate(r.p1), yb=candleSeries.priceToCoordinate(r.p0);
+      if(ya==null||yb==null) return;
+      g.fillRect(xs,ya,(r.v/seg.maxVol)*maxW,Math.max(1,yb-ya-0.6));
+    });
+    if(seg.poc!=null){
+      const y=candleSeries.priceToCoordinate(seg.poc);
+      if(y!=null){ g.strokeStyle=c.line; g.lineWidth=1.6; g.setLineDash(c.dash); g.beginPath(); g.moveTo(xs,y); g.lineTo(plotR,y); g.stroke(); g.setLineDash([]); }
+    }
+  });
+  g.restore();
+}
+let _vpRaf=0, _vpSig="";
+function startVpLoop(){
+  if(_vpRaf) return;
+  const tick=()=>{
+    try{
+      if(chart&&candleSeries&&window._vpSegs){
+        const ts=chart.timeScale();
+        const sg=[ts.logicalToCoordinate(0),ts.logicalToCoordinate(100),candleSeries.priceToCoordinate(1),candleSeries.priceToCoordinate(1000),el("candleChart").clientWidth,window._vpSegs.length].join("|");
+        if(sg!==_vpSig){ _vpSig=sg; drawVpSeg(); }
+      }
+    }catch(e){}
+    _vpRaf=requestAnimationFrame(tick);
+  };
+  tick();
+}
 function computeScreenPOCs(S, W, thr, tolPct, horizonYears, diag){
   const n=S.closes.length, z=computeScreenZ(S.closes,W), saved=[];
   const minIdx=horizonYears>0?Math.max(W,n-Math.round(horizonYears*252)):W;
@@ -1838,12 +2041,16 @@ function renderPocLevelsCore(){
   const blk=parseInt(el("pocBlock").value)||60;
   const gap=parseFloat(el("pocGap").value); const gapPct=isNaN(gap)?5:gap;
   const mode=el("pocMode").value;
-  const lv = mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
+  const vsb=el("vpSegBox"); if(vsb) vsb.style.display=mode==="vpseg"?"flex":"none";
+  window._vpSegs=null; _vpSig="";
+  const lv = mode==="vpseg" ? computeVpSegPOCs(STOCK)
+           : mode==="blocks" ? computeStaticPOCs(STOCK.closes, STOCK.volumes, blk, 5, 2)
            : mode==="trend" ? computeTrendPOCs(STOCK, blk, gapPct).slice(-6)
            : mode==="screen" ? (()=>{ const diag=[]; const r=computeScreenPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(gap)?1:gap, parseInt(el("pocHorizon").value)||0, diag); renderPocDiag(diag); return r; })()
            : mode==="anchor" ? (()=>{ const diag=[]; const ga=parseFloat(el("pocGapAtr").value); const r=computeAnchoredPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, isNaN(ga)?3:ga, el("pocEnd").value==="today", el("pocLoss").checked, diag); renderPocDiag(diag); return r.slice(-6); })()
            : (()=>{ const diag=[]; const r=computeZTriggerPOCs(STOCK, parseInt(el("zWindow").value)||50, parseFloat(el("zThr").value)||2, el("pocBreak").checked, gapPct, diag); renderPocDiag(diag); return r.slice(-6); })();
   if(mode!=="ztrigger" && mode!=="anchor" && mode!=="screen") renderPocDiag(null);
+  startVpLoop();
   window._pocLv=lv;
   const last=STOCK.dates[STOCK.dates.length-1].toISOString().slice(0,10);
   const nearPct=parseFloat(el("pocNear").value)||0, lastClose=STOCK.closes[STOCK.closes.length-1];
@@ -1855,6 +2062,7 @@ function renderPocLevelsCore(){
     try{ sr.setMarkers([{time:t0,position:"aboveBar",color:"#ff9f1c",shape:"circle",size:0.5,text:"POC "+l.poc.toFixed(2)}]); }catch(e){}
     pocStaticSeries.push(sr);
   });
+  drawVpSeg();
 }
 
 // ---- Pattern di candele (solo grafico + statistica; nessuna strategia) ----
