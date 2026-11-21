@@ -2141,14 +2141,14 @@ function altSupportZones(){
   const wk=[]; { let key=null;
     for(let i=Math.max(0,n-1300);i<n;i++){ const d=STOCK.dates[i], dow=(new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).getUTCDay()+6)%7, k=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()-dow);
       if(k!==key){ wk.push({lo:STOCK.lows[i],hi:STOCK.highs[i]}); key=k; } else { const w=wk[wk.length-1]; w.lo=Math.min(w.lo,STOCK.lows[i]); w.hi=Math.max(w.hi,STOCK.highs[i]); } } }
-  for(let i=3;i<wk.length-3;i++){ let ok=true; for(let j=1;j<=3;j++){ if(wk[i].lo>wk[i-j].lo||wk[i].lo>wk[i+j].lo){ ok=false; break; } } if(ok&&wk[i].lo<px) pts.push({p:wk[i].lo,m:"swing settimanale"}); }
+  for(let i=3;i<wk.length-3;i++){ let ok=true; for(let j=1;j<=3;j++){ if(wk[i].lo>wk[i-j].lo||wk[i].lo>wk[i+j].lo){ ok=false; break; } } if(ok&&wk[i].lo<px&&(px-wk[i].lo)/atr>=1) pts.push({p:wk[i].lo,m:"swing settimanale"}); }
   // 2) Fibonacci dell'ultimo grande rialzo (ultimi 2 anni)
   { const from=Math.max(0,n-504); let hiI=from; for(let i=from;i<n;i++) if(STOCK.highs[i]>STOCK.highs[hiI]) hiI=i;
     let loI=from; for(let i=from;i<=hiI;i++) if(STOCK.lows[i]<STOCK.lows[loI]) loI=i;
     const hi=STOCK.highs[hiI], lo=STOCK.lows[loI];
     if(hiI>loI && hi-lo>4*atr){ [[.382,"38,2%"],[.5,"50%"],[.618,"61,8%"],[.786,"78,6%"]].forEach(([f,t])=>{ const v=hi-f*(hi-lo); if(v<px) pts.push({p:v,m:"Fibonacci "+t}); }); } }
   // 3) minimi a 52 e 104 settimane (se sotto il prezzo)
-  [[252,"minimo 52 sett."],[504,"minimo 104 sett."]].forEach(([nn,t])=>{ if(n>=nn){ let m=Infinity; for(let i=n-nn;i<n;i++) m=Math.min(m,STOCK.lows[i]); if(m<px*0.999) pts.push({p:m,m:t}); } });
+  [[252,"minimo 52 sett."],[504,"minimo 104 sett."]].forEach(([nn,t])=>{ if(n>=nn){ let m=Infinity; for(let i=n-nn;i<n;i++) m=Math.min(m,STOCK.lows[i]); if(m<px*0.999&&(px-m)/atr>=1) pts.push({p:m,m:t}); } }); // se il minimo è a meno di 1 ATR dal prezzo è il crollo in corso, non un supporto testato
   // 4) numeri tondi (multipli di metà potenza di 10 sotto il prezzo, entro il 45%)
   { const step=Math.pow(10,Math.floor(Math.log10(px)))/2; for(let v=Math.floor(px/step)*step; v>px*0.55; v-=step){ if(v<px*0.999) pts.push({p:v,m:"numero tondo"}); } }
   // cluster entro 1 ATR (minimo 1% del prezzo)
