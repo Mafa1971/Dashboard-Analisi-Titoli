@@ -2127,7 +2127,54 @@ function indRestore(){
 })();
 
 // ===================== TABELLA DISTANZA DAI POC =====================
-function renderPocTable(){
+
+// ---- Zone di supporto alternative (quando non c'è un supporto POC vicino) ----
+// Metodi indipendenti dal volume: minimi di swing settimanali, ritracciamenti di Fibonacci
+// dell'ultimo grande rialzo, minimi a 52/104 settimane, numeri tondi. Le zone dove più metodi
+// coincidono (confluenza) sono le più solide.
+function altSupportZones(){
+  if(!STOCK) return null;
+  const px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
+  if(!(atr>0)) return null;
+  const n=STOCK.closes.length, pts=[]; // {p, m}
+  // 1) swing low settimanali (ultimi ~5 anni)
+  const wk=[]; { let key=null;
+    for(let i=Math.max(0,n-1300);i<n;i++){ const d=STOCK.dates[i], dow=(new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).getUTCDay()+6)%7, k=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()-dow);
+      if(k!==key){ wk.push({lo:STOCK.lows[i],hi:STOCK.highs[i]}); key=k; } else { const w=wk[wk.length-1]; w.lo=Math.min(w.lo,STOCK.lows[i]); w.hi=Math.max(w.hi,STOCK.highs[i]); } } }
+  for(let i=3;i<wk.length-3;i++){ let ok=true; for(let j=1;j<=3;j++){ if(wk[i].lo>wk[i-j].lo||wk[i].lo>wk[i+j].lo){ ok=false; break; } } if(ok&&wk[i].lo<px) pts.push({p:wk[i].lo,m:"swing settimanale"}); }
+  // 2) Fibonacci dell'ultimo grande rialzo (ultimi 2 anni)
+  { const from=Math.max(0,n-504); let hiI=from; for(let i=from;i<n;i++) if(STOCK.highs[i]>STOCK.highs[hiI]) hiI=i;
+    let loI=from; for(let i=from;i<=hiI;i++) if(STOCK.lows[i]<STOCK.lows[loI]) loI=i;
+    const hi=STOCK.highs[hiI], lo=STOCK.lows[loI];
+    if(hiI>loI && hi-lo>4*atr){ [[.382,"38,2%"],[.5,"50%"],[.618,"61,8%"],[.786,"78,6%"]].forEach(([f,t])=>{ const v=hi-f*(hi-lo); if(v<px) pts.push({p:v,m:"Fibonacci "+t}); }); } }
+  // 3) minimi a 52 e 104 settimane (se sotto il prezzo)
+  [[252,"minimo 52 sett."],[504,"minimo 104 sett."]].forEach(([nn,t])=>{ if(n>=nn){ let m=Infinity; for(let i=n-nn;i<n;i++) m=Math.min(m,STOCK.lows[i]); if(m<px*0.999) pts.push({p:m,m:t}); } });
+  // 4) numeri tondi (multipli di metà potenza di 10 sotto il prezzo, entro il 45%)
+  { const step=Math.pow(10,Math.floor(Math.log10(px)))/2; for(let v=Math.floor(px/step)*step; v>px*0.55; v-=step){ if(v<px*0.999) pts.push({p:v,m:"numero tondo"}); } }
+  // cluster entro 1 ATR (minimo 1% del prezzo)
+  const tol=Math.max(atr,px*0.01); pts.sort((a,b)=>b.p-a.p);
+  const zones=[]; pts.forEach(q=>{ const z=zones[zones.length-1]; if(z&&z.lo-q.p<=tol){ z.lo=Math.min(z.lo,q.p); z.items.push(q); } else zones.push({hi:q.p,lo:q.p,items:[q]}); });
+  zones.forEach(z=>{ z.mid=z.items.reduce((a,q)=>a+q.p,0)/z.items.length; z.methods=[...new Set(z.items.map(q=>q.m))]; z.strength=new Set(z.items.map(q=>q.m.split(" ")[0])).size; z.distPct=(z.hi/px-1)*100; z.distAtr=(px-z.hi)/atr; });
+  return {px,atr,zones:zones.slice(0,6)};
+}
+function _needAltSupport(){
+  const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
+  if(!(atr>0)) return false;
+  return !lv.some(l=>l.poc<=px&&(px-l.poc)/atr<=4);
+}
+function altSupportHtml(){
+  if(!STOCK||!_needAltSupport()) return "";
+  const r=altSupportZones(); if(!r) return "";
+  const cur=STOCK.currency||"", z=r.zones;
+  if(!z.length) return `<div style="margin-top:10px;font-size:11px;color:var(--dim);">Nessun supporto POC vicino e nessun riferimento storico sotto il prezzo: il titolo è ai minimi, senza livelli di appoggio noti.</div>`;
+  const rows=z.map((q,i)=>`<tr style="${i===0?'background:rgba(255,159,28,0.12);font-weight:700;':''}"><td style="text-align:left;">${q.hi-q.lo>0.005*r.px?q.lo.toFixed(2)+" – "+q.hi.toFixed(2):q.mid.toFixed(2)}</td><td>${q.distPct.toFixed(1)}%</td><td>${q.distAtr.toFixed(1)}</td><td style="text-align:left;">${q.methods.join(" + ")}</td><td>${"●".repeat(Math.min(q.strength,4))}</td></tr>`).join("");
+  return `<div style="margin-top:12px;border-top:1px solid var(--bdr);padding-top:8px;"><div style="font-size:11px;font-weight:700;color:var(--gold);margin-bottom:4px;">🛟 Nessun supporto POC vicino: zone alternative dove attendere un rimbalzo</div>`+
+    `<div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Zona (${cur})</th><th>Distanza</th><th>In ATR</th><th style="text-align:left;">Metodi</th><th>Confluenza</th></tr>${rows}</table></div>`+
+    `<div style="font-size:10px;color:var(--dim);margin-top:6px;">Swing settimanali, Fibonacci dell'ultimo grande rialzo, minimi 52/104 settimane e numeri tondi. Più metodi nella stessa zona = più solida (●●). Sono zone dove <b>osservare</b> una reazione, non segnali: serve una conferma (candela di inversione, RSI/Z in rientro).</div></div>`;
+}
+
+function renderPocTable(){ _renderPocTableCore(); try{ const w=el("pocTableWrap"); if(w&&STOCK){ const h=altSupportHtml(); if(h) w.insertAdjacentHTML("beforeend",h); } }catch(e){ console.error("altSupport:",e); } }
+function _renderPocTableCore(){
   const wrap=el("pocTableWrap"); if(!wrap) return;
   if(!STOCK){ wrap.innerHTML=""; return; }
   const lv=(window._pocShown||[]).slice();
@@ -2210,15 +2257,26 @@ function rpCicli(){
 }
 function rpLivelli(){
   const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
-  if(!lv.length||!(atr>0)) return {nd:true,val:"nessun livello POC (apri «📊 Indicatori» e attiva «POC statici filtrati»)"};
+  if(!(atr>0)) return {nd:true,val:"storico insufficiente per l'ATR"};
   let below=null, above=null;
   lv.forEach(l=>{ if(l.poc<=px){ if(!below||l.poc>below.poc) below=l; } else { if(!above||l.poc<above.poc) above=l; } });
   const dB=below?(px-below.poc)/atr:null, dA=above?(above.poc-px)/atr:null;
   const t=[];
+  if(!lv.length) t.push("nessun livello POC attivo (apri «📊 Indicatori» e attiva «POC statici filtrati»)");
   t.push(below?`supporto ${_fx(below.poc)} (${_sg((below.poc/px-1)*100)}% · ${_fx(dB,1)} ATR)`:"nessun supporto sotto");
   t.push(above?`resistenza ${_fx(above.poc)} (${_sg((above.poc/px-1)*100)}% · ${_fx(dA,1)} ATR)`:"nessuna resistenza sopra");
-  return {val:t.join(" · "), refL:"supporto POC entro 1,5 ATR (❌ se oltre 4 ATR)", refS:"resistenza POC entro 1,5 ATR (❌ se oltre 4 ATR)",
-    L: dB==null?0:(dB<=1.5?1:(dB>4?-1:0)), S: dA==null?0:(dA<=1.5?1:(dA>4?-1:0))};
+  let L=dB==null?0:(dB<=1.5?1:(dB>4?-1:0)), S=dA==null?0:(dA<=1.5?1:(dA>4?-1:0)), why=null;
+  if(dB==null||dB>4){ // nessun POC vicino sotto: cerchiamo zone alternative
+    try{ const r=altSupportZones(); if(r&&r.zones.length){ const z=r.zones[0], rng=z.hi-z.lo>0.005*px?_fx(z.lo)+"–"+_fx(z.hi):_fx(z.mid);
+      t.push(`zona alternativa ${rng} (${_sg(z.distPct)}% · ${_fx(z.distAtr,1)} ATR · ${z.methods.join("+")})`);
+      const s200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0], tDown=s200!=null&&px<s200;
+      if(z.distAtr<=1.5&&z.strength>=2){ L=tDown?2:1; why=`prezzo dentro/vicino alla zona ${rng} con ${z.strength} metodi in confluenza: possibile rimbalzo`+(tDown?" (🟡 tattico, contro trend)":""); }
+      else { L=(dB!=null&&dB>4)?-1:0; why=`nessun supporto POC vicino: la prima zona di attesa è ${rng} (${_sg(z.distPct)}%, ${_fx(z.distAtr,1)} ATR, ${z.methods.join(" + ")}). Qui valuta un rimbalzo, con conferma di inversione`; }
+      if(r.zones[1]) why+=`. Poi: ${r.zones.slice(1,3).map(q=>_fx(q.mid)+" ("+_sg(q.distPct,0)+"%)").join(", ")}`;
+    } else if(r){ t.push("nessuna zona alternativa sotto: titolo ai minimi"); why="prezzo ai minimi, senza supporti storici noti sotto"; } }catch(e){ console.error("altSupport:",e); }
+  }
+  return {val:t.join(" · "), why, refL:"supporto POC entro 1,5 ATR (❌ se oltre 4 ATR). Senza POC vicino: zona alternativa (swing, Fibonacci, minimi, numeri tondi) entro 1,5 ATR con almeno 2 metodi → 🟡/✅", refS:"resistenza POC entro 1,5 ATR (❌ se oltre 4 ATR)",
+    L, S};
 }
 function rpZ(){
   const W=parseInt(el("zWindow").value)||50, thr=parseFloat(el("zThr").value)||2;
