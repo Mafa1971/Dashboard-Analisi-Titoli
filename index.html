@@ -4497,8 +4497,14 @@ window.renderFairValueSolidity=function(rows){
   }
 
   // Altman Z-Score per anno: Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MktCap/TL) + 1.0*(Sales/TA)
-  const zScores=rows.map(r=>{
-    if(!r.totalAssets||!r.totalCurrentAssets==null||!r.totalCurrentLiab==null||!r.sharesOutstanding) return null;
+  // Ripieghi per dati mancanti (Yahoo spesso non ha azioni o passività totali):
+  // azioni = ultimo valore noto; passività = attivo − patrimonio netto.
+  const _anyShares=(()=>{ for(let i=rows.length-1;i>=0;i--){ if(rows[i].sharesOutstanding) return rows[i].sharesOutstanding; } for(let i=rows.length-1;i>=0;i--){ const r=rows[i]; if(r.eps&&r.netIncome&&r.eps!==0) return Math.abs(r.netIncome/r.eps); } return null; })();
+  const zScores=rows.map(r0=>{
+    const r=Object.assign({},r0);
+    if(!r.sharesOutstanding) r.sharesOutstanding=(r.eps&&r.netIncome&&r.eps!==0)?Math.abs(r.netIncome/r.eps):_anyShares;
+    if(!r.totalLiab && r.totalAssets && r.totalEquity!=null) r.totalLiab=r.totalAssets-r.totalEquity;
+    if(!r.totalAssets||!r.sharesOutstanding) return null;
     const wc=(r.totalCurrentAssets??0)-(r.totalCurrentLiab??0);
     const ta=r.totalAssets;
     // Prezzo approssimato a fine anno: il close di STOCK più vicino a quella data
