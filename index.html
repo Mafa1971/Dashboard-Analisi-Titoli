@@ -2169,6 +2169,15 @@ function _weeklyCloses(dates,closes){
   return {keys,vals};
 }
 const _px=()=>STOCK.closes[STOCK.closes.length-1];
+function _parseNum(x){
+  if(x==null) return null;
+  let t=String(x).trim().replace(/\s/g,"").replace(/[^0-9.,\-]/g,""); if(!t) return null;
+  const lc=t.lastIndexOf(","), ld=t.lastIndexOf(".");
+  if(lc>=0&&ld>=0) t=lc>ld?t.replace(/\./g,"").replace(",","."):t.replace(/,/g,"");
+  else if(lc>=0) t=t.replace(",",".");
+  const v=parseFloat(t); return isFinite(v)?v:null;
+}
+const _fundTried={};
 
 function rpTrend(){
   const c=STOCK.closes, px=_px();
@@ -2182,14 +2191,17 @@ function rpTrend(){
 function rpCicli(){
   const C=LAST_CYCLES;
   if(!C||!C.current) return {nd:true,val:"nessun ciclo rilevato"+(C?" (soglia "+C.threshold+"%)":"")};
-  const c=C.current, up=c.type==="up", ref=up?C.up:C.down;
+  const c=C.current, up=c.type==="up", ref=up?C.up:C.down, px=_px();
   if(!ref||ref.avgReturn==null||!(ref.count>=3)) return {nd:true,val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% — pochi cicli storici per un riferimento`};
   const ph=Math.abs(c.retPct)/Math.abs(ref.avgReturn);
   let L=0,S=0;
   if(up){ L=ph<0.4?1:(ph>0.8?-1:0); S=ph>=1.0?1:(ph<0.4?-1:0); }
   else  { S=ph<0.4?1:(ph>0.8?-1:0); L=ph>=1.0?1:(ph<0.4?-1:0); }
+  const start=px/(1+c.retPct/100), lvl=start*(1+ref.avgReturn/100);
+  const why=up?`rialzo al ${Math.round(ph*100)}% di quello tipico: l'estensione tipica porta a circa ${_fx(lvl)}`
+              :`ribasso al ${Math.round(ph*100)}% della profondità tipica: un ingresso Long diventa più favorevole verso circa ${_fx(lvl)}`;
   return {val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% · tipico ${_sg(ref.avgReturn)}% in ${Math.round(ref.avgDays)} gg → fase ${Math.round(ph*100)}%`+(ref.count<5?" (pochi cicli)":""),
-    refL:"ciclo rialzista appena iniziato (fase < 40%), oppure ribasso già alla profondità tipica (≥ 100%)", refS:"speculare: ribasso appena iniziato, oppure rialzo esaurito (≥ 100%)", L, S};
+    why, refL:"ciclo rialzista appena iniziato (fase < 40%), oppure ribasso già alla profondità tipica (≥ 100%)", refS:"speculare: ribasso appena iniziato, oppure rialzo esaurito (≥ 100%)", L, S};
 }
 function rpLivelli(){
   const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
@@ -2212,6 +2224,7 @@ function rpZ(){
   const w=10; let L=0,S=0;
   if(up!=null&&up<=w){ L=1; S=-1; } else if(dn!=null&&dn<=w){ S=1; L=-1; }
   return {val:`Z ${_fx(last)} (soglia ±${thr})`+(up!=null?` · trigger rialzo ${up} gg fa`:"")+(dn!=null?` · trigger ribasso ${dn} gg fa`:"")+(up==null&&dn==null?" · nessun trigger negli ultimi 60 gg":""),
+    why:(L===0&&S===0)?`serve un incrocio oltre ±${thr} negli ultimi ${w} giorni: ora Z è ${_fx(last)}, lo scatto più vicino è ${(()=>{ const a=[up,dn].filter(x=>x!=null); return a.length?Math.min(...a)+" gg fa":"oltre 60 gg fa"; })()}`:null,
     refL:`Z incrociato sopra +${thr} negli ultimi ${w} giorni`, refS:`Z incrociato sotto −${thr} negli ultimi ${w} giorni`, L, S};
 }
 function rpVol(){
@@ -2247,27 +2260,38 @@ function rpHurst(){
   let L=0,S=0;
   if(H>0.55&&trendUp!=null){ L=trendUp?1:-1; S=trendUp?-1:1; }
   else if(H<0.45&&rsi!=null){ if(rsi<40){ L=1; S=-1; } else if(rsi>65){ S=1; L=-1; } }
-  return {val:`H ${_fx(H)} · ${H>0.55?"tendenziale":H<0.45?"mean-reverting":"~casuale"}`,
+  const why=(H>=0.45&&H<=0.55)?"H tra 0,45 e 0,55: nessuna persistenza statistica, il titolo si muove in modo quasi casuale e questo indicatore non dà un vantaggio":(L===0&&S===0?(H<0.45?"mean reversion (H < 0,45) ma RSI tra 40 e 65: manca un eccesso da cui rientrare":"H alto ma il trend non è definito"):null);
+  return {val:`H ${_fx(H)} · ${H>0.55?"tendenziale":H<0.45?"mean-reverting":"~casuale"}`, why,
     refL:"H > 0,55 con trend rialzista (trend following), oppure H < 0,45 con RSI < 40 (mean reversion)", refS:"H > 0,55 con trend ribassista, oppure H < 0,45 con RSI > 65", L, S};
 }
 async function rpTarget(){
   try{ if(window._qrPromise) await window._qrPromise; }catch(e){}
-  const px=_px(), q=window._quickRatios; let tg=q&&q.targetPrice, src="analisti";
+  const px=_px(), q=window._quickRatios, ok=v=>v!=null&&v>=0.3*px&&v<=5*px;
   const wl=(typeof WATCHLIST!=="undefined")?WATCHLIST.find(w=>w.ticker===STOCK.ticker):null;
-  const man=wl&&wl.analystTarget?parseFloat(String(wl.analystTarget).replace(",",".")):null;
-  if(man!=null&&!isNaN(man)&&man>0){ tg=man; src="inserito da te"; }
-  if(!(tg>0)) return {nd:true,val:"non disponibile (puoi inserirlo a mano nel tab Bilancio o Pattern)"};
+  const man=wl&&wl.analystTarget!=null&&String(wl.analystTarget).trim()!==""?_parseNum(wl.analystTarget):null, yv=q&&q.targetPrice>0?q.targetPrice:null;
+  let tg=null, src="", warn="";
+  if(man!=null&&ok(man)){ tg=man; src="inserito da te"; }
+  else {
+    if(man!=null) warn=`il valore inserito (${wl.analystTarget}) non è plausibile rispetto al prezzo ${_fx(px)} e viene ignorato: correggilo nel tab Bilancio o Pattern`;
+    if(ok(yv)){ tg=yv; src="media analisti (Yahoo/Alpha Vantage)"; }
+  }
+  if(tg==null) return {nd:true,val:"non disponibile"+(warn?"":" (puoi inserirlo a mano nel tab Bilancio o Pattern)"),why:warn||null};
   const up=(tg/px-1)*100;
-  return {val:`target ${_fx(tg)} (${src}) · potenziale ${_sg(up)}%`, refL:"potenziale oltre +10% (❌ se ≤ 0%)", refS:"target almeno 5% sotto il prezzo (❌ se potenziale > +10%)",
+  return {val:`target ${_fx(tg)} (${src}) · potenziale ${_sg(up)}%`, why:warn||null, refL:"potenziale oltre +10% (❌ se ≤ 0%)", refS:"target almeno 5% sotto il prezzo (❌ se potenziale > +10%)",
     L:up>=10?1:(up<=0?-1:0), S:up<=-5?1:(up>=10?-1:0)};
 }
-function rpBilancio(){
-  if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2||window._fundTicker!==STOCK.ticker)
-    return {nd:true,val:'bilancio non caricato per questo titolo · <a href="javascript:void(0)" onclick="riepLoadFund()" style="color:var(--gold);">carica ora</a> (usa le richieste dell\'API fondamentali)'};
+async function rpBilancio(){
+  const tk=STOCK.ticker, has=()=>LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===tk;
+  if(!has() && !_fundTried[tk]){
+    _fundTried[tk]=true;
+    try{ await loadFundamentals(); }catch(e){ console.error("Bilancio:",e); }
+  }
+  if(!has()) return {nd:true,val:'dati di bilancio non disponibili per questo titolo · <a href="javascript:void(0)" onclick="riepLoadFund()" style="color:var(--gold);">riprova</a>'};
   const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
   const p=computePiotroskiForYear(last,prev), pf=p?p.score:null, b=scoreFromBilancio(), v=(typeof scoreFromValutazione==="function")?scoreFromValutazione():null;
   const solid=pf!=null&&pf>=6&&(b==null||b>=60), weak=(pf!=null&&pf<=3)||(b!=null&&b<40), veryWeak=pf!=null&&pf<=3&&b!=null&&b<40;
   return {val:`Piotroski ${pf!=null?pf+"/9":"n.d."} · solidità ${b!=null?Math.round(b)+"/100":"n.d."} · valutazione ${v!=null?Math.round(v)+"/100":"n.d."}`,
+    why:(!solid&&!weak)?"Piotroski tra 4 e 5 o solidità tra 40 e 60: bilancio nella media, né solido né debole":null,
     refL:"Piotroski almeno 6/9 e solidità almeno 60/100 (❌ se Piotroski ≤ 3 o solidità < 40)", refS:"Piotroski ≤ 3 e solidità < 40 (❌ se bilancio solido)",
     L:solid?1:(weak?-1:0), S:veryWeak?1:(solid?-1:0)};
 }
@@ -2283,7 +2307,9 @@ async function rpBench(){
   const k=Math.min(26,seg.length-1), rel=((seg[seg.length-1][0]/seg[seg.length-1-k][0]-1)-(seg[seg.length-1][1]/seg[seg.length-1-k][1]-1))*100;
   const bs=smaSeriesCalc(BENCH.closes,200).slice(-1)[0], bpx=BENCH.closes[BENCH.closes.length-1], bUp=bs!=null?bpx>bs:null;
   let L=0,S=0; if(corr!=null&&corr>=0.6&&bUp!=null){ L=bUp?1:-1; S=bUp?-1:1; }
+  const low=!(corr!=null&&corr>=0.6);
   return {val:`${BENCH.ticker}: correlazione ${_fx(corr)} · beta ${_fx(beta)} · forza relativa 26 sett. ${_sg(rel)}% · indice ${bUp==null?"n.d.":bUp?"sopra":"sotto"} SMA200`,
+    why:low?`correlazione settimanale ${_fx(corr)} (sotto 0,6): il titolo non segue il mercato, quindi il benchmark non pesa sul giudizio. Rispetto all'indice ha fatto ${_sg(rel)}% in 26 settimane`:null,
     refL:"correlato (≥ 0,6): benchmark sopra la SMA200; poco correlato: neutro", refS:"correlato (≥ 0,6): benchmark sotto la SMA200", L, S};
 }
 function rpStagion(){
@@ -2303,18 +2329,21 @@ function rpMarkov(){
   const series=periodReturnSeries(STOCK.dates,STOCK.closes,"weekly"); if(series.length<30) return {nd:true,val:"storico settimanale insufficiente"};
   const states=classifyStates(series,0.5,1.5), mx=buildTransitionMatrix(states).matrix, cur=states[states.length-1];
   const filled=mx.map(r=>r.map(v=>v==null?0.2:v)), rowN=n=>(n===1?filled:matPow(filled,n))[cur];
-  const r1=rowN(1), r4=rowN(4), up=r=>r[3]+r[4], dn=r=>r[0]+r[1], pc=x=>Math.round(x*100);
-  return {val:`ora «${STATE_NAMES[cur]}» · rialzo: ${pc(up(r1))}% a 1 sett., ${pc(up(r4))}% a 4 sett. · ribasso a 4 sett. ${pc(dn(r4))}%`,
-    refL:"probabilità di rialzo a 4 settimane ≥ 55%", refS:"probabilità di ribasso a 4 settimane ≥ 55%",
-    L:up(r4)>=0.55?1:(dn(r4)>=0.55?-1:0), S:dn(r4)>=0.55?1:(up(r4)>=0.55?-1:0)};
+  const r1=rowN(1), r4=rowN(4), up=r=>r[3]+r[4], dn=r=>r[0]+r[1], fl=r=>r[2], pc=x=>Math.round(x*100);
+  const diff=(up(r4)-dn(r4))*100;
+  return {val:`ora «${STATE_NAMES[cur]}» · a 4 sett.: rialzo ${pc(up(r4))}% · laterale ${pc(fl(r4))}% · ribasso ${pc(dn(r4))}% (a 1 sett.: rialzo ${pc(up(r1))}%)`,
+    why:Math.abs(diff)<10?`differenza rialzo−ribasso a 4 settimane ${diff>=0?"+":""}${diff.toFixed(0)} punti: servono almeno 10 punti per un vantaggio`:null,
+    refL:"probabilità di rialzo a 4 settimane superiore a quella di ribasso di almeno 10 punti", refS:"probabilità di ribasso superiore a quella di rialzo di almeno 10 punti",
+    L:diff>=10?1:(diff<=-10?-1:0), S:diff<=-10?1:(diff>=10?-1:0)};
 }
 function rpRiskErg(){
   const c=STOCK.closes, r=calcDailyReturns(c); if(r.length<60) return {nd:true,val:"storico insufficiente"};
   const ens=meanArr(r)*252*100, tavg=(Math.exp(meanArr(r.map(x=>Math.log(1+x)))*252)-1)*100, idx=ens>0?tavg/ens:null;
   const dd=calcMaxDrawdown(c), vol=calcVolatility(r);
+  const L=(ens>0&&idx!=null&&idx>0.5)?1:(tavg<0?-1:0), S=tavg<0?1:((idx!=null&&idx>0.5)?-1:0);
   return {val:`ergodicità ${_fx(idx)} · crescita geometrica ${_sg(tavg)}%/anno · volatilità ${_fx(vol,0)}% · max drawdown ${_fx(dd,0)}%`,
-    refL:"ergodicità > 0,5 e crescita positiva (❌ se la crescita geometrica è negativa)", refS:"crescita geometrica negativa (❌ se ergodicità > 0,5)",
-    L:(ens>0&&idx!=null&&idx>0.5)?1:(tavg<0?-1:0), S:tavg<0?1:((idx!=null&&idx>0.5)?-1:0)};
+    why:(L===0&&S===0)?`ergodicità ${_fx(idx)} sotto 0,5: la volatilità (${_fx(vol,0)}%) erode la crescita composta, che resta ben sotto la media aritmetica; la crescita geometrica è comunque positiva`:null,
+    refL:"ergodicità > 0,5 e crescita positiva (❌ se la crescita geometrica è negativa)", refS:"crescita geometrica negativa (❌ se ergodicità > 0,5)", L, S};
 }
 function rpPattern(){
   const S0=STOCK, n=S0.closes.length, atrA=calcATR(S0.highs,S0.lows,S0.closes,14), lv=window._pocLv||[];
@@ -2353,7 +2382,9 @@ function rpStrategia(){
 function rpScore(){
   try{ calcStockScore(); }catch(e){ console.error(e); }
   const sc=LAST_STOCK_SCORE; if(!sc) return {nd:true,val:"score non calcolabile"};
+  const mid=sc.score>=40&&sc.score<60, thin=sc.coveragePct<70;
   return {val:`${sc.score}/100 · copertura ${sc.coveragePct}% del peso${sc.missing&&sc.missing.length?" ("+sc.missing.length+" aree mancanti)":""}`,
+    why:(mid?`punteggio tra 40 e 60: serve almeno 60 per il Long, sotto 40 per lo Short. `:"")+(thin?`Copertura bassa (${sc.coveragePct}%): mancano ${sc.missing.map(k=>SCORE_LABELS[k]||k).join(", ")}, quindi il punteggio è meno affidabile`:"")||null,
     refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
 }
 const RP={trend:rpTrend,cicli:rpCicli,livelli:rpLivelli,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
@@ -2372,10 +2403,11 @@ function riepRender(){
     const r=_riepRows[id], lab=RIEP_LABEL[id], tab=RIEP_TAB[id];
     const lc=tab?`<a href="javascript:void(0)" onclick="switchTab('${tab}')" style="color:var(--txt);text-decoration:underline dotted;">${lab}</a>`:lab;
     if(!r) return `<tr><td style="text-align:left;font-weight:700;">${lab}</td><td colspan="4" style="text-align:left;color:var(--dim);">⏳ in calcolo…</td></tr>`;
-    if(r.nd) return `<tr><td style="text-align:left;font-weight:700;">${lc}</td><td style="text-align:left;color:var(--dim);">${r.val}</td><td></td><td>➖</td><td>➖</td></tr>`;
+    const why=r.why?`<div style="color:var(--gold);opacity:.85;font-size:10.5px;margin-top:3px;">ℹ ${r.why}</div>`:"";
+    if(r.nd) return `<tr><td style="text-align:left;font-weight:700;">${lc}</td><td style="text-align:left;color:var(--dim);">${r.val}${why}</td><td></td><td>➖</td><td>➖</td></tr>`;
     n++; if(r.L===1) okL++; if(r.S===1) okS++; if(r.L===-1) badL++; if(r.S===-1) badS++;
     const ref=`<span style="color:var(--dim);font-size:10px;">Long: ${r.refL||""}${r.refS?`<br>Short: ${r.refS}`:""}</span>`;
-    return `<tr><td style="text-align:left;font-weight:700;white-space:nowrap;">${lc}</td><td style="text-align:left;">${r.val}</td><td style="text-align:left;min-width:220px;">${ref}</td><td style="font-size:16px;">${sym(r.L)}</td><td style="font-size:16px;">${sym(r.S)}</td></tr>`;
+    return `<tr><td style="text-align:left;font-weight:700;white-space:nowrap;">${lc}</td><td style="text-align:left;">${r.val}${why}</td><td style="text-align:left;min-width:220px;">${ref}</td><td style="font-size:16px;">${sym(r.L)}</td><td style="font-size:16px;">${sym(r.S)}</td></tr>`;
   });
   wrap.innerHTML=`<table><tr><th style="text-align:left;">Analisi</th><th style="text-align:left;">Attuale</th><th style="text-align:left;">Riferimento per l'ingresso</th><th>Long</th><th>Short</th></tr>${rows.join("")}</table>`;
   const foot=el("riepFoot"); if(!foot) return;
