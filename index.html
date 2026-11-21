@@ -2205,9 +2205,9 @@ function _renderPocTableCore(){
 // Una riga per analisi: valore attuale · riferimento per l'ingresso · spunte Long/Short.
 // L / S: 1 = allineato, -1 = contrario, 0 = neutro, 2 = favorevole ma contro trend.
 let _riepToken=0, _riepRows={};
-const RIEP_ORDER=["trend","cicli","setup","livelli","rr","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
-const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
-const RIEP_TAB={target:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
+const RIEP_ORDER=["trend","cicli","setup","livelli","rr","zscore","vol","rsi","hurst","target","fv","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
+const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",fv:"Fair Value (modelli)",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
+const RIEP_TAB={target:"Bilancio",fv:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
 const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
 const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
 function _ema(arr,n){ const out=new Array(arr.length).fill(null); if(arr.length<n) return out; let s0=0; for(let i=0;i<n;i++) s0+=arr[i]; let e=s0/n; out[n-1]=e; const a=2/(n+1); for(let i=n;i<arr.length;i++){ e=a*arr[i]+(1-a)*e; out[i]=e; } return out; }
@@ -2505,19 +2505,29 @@ function rpHurst(){
 }
 async function rpTarget(){
   try{ if(window._qrPromise) await window._qrPromise; }catch(e){}
-  const px=_px(), q=window._quickRatios, ok=v=>v!=null&&v>=0.3*px&&v<=5*px;
-  const wl=(typeof WATCHLIST!=="undefined")?WATCHLIST.find(w=>w.ticker===STOCK.ticker):null;
-  const man=wl&&wl.analystTarget!=null&&String(wl.analystTarget).trim()!==""?_parseNum(wl.analystTarget):null, yv=q&&q.targetPrice>0?q.targetPrice:null;
-  let tg=null, src="", warn="";
-  if(man!=null&&ok(man)){ tg=man; src="inserito da te"; }
-  else {
-    if(man!=null) warn=`il valore inserito (${wl.analystTarget}) non è plausibile rispetto al prezzo ${_fx(px)} e viene ignorato: correggilo nel tab Bilancio o Pattern`;
-    if(ok(yv)){ tg=yv; src="media analisti (Yahoo/Alpha Vantage)"; }
-  }
-  if(tg==null) return {nd:true,val:"non disponibile"+(warn?"":" (puoi inserirlo a mano nel tab Bilancio o Pattern)"),why:warn||null};
-  const up=(tg/px-1)*100;
-  return {val:`target ${_fx(tg)} (${src}) · potenziale ${_sg(up)}%`, why:warn||null, refL:"potenziale oltre +10% (❌ se ≤ 0%)", refS:"target almeno 5% sotto il prezzo (❌ se potenziale > +10%)",
+  const px=_px(), E=fvEngine(), a=E&&E.analyst;
+  if(!a) return {nd:true,val:"target analisti non disponibile da Yahoo per questo titolo (puoi inserirlo a mano nel tab Bilancio o Pattern)"};
+  const up=(a.mean/px-1)*100, rng=(a.low!=null&&a.high!=null)?` · range ${_fx(a.low)}–${_fx(a.high)}`:"", nn=a.n?` · ${a.n} analisti`:"";
+  const q=window._quickRatios||{}, rec=a.rec?` · giudizio ${a.rec}`:"";
+  let why=null; if(E.divergence) why=`il target degli analisti è ${E.ratio.toFixed(1)}× il fair value dei modelli: forte divergenza, vedi «Fair Value (modelli)»`;
+  if(a.manualDiff) why=(why?why+" · ":"")+`il valore inserito a mano (${a.manualDiff}) differisce dal consenso Yahoo e non viene usato`;
+  return {val:`target ${_fx(a.mean)} (${a.src}${nn})${rng} · potenziale ${_sg(up)}%${rec}`, why, refL:"potenziale oltre +10% (❌ se ≤ 0%)", refS:"target almeno 5% sotto il prezzo (❌ se potenziale > +10%)",
     L:up>=10?1:(up<=0?-1:0), S:up<=-5?1:(up>=10?-1:0)};
+}
+async function rpFV(){
+  try{ if(window._qrPromise) await window._qrPromise; }catch(e){}
+  const tk=STOCK.ticker;
+  if(!(LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===tk)&&!_fundTried[tk]){ _fundTried[tk]=true; try{ await loadFundamentals({yahooOnly:true}); }catch(e){ console.error("FV:",e); } }
+  const E=fvEngine(), px=_px();
+  if(!E||E.fv==null) return {nd:true,val:"fair value non calcolabile: bilanci non disponibili"+(E&&E.analyst?` · target analisti ${_fx(E.analyst.mean)}`:"")+' · <a href="javascript:void(0)" onclick="riepLoadFund()" style="color:var(--gold);">riprova</a>'};
+  const ratio=px/E.fv, pct=(ratio-1)*100;
+  const ok=E.conf!=="bassa"&&!E.divergence;
+  const L=ok?(ratio<=0.85?1:(ratio>=1.2?-1:0)):0, S=ok?(ratio>=1.2?1:(ratio<=0.85?-1:0)):0;
+  const why=[]; if(!ok) why.push(E.divergence?`modelli e analisti divergono troppo (${E.ratio.toFixed(1)}×): il fair value è incerto, la riga resta ➖`:"confidenza bassa: pochi modelli o molto distanti, la riga resta ➖");
+  const excl=E.models.filter(m=>m.val&&!m.kept).map(m=>m.name); if(excl.length) why.push("modelli scartati perché anomali: "+excl.join(", "));
+  why.push("dettaglio dei modelli nel tab Bilancio");
+  return {val:`Fair value ${_fx(E.fv)} (intervallo ${_fx(E.low)}–${_fx(E.high)}, confidenza ${E.conf}, ${E.kept} modelli) · prezzo ${_fx(px)} (${_sg(pct)}% rispetto al fair value) · 🎯 target realistico ${_fx(E.tgt)} (${_sg(E.upside)}%)`,
+    why:why.join(" · "), refL:"prezzo almeno 15% sotto il fair value ✅ (❌ se oltre +20%); con confidenza bassa o forte divergenza dagli analisti ➖", refS:"prezzo oltre +20% sopra il fair value ✅ (❌ se oltre 15% sotto)", L, S};
 }
 async function rpBilancio(){
   const tk=STOCK.ticker, has=()=>LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===tk;
@@ -2632,9 +2642,9 @@ function rpScore(){
     why:(mid?`punteggio tra 40 e 60: serve almeno 60 per il Long, sotto 40 per lo Short. `:"")+(thin?`Copertura bassa (${sc.coveragePct}%): mancano ${sc.missing.map(k=>SCORE_LABELS[k]||k).join(", ")}, quindi il punteggio è meno affidabile`:"")||null,
     refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
 }
-const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,rr:rpRR,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
+const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,rr:rpRR,fv:rpFV,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
 // ordine di calcolo: prima i rapidi, poi quelli che scaricano dati o aggiornano altre tab (regime → benchmark → bilancio → MC → strategia → score)
-const RIEP_RUN=["trend","cicli","setup","livelli","rr","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
+const RIEP_RUN=["trend","cicli","setup","livelli","rr","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","fv","regime","bench","bilancio","mc","strategia","score"];
 
 // Ogni riga ha un tempo massimo: se una tab si blocca, le altre righe vanno avanti.
 function _riepRun(id){
@@ -2667,7 +2677,7 @@ function riepRender(){
 const RIEP_AREA=[
  ["Trend e regime",["trend","regime","bench","hurst","stagion"]],
  ["Timing e livelli",["cicli","setup","livelli","zscore","rsi","vol","pattern","markov"]],
- ["Valore e fondamentali",["target","bilancio","score"]],
+ ["Valore e fondamentali",["target","fv","bilancio","score"]],
  ["Rischio e probabilità",["rr","riskerg","mc","strategia"]]
 ];
 function riepSynth(){
@@ -4308,7 +4318,16 @@ window.loadQuickRatios=async function(){
         dividendYield: sd.dividendYield?.raw!=null ? sd.dividendYield.raw*100 : null,
         marketCap: pr.marketCap?.raw ?? sd.marketCap?.raw ?? null,
         beta: dk.beta?.raw ?? null,
-        targetPrice: fd.targetMeanPrice?.raw ?? null
+        targetPrice: fd.targetMeanPrice?.raw ?? null,
+        targetHigh: fd.targetHighPrice?.raw ?? null,
+        targetLow: fd.targetLowPrice?.raw ?? null,
+        nAnalysts: fd.numberOfAnalystOpinions?.raw ?? null,
+        recKey: fd.recommendationKey ?? null,
+        recMean: fd.recommendationMean?.raw ?? null,
+        epsTTM: dk.trailingEps?.raw ?? null,
+        epsFwd: dk.forwardEps?.raw ?? null,
+        earningsGrowth: fd.earningsGrowth?.raw ?? null,
+        revenueGrowth: fd.revenueGrowth?.raw ?? null
       };
       if(r.assetProfile?.sector){ STOCK_SECTOR=r.assetProfile.sector; updateHistorySector(STOCK.ticker, STOCK_SECTOR); }
       // Se Yahoo risponde ma con TUTTI i campi vuoti, non è utile: forziamo il fallback
@@ -4345,6 +4364,7 @@ window.loadQuickRatios=async function(){
 
   if(!data){ el("quickRatiosStatus").textContent="❌ Dati di mercato non disponibili per questo ticker"; return; }
   window._quickRatios=data;
+  try{ if(typeof renderFvConsolidated==="function") renderFvConsolidated(); }catch(e){ console.error("FV consolidato:",e); }
 
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("quickRatiosWrap").innerHTML=
@@ -4668,6 +4688,85 @@ window.renderValueGeneration=function(rows){
 };
 
 // ── FAIR VALUE (Peter Lynch, DCF semplificato) + ALTMAN Z-SCORE ────────
+// ================= FAIR VALUE CONSOLIDATO E TARGET REALISTICO =================
+// Più modelli indipendenti (DCF, P/E storico, P/S storico, Lynch, Graham), scartando
+// i valori anomali, + consenso degli analisti (Yahoo). Il "target realistico" è una media
+// ponderata tra fair value e target analisti, compresa nell'intervallo degli analisti.
+function fvEngine(){
+  if(!STOCK) return null;
+  const px=_px(), q=window._quickRatios||{};
+  const rows=(typeof LAST_FUND_ROWS!=="undefined"&&LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===STOCK.ticker)?LAST_FUND_ROWS:null;
+  const models=[]; const add=(id,name,val,w,note)=>models.push({id,name,val:(val!=null&&isFinite(val)&&val>0)?val:null,w,note});
+  const priceAt=(ds)=>{ const t=new Date(ds).getTime(); if(!isFinite(t)) return null; let bi=0,bd=Infinity; STOCK.dates.forEach((d,i)=>{ const df=Math.abs(d.getTime()-t); if(df<bd){ bd=df; bi=i; } }); return bd<=200*86400000?STOCK.closes[bi]:null; };
+  if(rows){
+    const last=rows[rows.length-1];
+    const sh=r=>r.sharesOutstanding||((r.eps&&r.netIncome&&r.eps!==0)?Math.abs(r.netIncome/r.eps):null);
+    const shares=sh(last);
+    const eps=(q.epsTTM>0)?q.epsTTM:(last.eps>0?last.eps:null);
+    let g=null,gsrc="";
+    const ni=rows.map(r=>r.netIncome).filter(v=>v!=null);
+    if(ni.length>=2&&ni[0]>0){ g=(Math.pow(ni[ni.length-1]/ni[0],1/(ni.length-1))-1)*100; gsrc="utili"; }
+    if(g==null||!isFinite(g)){ const rv=rows.map(r=>r.revenue).filter(v=>v!=null); if(rv.length>=2&&rv[0]>0){ g=(Math.pow(rv[rv.length-1]/rv[0],1/(rv.length-1))-1)*100; gsrc="ricavi"; } }
+    const gc=(g!=null&&isFinite(g))?Math.min(Math.max(g,0),25):null;
+    if(last.fcf!=null&&last.fcf>0&&shares&&gc!=null){
+      let f=last.fcf/shares, sum=0; const rd=0.10, gt=0.025;
+      for(let y=1;y<=10;y++){ const gy=(y<=5?gc:(gc+(3-gc)*(y-5)/5))/100; f*=1+gy; sum+=f/Math.pow(1+rd,y); }
+      add("dcf","DCF a 10 anni (crescita che rallenta)",sum+f*(1+gt)/(rd-gt)/Math.pow(1+rd,10),1,`FCF/azione ${_fx(last.fcf/shares)}, crescita ${_fx(gc,1)}% (da ${gsrc}) per 5 anni poi verso 3%, sconto 10%, crescita terminale 2,5%`);
+    }
+    const pes=rows.map(r=>{ const p=priceAt(r.year); return (p&&r.eps>0)?p/r.eps:null; }).filter(v=>v!=null&&v>3&&v<150);
+    if(pes.length>=3&&eps){ const m=_pctl(pes,.5); add("pe","P/E storico × EPS",m*eps,1,`P/E mediano storico ${_fx(m,1)}x su ${pes.length} anni × EPS ${_fx(eps)}`); }
+    const pss=rows.map(r=>{ const p=priceAt(r.year), s0=sh(r); return (p&&r.revenue>0&&s0)?p/(r.revenue/s0):null; }).filter(v=>v!=null&&v>0.1&&v<100);
+    if(pss.length>=3&&last.revenue>0&&shares){ const m=_pctl(pss,.5); add("ps","P/S storico × ricavi per azione",m*last.revenue/shares,0.5,`P/S mediano storico ${_fx(m,1)}x su ${pss.length} anni × ricavi/azione ${_fx(last.revenue/shares)}`); }
+    if(eps&&gc!=null&&gc>0) add("lynch","Peter Lynch (EPS × crescita)",eps*gc,0.5,`EPS ${_fx(eps)} × crescita ${_fx(gc,1)}% (cappata 25%)`);
+    const bv=(last.totalEquity!=null&&last.sharesOutstanding)?last.totalEquity/last.sharesOutstanding:null;
+    if(eps&&eps>0&&bv&&bv>0) add("graham","Numero di Graham (conservativo)",Math.sqrt(22.5*eps*bv),0.25,`√(22,5 × EPS ${_fx(eps)} × valore contabile ${_fx(bv)}) — pensato per aziende mature, penalizza la crescita`);
+  }
+  const vals=models.filter(m=>m.val);
+  let fv=null,low=null,high=null,conf="nessuna",kept=[];
+  if(vals.length){
+    const med=_pctl(vals.map(m=>m.val),.5);
+    vals.forEach(m=>{ m.kept=m.val>=med/2.5&&m.val<=med*2.5; });
+    kept=vals.filter(m=>m.kept);
+    const sw=kept.reduce((a,m)=>a+m.w,0); fv=kept.reduce((a,m)=>a+m.val*m.w,0)/sw;
+    low=Math.min(...kept.map(m=>m.val)); high=Math.max(...kept.map(m=>m.val));
+    const spread=high/low; conf=(kept.length>=4&&spread<2)?"alta":((kept.length>=3&&spread<3)?"media":"bassa");
+  }
+  // analisti: Yahoo in automatico; il valore manuale è solo un ripiego
+  const okv=v=>v!=null&&isFinite(v)&&v>=0.3*px&&v<=5*px;
+  const wl=(typeof WATCHLIST!=="undefined")?WATCHLIST.find(w=>w.ticker===STOCK.ticker):null;
+  const man=wl&&wl.analystTarget!=null&&String(wl.analystTarget).trim()!==""?_parseNum(wl.analystTarget):null;
+  let analyst=null;
+  if(okv(q.targetPrice)) analyst={mean:q.targetPrice,low:okv(q.targetLow)?q.targetLow:null,high:okv(q.targetHigh)?q.targetHigh:null,n:q.nAnalysts||null,src:"Yahoo",rec:q.recKey||null,manualDiff:(okv(man)&&Math.abs(man/q.targetPrice-1)>0.25)?man:null};
+  else if(okv(man)) analyst={mean:man,low:null,high:null,n:null,src:"inserito da te",rec:null,manualDiff:null};
+  let tgt=null,divergence=false,ratio=null;
+  if(fv!=null&&analyst){ ratio=analyst.mean/fv; divergence=ratio>2||ratio<0.5; let wa=(analyst.n>=10)?0.5:((analyst.n>=5)?0.4:0.3); if(divergence) wa=Math.min(wa,0.25); tgt=(1-wa)*fv+wa*analyst.mean; if(analyst.low!=null) tgt=Math.max(tgt,analyst.low); if(analyst.high!=null) tgt=Math.min(tgt,analyst.high); }
+  else if(fv!=null) tgt=fv; else if(analyst) tgt=analyst.mean;
+  return {px,models,fv,low,high,conf,kept:kept.length,analyst,tgt,upside:tgt!=null?(tgt/px-1)*100:null,divergence,ratio,hasRows:!!rows};
+}
+function renderFvConsolidated(){
+  if(!STOCK) return;
+  const host=el("fairValueCardsWrap"); if(!host) return;
+  let w=el("fvConsolidatedWrap"); if(!w){ w=document.createElement("div"); w.id="fvConsolidatedWrap"; w.style.cssText="margin:6px 0 14px;"; host.insertAdjacentElement("afterend",w); }
+  const E=fvEngine(); if(!E){ w.innerHTML=""; return; }
+  const cur=STOCK.currency||"", f=v=>v==null?"--":cur+" "+v.toFixed(2);
+  const card=(l,v,c)=>`<div class="card"><div class="v" style="color:${c||'var(--txt)'};font-size:18px;">${v}</div><div class="l">${l}</div></div>`;
+  const cc=E.conf==="alta"?"#00d4b8":(E.conf==="media"?"#ffd23f":"#ff9f1c");
+  const a=E.analyst;
+  const cards=card("Fair Value consolidato",f(E.fv),"#ffd23f")+card("Intervallo dei modelli",E.low!=null?`${E.low.toFixed(2)} – ${E.high.toFixed(2)}`:"--")+card("Confidenza",E.conf+(E.kept?` (${E.kept} modelli)`:""),cc)+
+    card("Target analisti"+(a?` (${a.src}${a.n?`, ${a.n} analisti`:""})`:""),a?f(a.mean):"--","#4fa3ff")+card("Range analisti",a&&a.low!=null?`${a.low.toFixed(2)} – ${a.high.toFixed(2)}`:"--")+
+    card("🎯 Target realistico",f(E.tgt),"#00d4b8")+card("Potenziale vs prezzo",E.upside!=null?(E.upside>=0?"+":"")+E.upside.toFixed(1)+"%":"--",E.upside>0?"#00d4b8":"#ff6b6b");
+  const rows=E.models.map(m=>`<tr><td style="text-align:left;">${m.name}</td><td>${m.val!=null?m.val.toFixed(2):"n.d."}</td><td>${m.w}</td><td>${m.val==null?"—":(m.kept?"✅ usato":"⚠ scartato (anomalo)")}</td><td style="text-align:left;color:var(--dim);font-size:10px;">${m.note}</td></tr>`).join("");
+  const notes=[];
+  if(!E.hasRows) notes.push("Bilanci non ancora caricati: premi «CARICA DATI» per calcolare i modelli di fair value.");
+  if(E.divergence) notes.push(`⚠ Modelli e analisti divergono molto (target analisti ${E.ratio.toFixed(1)}× il fair value): il valore è incerto, tratta il target realistico come intervallo, non come numero.`);
+  if(a&&a.manualDiff) notes.push(`Il valore inserito a mano (${a.manualDiff}) differisce di oltre il 25% dal consenso Yahoo: viene usato il consenso Yahoo.`);
+  if(E.conf==="bassa"&&E.fv!=null) notes.push("Confidenza bassa: pochi modelli o molto distanti tra loro.");
+  w.innerHTML=`<div style="font-weight:700;color:var(--gold);margin:4px 0 6px;">🧮 Fair Value consolidato e target realistico (automatico)</div>`+
+    `<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:8px;">${cards}</div>`+
+    (rows?`<div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Modello</th><th>Valore</th><th>Peso</th><th>Stato</th><th style="text-align:left;">Come è calcolato</th></tr>${rows}</table></div>`:"")+
+    (notes.length?`<div style="font-size:11px;color:var(--gold);margin-top:6px;">${notes.join("<br>")}</div>`:"")+
+    `<div style="font-size:10px;color:var(--dim);margin-top:6px;">Il target realistico è la media ponderata tra fair value dei modelli (anomali esclusi) e target analisti (peso 30-50% in base al numero di analisti), compresa nel range degli analisti (peso ridotto al 25% se divergono molto dai modelli). Stime indicative, non consigli di investimento.</div>`;
+}
 let altmanChartObj=null;
 window.renderFairValueSolidity=function(rows){
   if(!rows||!STOCK) return;
@@ -4819,6 +4918,7 @@ window.renderFairValueSolidity=function(rows){
 
   const lastZ=zScores[zScores.length-1];
   LAST_ALTMAN_Z = lastZ; // riusato dalla Strategia AI come filtro fondamentali sì/no
+  try{ renderFvConsolidated(); }catch(e){ console.error("FV consolidato:",e); }
   const zCol=lastZ==null?"var(--dim)":lastZ>2.99?"#00d4b8":lastZ>1.81?"#ffd23f":"#ff6b6b";
   const zText=lastZ==null?"Dati insufficienti":lastZ>2.99?"Basso rischio di fallimento":lastZ>1.81?"Zona grigia — attenzione":"Alto rischio di fallimento";
   el("altmanInfo").innerHTML=`<span style="display:inline-block;${lastZ>2.99?'padding:8px 12px;border-radius:8px;background:linear-gradient(180deg,rgba(0,212,184,0.12),transparent);box-shadow:0 0 0 1px rgba(0,212,184,0.35),0 0 14px rgba(0,212,184,0.25);':''}"><strong style="color:${zCol};">${lastZ>2.99?'★ ':''}Z-Score attuale: ${lastZ!=null?lastZ.toFixed(2):"--"}</strong> — ${zText}.</span> <span style="color:var(--dim);">(&gt;2.99 sicuro, 1.81-2.99 zona grigia, &lt;1.81 rischio)</span>`;
