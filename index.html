@@ -2153,7 +2153,9 @@ function altSupportZones(){
   { const step=Math.pow(10,Math.floor(Math.log10(px)))/2; for(let v=Math.floor(px/step)*step; v>px*0.55; v-=step){ if(v<px*0.999) pts.push({p:v,m:"numero tondo"}); } }
   // cluster entro 1 ATR (minimo 1% del prezzo)
   const tol=Math.max(atr,px*0.01); pts.sort((a,b)=>b.p-a.p);
-  const zones=[]; pts.forEach(q=>{ const z=zones[zones.length-1]; if(z&&z.lo-q.p<=tol){ z.lo=Math.min(z.lo,q.p); z.items.push(q); } else zones.push({hi:q.p,lo:q.p,items:[q]}); });
+  // solo livelli entro il 50% sotto il prezzo (più in basso non sono utili per un ingresso)
+  for(let i=pts.length-1;i>=0;i--) if(pts[i].p<px*0.5) pts.splice(i,1);
+  const zones=[]; pts.forEach(q=>{ const z=zones[zones.length-1]; if(z&&z.hi-q.p<=tol){ z.lo=Math.min(z.lo,q.p); z.items.push(q); } else zones.push({hi:q.p,lo:q.p,items:[q]}); });
   zones.forEach(z=>{ z.mid=z.items.reduce((a,q)=>a+q.p,0)/z.items.length; z.methods=[...new Set(z.items.map(q=>q.m))]; z.strength=new Set(z.items.map(q=>q.m.split(" ")[0])).size; z.distPct=(z.hi/px-1)*100; z.distAtr=(px-z.hi)/atr; });
   return {px,atr,zones:zones.slice(0,6)};
 }
