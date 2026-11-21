@@ -2205,8 +2205,8 @@ function _renderPocTableCore(){
 // Una riga per analisi: valore attuale · riferimento per l'ingresso · spunte Long/Short.
 // L / S: 1 = allineato, -1 = contrario, 0 = neutro, 2 = favorevole ma contro trend.
 let _riepToken=0, _riepRows={};
-const RIEP_ORDER=["trend","cicli","setup","livelli","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
-const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
+const RIEP_ORDER=["trend","cicli","setup","livelli","rr","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
+const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
 const RIEP_TAB={target:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
 const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
 const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
@@ -2367,6 +2367,55 @@ function rpSetup(){
     why:lines.join("<br>"),
     refL:"score ≥ 70 senza nuovo minimo recente: ✅ (🟡 se il trend è ribassista); da 25 a 69 ➖ (in costruzione, attendi conferma); sotto 25 ❌ (nessuna inversione in corso)",
     refS:"nuovo minimo negli ultimi 5 giorni con score < 30: ✅ (il ribasso prosegue); score ≥ 70: ❌", L, S};
+}
+// ---- Rischio/Rendimento: stop e target dai livelli noti (POC + zone alternative) ----
+function altResistanceZones(){
+  if(!STOCK) return null;
+  const px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
+  if(!(atr>0)) return null;
+  const n=STOCK.closes.length, pts=[];
+  const wk=[]; { let key=null;
+    for(let i=Math.max(0,n-1300);i<n;i++){ const d=STOCK.dates[i], dow=(new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).getUTCDay()+6)%7, k=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()-dow);
+      if(k!==key){ wk.push({lo:STOCK.lows[i],hi:STOCK.highs[i]}); key=k; } else { const w=wk[wk.length-1]; w.lo=Math.min(w.lo,STOCK.lows[i]); w.hi=Math.max(w.hi,STOCK.highs[i]); } } }
+  for(let i=3;i<wk.length-3;i++){ let ok=true; for(let j=1;j<=3;j++){ if(wk[i].hi<wk[i-j].hi||wk[i].hi<wk[i+j].hi){ ok=false; break; } } if(ok&&wk[i].hi>px&&(wk[i].hi-px)/atr>=1) pts.push({p:wk[i].hi,m:"swing settimanale"}); }
+  { const from=Math.max(0,n-504); let loI=from; for(let i=from;i<n;i++) if(STOCK.lows[i]<STOCK.lows[loI]) loI=i;
+    let hiI=from; for(let i=from;i<=loI;i++) if(STOCK.highs[i]>STOCK.highs[hiI]) hiI=i;
+    const hi=STOCK.highs[hiI], lo=STOCK.lows[loI];
+    if(loI>hiI&&hi-lo>4*atr){ [[.382,"38,2%"],[.5,"50%"],[.618,"61,8%"],[.786,"78,6%"]].forEach(([f,t])=>{ const v=lo+f*(hi-lo); if(v>px) pts.push({p:v,m:"Fibonacci "+t}); }); } }
+  [[252,"massimo 52 sett."],[504,"massimo 104 sett."]].forEach(([nn,t])=>{ if(n>=nn){ let m=-Infinity; for(let i=n-nn;i<n;i++) m=Math.max(m,STOCK.highs[i]); if(m>px&&(m-px)/atr>=1) pts.push({p:m,m:t}); } });
+  { const step=Math.pow(10,Math.floor(Math.log10(px)))/2; for(let v=Math.ceil(px/step)*step; v<px*1.45; v+=step){ if(v>px*1.001) pts.push({p:v,m:"numero tondo"}); } }
+  const tol=Math.max(atr,px*0.01); pts.sort((a,b)=>a.p-b.p);
+  for(let i=pts.length-1;i>=0;i--) if(pts[i].p>px*1.5) pts.splice(i,1);
+  const zones=[]; pts.forEach(q=>{ const z=zones[zones.length-1]; if(z&&q.p-z.lo<=tol){ z.hi=Math.max(z.hi,q.p); z.items.push(q); } else zones.push({lo:q.p,hi:q.p,items:[q]}); });
+  zones.forEach(z=>{ z.mid=z.items.reduce((a,q)=>a+q.p,0)/z.items.length; z.methods=[...new Set(z.items.map(q=>q.m))]; z.distAtr=(z.lo-px)/atr; });
+  return {px,atr,zones:zones.slice(0,6)};
+}
+function rpRR(){
+  const px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
+  if(!(atr>0)) return {nd:true,val:"ATR non disponibile"};
+  const sup=[], res=[];
+  (window._pocLv||[]).forEach(l=>{ if(l.poc<px) sup.push({hi:l.poc,lo:l.poc}); else if(l.poc>px) res.push({lo:l.poc,hi:l.poc}); });
+  try{ const a=altSupportZones(); if(a) a.zones.forEach(z=>sup.push({hi:z.hi,lo:z.lo})); }catch(e){}
+  try{ const b=altResistanceZones(); if(b) b.zones.forEach(z=>res.push({lo:z.lo,hi:z.hi})); }catch(e){}
+  sup.sort((a,b)=>b.hi-a.hi); res.sort((a,b)=>a.lo-b.lo);
+  const s15=sup.find(z=>(px-z.hi)/atr>=1.5), r15=res.find(z=>(z.lo-px)/atr>=1.5);
+  const f=(v)=>_fx(v);
+  let rrL=null, rrS=null, tL="n.d.", tS="n.d.";
+  if(s15&&r15){
+    const stopL=s15.lo-0.5*atr, tgtL=r15.lo, stopS=r15.hi+0.5*atr, tgtS=s15.hi;
+    rrL=(tgtL-px)/(px-stopL); rrS=(px-tgtS)/(stopS-px);
+    tL=`stop ${f(stopL)} (${_sg((stopL/px-1)*100)}%) · target ${f(tgtL)} (${_sg((tgtL/px-1)*100)}%) → ${rrL.toFixed(1)}:1`;
+    tS=`stop ${f(stopS)} (${_sg((stopS/px-1)*100)}%) · target ${f(tgtS)} (${_sg((tgtS/px-1)*100)}%) → ${rrS.toFixed(1)}:1`;
+  } else {
+    return {nd:true,val:`livelli insufficienti: ${s15?"":"nessun supporto "}${(!s15&&!r15)?"e ":""}${r15?"":"nessuna resistenza "}a oltre 1,5 ATR dal prezzo (ATR ${f(atr)})`};
+  }
+  const sc=v=>v==null?0:(v>=2?1:(v<1?-1:0));
+  let why=null;
+  if(rrL<1.5&&rrS<1.5) why=`nessun lato offre almeno 1,5:1 con i livelli noti: nessun ingresso con un vantaggio chiaro, meglio attendere una zona migliore`;
+  else why=`il rapporto migliore è ${rrL>=rrS?"Long":"Short"} (${Math.max(rrL,rrS).toFixed(1)}:1)`;
+  return {val:`ATR ${f(atr)} · Long: ${tL} | Short: ${tS}`, why, rrL, rrS,
+    refL:"stop sotto il primo supporto a ≥ 1,5 ATR (−0,5 ATR), target alla prima resistenza a ≥ 1,5 ATR: R/R ≥ 2 ✅ · 1–2 ➖ · < 1 ❌",
+    refS:"stop sopra la prima resistenza a ≥ 1,5 ATR (+0,5 ATR), target al primo supporto a ≥ 1,5 ATR: stessa scala", L:sc(rrL), S:sc(rrS)};
 }
 function rpLivelli(){
   const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
@@ -2534,10 +2583,10 @@ function rpRiskErg(){
   const c=STOCK.closes, r=calcDailyReturns(c); if(r.length<60) return {nd:true,val:"storico insufficiente"};
   const ens=meanArr(r)*252*100, tavg=(Math.exp(meanArr(r.map(x=>Math.log(1+x)))*252)-1)*100, idx=ens>0?tavg/ens:null;
   const dd=calcMaxDrawdown(c), vol=calcVolatility(r);
-  const L=(ens>0&&idx!=null&&idx>0.5)?1:(tavg<0?-1:0), S=tavg<0?1:((idx!=null&&idx>0.5)?-1:0);
+  const L=tavg<0?-1:0, S=tavg<0?1:0; // conta solo se la crescita storica è NEGATIVA: una crescita positiva misura la qualità passata, non il momento d'ingresso
   return {val:`ergodicità ${_fx(idx)} · crescita geometrica ${_sg(tavg)}%/anno · volatilità ${_fx(vol,0)}% · max drawdown ${_fx(dd,0)}%`,
-    why:(L===0&&S===0)?`ergodicità ${_fx(idx)} sotto 0,5: la volatilità (${_fx(vol,0)}%) erode la crescita composta, che resta ben sotto la media aritmetica; la crescita geometrica è comunque positiva`:null,
-    refL:"ergodicità > 0,5 e crescita positiva (❌ se la crescita geometrica è negativa)", refS:"crescita geometrica negativa (❌ se ergodicità > 0,5)", L, S};
+    why:(tavg>=0?`crescita storica positiva: misura la qualità passata del titolo, non è un segnale d'ingresso e non entra nel conteggio (conta solo se negativa)`:`crescita geometrica storica negativa: il titolo ha distrutto capitale nel lungo periodo`)+(idx!=null&&idx<=0.5?`. Ergodicità ${_fx(idx)} ≤ 0,5: la volatilità (${_fx(vol,0)}%) erode la crescita composta`:""),
+    refL:"informativo: conta solo la crescita geometrica NEGATIVA (❌ Long, ✅ Short)", refS:"crescita geometrica negativa ✅; positiva ➖ (qualità storica, non entra nel conteggio)", L, S};
 }
 function rpPattern(){
   const S0=STOCK, n=S0.closes.length, atrA=calcATR(S0.highs,S0.lows,S0.closes,14), lv=window._pocLv||[];
@@ -2556,8 +2605,9 @@ async function rpMC(){
   const m=LAST_MC_RESULT; if(!m) return {nd:true,val:"simulazione non riuscita"};
   const pg=100-m.probLoss;
   return {val:`prob. di guadagno a ${m.horizon} gg ${_fx(pg,0)}% · rendimento medio ${_sg(m.meanReturn)}% · VaR 95% ${_fx(m.var95,1)}%`,
-    refL:"probabilità di guadagno ≥ 55% (il bootstrap include la deriva storica del titolo)", refS:"probabilità di guadagno ≤ 45%",
-    L:pg>=55?1:(pg<=45?-1:0), S:pg<=45?1:(pg>=55?-1:0)};
+    why:pg>=55?"probabilità alta ma gonfiata dalla deriva storica del titolo (il bootstrap ripete i rendimenti passati): non entra nel conteggio. Conta il VaR come misura di rischio":(pg<=45?"probabilità bassa nonostante la deriva storica favorevole: segnale di debolezza":null),
+    refL:"informativo: conta solo una probabilità di guadagno ≤ 45% (❌ Long, ✅ Short). Una probabilità alta è gonfiata dalla deriva storica", refS:"probabilità di guadagno ≤ 45% ✅; sopra ➖",
+    L:pg<=45?-1:0, S:pg<=45?1:0};
 }
 async function rpRegime(){
   try{ await calcRegime(); }catch(e){}
@@ -2581,9 +2631,9 @@ function rpScore(){
     why:(mid?`punteggio tra 40 e 60: serve almeno 60 per il Long, sotto 40 per lo Short. `:"")+(thin?`Copertura bassa (${sc.coveragePct}%): mancano ${sc.missing.map(k=>SCORE_LABELS[k]||k).join(", ")}, quindi il punteggio è meno affidabile`:"")||null,
     refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
 }
-const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
+const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,rr:rpRR,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
 // ordine di calcolo: prima i rapidi, poi quelli che scaricano dati o aggiornano altre tab (regime → benchmark → bilancio → MC → strategia → score)
-const RIEP_RUN=["trend","cicli","setup","livelli","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
+const RIEP_RUN=["trend","cicli","setup","livelli","rr","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
 
 // Ogni riga ha un tempo massimo: se una tab si blocca, le altre righe vanno avanti.
 function _riepRun(id){
@@ -2609,7 +2659,36 @@ function riepRender(){
   let read="Quadro misto: nessuna direzione prevale con chiarezza.";
   if(okL>=okS+3&&okL/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#00d4b8;\">Long</strong>.";
   else if(okS>=okL+3&&okS/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#ff6b6b;\">Short</strong>.";
-  foot.innerHTML=`<div><strong style="color:#00d4b8;">Long</strong>: ${okL}/${n} allineati · ${badL} contrari &nbsp;|&nbsp; <strong style="color:#ff6b6b;">Short</strong>: ${okS}/${n} allineati · ${badS} contrari</div><div style="color:var(--dim);font-size:11px;margin-top:4px;">${read} Lettura automatica a soglie fisse: non è un consiglio di investimento.</div>`;
+  foot.innerHTML=riepSynth()+`<div style="margin-top:8px;"><strong style="color:#00d4b8;">Long</strong>: ${okL}/${n} allineati · ${badL} contrari &nbsp;|&nbsp; <strong style="color:#ff6b6b;">Short</strong>: ${okS}/${n} allineati · ${badS} contrari</div><div style="color:var(--dim);font-size:11px;margin-top:4px;">${read} Lettura automatica a soglie fisse: non è un consiglio di investimento.</div>`;
+}
+const RIEP_AREA=[
+ ["Trend e regime",["trend","regime","bench","hurst","stagion"]],
+ ["Timing e livelli",["cicli","setup","livelli","zscore","rsi","vol","pattern","markov"]],
+ ["Valore e fondamentali",["target","bilancio","score"]],
+ ["Rischio e probabilità",["rr","riskerg","mc","strategia"]]
+];
+function riepSynth(){
+  const g=id=>_riepRows[id]; const sym={1:"✅",[-1]:"❌",2:"🟡"};
+  const cnt=(ids,side)=>{ let ok=0,bad=0,wk=0; ids.forEach(id=>{ const r=g(id); if(!r||r.nd) return; const v=r[side]; if(v===1) ok++; else if(v===-1) bad++; else if(v===2) wk++; }); return {ok,bad,wk}; };
+  const rowsHtml=RIEP_AREA.map(([name,ids])=>{
+    const l=cnt(ids,"L"), sh=cnt(ids,"S"); const nl=l.ok-l.bad, ns=sh.ok-sh.bad;
+    const read=ns-nl>=2?'<span style="color:#ff6b6b;">più Short</span>':(nl-ns>=2?'<span style="color:#00d4b8;">più Long</span>':'<span style="color:var(--dim);">misto</span>');
+    const fm=c=>`✅${c.ok} ❌${c.bad}`+(c.wk?` 🟡${c.wk}`:"");
+    return `<tr><td style="text-align:left;font-weight:700;">${name}</td><td>${fm(l)}</td><td>${fm(sh)}</td><td style="text-align:left;">${read}</td></tr>`;
+  }).join("");
+  const parts=[];
+  const tr=["trend","regime","bench","hurst"].map(g).filter(r=>r&&!r.nd);
+  if(tr.length>=3){ const ns=tr.filter(r=>r.S===1).length, nl=tr.filter(r=>r.L===1).length;
+    parts.push(ns>=3?`trend ribassista (${ns}/${tr.length} indicatori concordi)`:(nl>=3?`trend rialzista (${nl}/${tr.length} indicatori concordi)`:"trend non univoco")); }
+  const st=g("setup"); if(st&&!st.nd){ const m=/Setup (\w+(?: \w+)?)/.exec(st.val||""); if(m){ const v=m[1];
+    parts.push(v==="ASSENTE"?"fondo non ancora formato (setup di inversione assente)":(v==="CONFERMATO"?"inversione confermata dal setup":"inversione in costruzione, attendi conferma")); } }
+  const rs=g("rsi"), zs=g("zscore");
+  if((rs&&/ipervenduto estremo/.test(rs.val||""))||(zs&&/ESTREMO/.test(zs.val||"")&&/Z -/.test(zs.val||""))) parts.push("ipervenduto estremo: rimbalzo tattico possibile, uno Short ora arriva in ritardo");
+  else if((rs&&/ipercomprato/.test(rs.val||""))||(zs&&/ESTREMO/.test(zs.val||"")&&/Z \d/.test(zs.val||""))) parts.push("ipercomprato estremo: ritracciamento possibile, un Long ora arriva in ritardo");
+  const rr=g("rr"); if(rr&&!rr.nd&&rr.rrL!=null){ parts.push(rr.rrL<1.5&&rr.rrS<1.5?`rischio/rendimento sfavorevole su entrambi i lati (Long ${rr.rrL.toFixed(1)}:1, Short ${rr.rrS.toFixed(1)}:1)`:`miglior rischio/rendimento: ${rr.rrL>=rr.rrS?"Long":"Short"} ${Math.max(rr.rrL,rr.rrS).toFixed(1)}:1`); }
+  const lv=g("livelli"); if(lv&&!lv.nd&&/zona alternativa|supporto/.test(lv.val||"")&&lv.why&&/Poi:/.test(lv.why)){ const m=/Poi: (.*)$/.exec(lv.why); if(m) parts.push("zone successive di attesa: "+m[1]); }
+  const sentence=parts.length?`<div style="margin:8px 0;padding:8px 10px;border-left:3px solid var(--gold);background:rgba(255,210,63,0.07);"><strong style="color:var(--gold);">Sintesi:</strong> ${parts.join("; ")}.</div>`:"";
+  return `<div style="font-weight:700;color:var(--gold);margin:6px 0 4px;">Sintesi per area</div><div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Area</th><th>Long</th><th>Short</th><th style="text-align:left;">Lettura</th></tr>${rowsHtml}</table></div>${sentence}`;
 }
 window.riepilogoStart=async function(force){
   if(!STOCK||!isOwner()||!el("riepWrap")) return;
