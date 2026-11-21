@@ -4848,7 +4848,10 @@ function fvEngine(){
     if(pes.length>=3&&eps){ const m=_pctl(pes,.5); add("pe","P/E storico × EPS",m*eps,1,`P/E mediano storico ${_fx(m,1)}x su ${pes.length} anni × EPS ${_fx(eps)}`); }
     const pss=rows.map(r=>{ const p=priceAt(r.year), s0=sh(r); return (p&&r.revenue>0&&s0)?p/(r.revenue/s0):null; }).filter(v=>v!=null&&v>0.1&&v<100);
     if(pss.length>=3&&last.revenue>0&&shares){ const m=_pctl(pss,.5); add("ps","P/S storico × ricavi per azione",m*last.revenue/shares,0.5,`P/S mediano storico ${_fx(m,1)}x su ${pss.length} anni × ricavi/azione ${_fx(last.revenue/shares)}`); }
-    if(eps&&gc!=null&&gc>0) add("lynch","Peter Lynch (EPS × crescita)",eps*gc,0.5,`EPS ${_fx(eps)} × crescita ${_fx(gc,1)}% (cappata 25%)`);
+    if(eps&&gc!=null&&gc>0){
+      add("lynch","Peter Lynch (EPS × crescita)",eps*gc,0.5,`EPS ${_fx(eps)} × crescita ${_fx(gc,1)}% (cappata 25%)`);
+      if(gc<8){ const lm=models[models.length-1]; lm.na=true; lm.note+=` · NON APPLICABILE: con crescita sotto l'8% la formula (P/E giusto = crescita) dà valori irrealistici, è pensata per titoli in crescita 10-25%`; }
+    }
     const bv=(last.totalEquity!=null&&last.sharesOutstanding)?last.totalEquity/last.sharesOutstanding:null;
     if(eps&&eps>0&&bv&&bv>0){
       add("graham","Numero di Graham (conservativo)",Math.sqrt(22.5*eps*bv),0.25,`√(22,5 × EPS ${_fx(eps)} × valore contabile ${_fx(bv)}) — pensato per aziende mature, penalizza la crescita`);
@@ -4992,7 +4995,9 @@ window.renderFairValueSolidity=function(rows){
 
   const grahamNA=(grahamFV!=null&&bvps>0&&price/bvps>5);
   const fvValues=[lynchFV,dcfFV,grahamNA?null:grahamFV].filter(v=>v!=null && v>0);
-  const avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
+  let avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
+  let avgFromEngine=false;
+  try{ const Ef=fvEngine(); if(Ef&&Ef.fv!=null){ avgFV=Ef.fv; avgFromEngine=true; } }catch(e){}
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
   LAST_FAIR_VALUE={avgFV,upsidePct};
 
@@ -5011,7 +5016,7 @@ window.renderFairValueSolidity=function(rows){
     card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
     card(grahamNA?"Graham FV (non applicabile)":"Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--",grahamNA?"var(--dim)":"var(--txt)")+
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
-    card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
+    card(avgFromEngine?"Fair Value Medio (consolidato)":"Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
     card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20)+
     card("🎯 Target Analisti", analystTargetVal!=null?STOCK.currency+" "+analystTargetVal.toFixed(2):"--","#4fa3ff")+
     card("Prezzo vs Target Analisti", analystUpsidePct!=null?(analystUpsidePct>=0?"+":"")+analystUpsidePct.toFixed(1)+"%":"--", analystUpsidePct>0?"#00d4b8":"#ff6b6b");
