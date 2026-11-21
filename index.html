@@ -7597,6 +7597,20 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
   const avgCorr=picked.length?picked.reduce((a,m)=>a+m.corr,0)/picked.length:0;
   const robustness=Math.max(1,Math.min(5,Math.round(avgCorr*4+ (picked.length>=6?1:0))));
 
+  // ── Significatività: i match battono un periodo qualsiasi dello stesso titolo? ──
+  const wil=(k,n)=>{ if(!n) return null; const z=1.96,ph=k/n,d=1+z*z/n,c=(ph+z*z/(2*n))/d,m=z*Math.sqrt(ph*(1-ph)/n+z*z/(4*n*n))/d; return [Math.max(0,c-m)*100,Math.min(1,c+m)*100]; };
+  const med=a=>{ if(!a.length) return null; const b=[...a].sort((x,y)=>x-y),h=b.length>>1; return b.length%2?b[h]:(b[h-1]+b[h])/2; };
+  const qnt=(a,q)=>{ const b=[...a].sort((x,y)=>x-y); if(!b.length) return null; const i=(b.length-1)*q,lo=Math.floor(i),hi=Math.ceil(i); return b[lo]+(b[hi]-b[lo])*(i-lo); };
+  const baseRets=[]; for(let i=0;i+queryLen-1+forwardLen<n;i+=3){ const e=i+queryLen-1; baseRets.push((closes[e+forwardLen]/closes[e]-1)*100); }
+  const baseWin=baseRets.length?baseRets.filter(v=>v>0).length/baseRets.length:null;
+  const mr=picked.map(m=>m.finalReturn);
+  const indep=[]; [...picked].sort((a,b)=>a.start-b.start).forEach(m=>{ if(!indep.length||m.start-indep[indep.length-1].start>=Math.max(forwardLen,queryLen)) indep.push(m); });
+  const nWin=bullish.length, nM=picked.length;
+  let zStat=null; if(baseWin!=null&&nM>0&&baseWin>0&&baseWin<1) zStat=((nWin/nM)-baseWin)/Math.sqrt(baseWin*(1-baseWin)/nM);
+  const stats={ n:nM, nIndep:indep.length, winPct:nM?nWin/nM*100:null, ci:wil(nWin,nM), baseWinPct:baseWin!=null?baseWin*100:null, baseMedian:med(baseRets), baseN:baseRets.length,
+    medRet:med(mr), q25:qnt(mr,.25), q75:qnt(mr,.75), z:zStat,
+    verdict:(nM<30||zStat==null||Math.abs(zStat)<1.96)?"nessun vantaggio statistico":(zStat>0?"vantaggio rialzista (da validare)":"vantaggio ribassista (da validare)") };
+
   function avgPath(arr){
     if(arr.length===0) return null;
     const maxLen=Math.max(...arr.map(m=>m.forward.length));
@@ -7607,7 +7621,7 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
 
   return { queryNorm, queryStart, matches:picked, bullish, bearish, probability, robustness, avgCorr,
     avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null,
-    minCorr, bestAvailableCorr, totalCandidates, totalStrong:strongCandidates.length, topK };
+    minCorr, bestAvailableCorr, totalCandidates, totalStrong:strongCandidates.length, topK, stats };
 }
 
 // ── VOLATILITÀ EWMA & CONO DI PREZZO ────────────────────────────────
@@ -8337,7 +8351,14 @@ window.runPatternSearch=async function(){
     card("Probabilità Rialzo", result.probability!=null?result.probability.toFixed(0)+"%":"--", probCol, result.probability>=70 && result.robustness>=3)+
     card("Robustezza", "★".repeat(result.robustness)+"☆".repeat(5-result.robustness), "#ffd23f")+
     card("Correlazione Media", (result.avgCorr*100).toFixed(0)+"%", "var(--dim)")+
-    card("N. Match Trovati", result.matches.length, "var(--dim)");
+    card("N. Match Trovati", result.matches.length, "var(--dim)")+
+    (()=>{ const st=result.stats; if(!st) return ""; const f=v=>v==null?"--":(v>=0?"+":"")+v.toFixed(1)+"%"; const ok=st.verdict.indexOf("nessun")<0; const col=ok?"#00d4b8":"#ff9f1c";
+      return `<div style="grid-column:1/-1;background:rgba(255,159,28,0.07);border:1px solid ${col}55;border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.6;text-align:left;">
+        <b style="color:${col};">📐 Significatività statistica: ${st.verdict}</b><br>
+        Probabilità di rialzo <b>${st.winPct.toFixed(0)}%</b> su ${st.n} match${st.ci?` (intervallo di confidenza 95%: ${st.ci[0].toFixed(0)}–${st.ci[1].toFixed(0)}%)`:""} · un periodo qualsiasi di questo titolo sale nel <b>${st.baseWinPct!=null?st.baseWinPct.toFixed(0)+"%":"--"}</b> dei casi (${st.baseN} finestre)<br>
+        Esito mediano dopo i match <b>${f(st.medRet)}</b> (metà dei casi tra ${f(st.q25)} e ${f(st.q75)}) · mediana di un periodo qualsiasi <b>${f(st.baseMedian)}</b><br>
+        Casi indipendenti (non sovrapposti): <b>${st.nIndep}</b> su ${st.n}${st.z!=null?` · z = ${st.z.toFixed(2)} (serve oltre ±1,96)`:""}<br>
+        <span style="color:var(--dim);">Il confronto giusto non è col 50%, ma con la tendenza storica del titolo: un titolo in forte crescita sale più spesso di una moneta. Sotto i 30 casi il test non è affidabile.</span></div>`; })();
 
   let h=`<table><tr><th>Inizio</th><th>Fine</th><th>Correlazione</th><th>Esito (+${forwardLen}gg)</th><th>Max Ribasso</th><th>Max Rialzo</th></tr>`;
   result.matches.forEach(m=>{
