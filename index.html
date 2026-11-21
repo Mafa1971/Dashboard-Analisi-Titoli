@@ -764,6 +764,9 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 <option value="0.85">85% (solo match quasi identici)</option>
               </select>
             </label>
+            <label style="font-size:11px;color:var(--dim);">Max match:
+              <select id="patTopK"><option value="8" selected>8</option><option value="12">12</option><option value="20">20</option><option value="30">30</option></select>
+            </label>
             <button class="btn primary" onclick="runPatternSearch()">🔍 CERCA PATTERN SIMILI</button>
           </div>
           <div id="patStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
@@ -4824,7 +4827,7 @@ function fvEngine(){
   if(!STOCK) return null;
   const px=_px(), q=window._quickRatios||{};
   const rows=(typeof LAST_FUND_ROWS!=="undefined"&&LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===STOCK.ticker)?LAST_FUND_ROWS:null;
-  const models=[]; const add=(id,name,val,w,note)=>models.push({id,name,val:(val!=null&&isFinite(val)&&val>0)?val:null,w,note});
+  const models=[]; const add=(id,name,val,w,note)=>models.push({id,name,val:(val!=null&&isFinite(val)&&val>0)?val:null,w,note,na:false});
   const priceAt=(ds)=>{ const t=new Date(ds).getTime(); if(!isFinite(t)) return null; let bi=0,bd=Infinity; STOCK.dates.forEach((d,i)=>{ const df=Math.abs(d.getTime()-t); if(df<bd){ bd=df; bi=i; } }); return bd<=200*86400000?STOCK.closes[bi]:null; };
   if(rows){
     const last=rows[rows.length-1];
@@ -4847,9 +4850,12 @@ function fvEngine(){
     if(pss.length>=3&&last.revenue>0&&shares){ const m=_pctl(pss,.5); add("ps","P/S storico × ricavi per azione",m*last.revenue/shares,0.5,`P/S mediano storico ${_fx(m,1)}x su ${pss.length} anni × ricavi/azione ${_fx(last.revenue/shares)}`); }
     if(eps&&gc!=null&&gc>0) add("lynch","Peter Lynch (EPS × crescita)",eps*gc,0.5,`EPS ${_fx(eps)} × crescita ${_fx(gc,1)}% (cappata 25%)`);
     const bv=(last.totalEquity!=null&&last.sharesOutstanding)?last.totalEquity/last.sharesOutstanding:null;
-    if(eps&&eps>0&&bv&&bv>0) add("graham","Numero di Graham (conservativo)",Math.sqrt(22.5*eps*bv),0.25,`√(22,5 × EPS ${_fx(eps)} × valore contabile ${_fx(bv)}) — pensato per aziende mature, penalizza la crescita`);
+    if(eps&&eps>0&&bv&&bv>0){
+      add("graham","Numero di Graham (conservativo)",Math.sqrt(22.5*eps*bv),0.25,`√(22,5 × EPS ${_fx(eps)} × valore contabile ${_fx(bv)}) — pensato per aziende mature, penalizza la crescita`);
+      if(px/bv>5){ const gm=models[models.length-1]; gm.na=true; gm.note+=` · NON APPLICABILE: il prezzo vale ${_fx(px/bv,1)} volte il valore contabile (oltre 5×): marchio, intangibili o buyback rendono il patrimonio contabile poco significativo, quindi non entra nella media`; }
+    }
   }
-  const vals=models.filter(m=>m.val);
+  const vals=models.filter(m=>m.val&&!m.na);
   let fv=null,low=null,high=null,conf="nessuna",kept=[];
   if(vals.length){
     const med=_pctl(vals.map(m=>m.val),.5);
@@ -4868,9 +4874,12 @@ function fvEngine(){
   if(okv(man)) analyst=Object.assign({},yh||{low:null,high:null,n:null,rec:null},{mean:man,src:"inserito da te",manualDiff:null,yahooMean:yh?yh.mean:null});
   else if(yh) analyst=yh;
   let tgt=null,divergence=false,ratio=null;
-  if(fv!=null&&analyst){ ratio=analyst.mean/fv; divergence=ratio>2||ratio<0.5; let wa=(analyst.n>=10)?0.5:((analyst.n>=5)?0.4:0.3); if(divergence) wa=Math.min(wa,0.25); tgt=(1-wa)*fv+wa*analyst.mean; if(analyst.low!=null) tgt=Math.max(tgt,analyst.low); if(analyst.high!=null) tgt=Math.min(tgt,analyst.high); }
+  let clamped=null;
+  if(fv!=null&&analyst){ ratio=analyst.mean/fv; divergence=ratio>2||ratio<0.5; let wa=(analyst.n>=10)?0.5:((analyst.n>=5)?0.4:0.3);
+    if(conf==="bassa"&&analyst.n>=5) wa=Math.max(wa,0.7); else if(divergence) wa=Math.min(wa,0.25);
+    tgt=(1-wa)*fv+wa*analyst.mean; if(analyst.low!=null&&tgt<analyst.low){ tgt=analyst.low; clamped="minimo"; } if(analyst.high!=null&&tgt>analyst.high){ tgt=analyst.high; clamped="massimo"; } }
   else if(fv!=null) tgt=fv; else if(analyst) tgt=analyst.mean;
-  return {px,models,fv,low,high,conf,kept:kept.length,analyst,tgt,upside:tgt!=null?(tgt/px-1)*100:null,divergence,ratio,hasRows:!!rows};
+  return {px,models,fv,low,high,conf,kept:kept.length,analyst,tgt,clamped,upside:tgt!=null?(tgt/px-1)*100:null,divergence,ratio,hasRows:!!rows};
 }
 function fvFillTargetBoxes(E){
   if(!STOCK||!E||E.tgt==null) return;
@@ -4899,7 +4908,7 @@ function renderFvConsolidated(){
   const cards=card("Fair Value consolidato",f(E.fv),"#ffd23f")+card("Intervallo dei modelli",E.low!=null?`${E.low.toFixed(2)} – ${E.high.toFixed(2)}`:"--")+card("Confidenza",E.conf+(E.kept?` (${E.kept} modelli)`:""),cc)+
     card("Target analisti"+(a?` (${a.src}${a.n?`, ${a.n} analisti`:""})`:""),a?f(a.mean):"--","#4fa3ff")+card("Range analisti",a&&a.low!=null?`${a.low.toFixed(2)} – ${a.high.toFixed(2)}`:"--")+
     card("🎯 Target realistico",f(E.tgt),"#00d4b8")+card("Potenziale vs prezzo",E.upside!=null?(E.upside>=0?"+":"")+E.upside.toFixed(1)+"%":"--",E.upside>0?"#00d4b8":"#ff6b6b");
-  const rows=E.models.map(m=>`<tr><td style="text-align:left;">${m.name}</td><td>${m.val!=null?m.val.toFixed(2):"n.d."}</td><td>${m.w}</td><td>${m.val==null?"—":(m.kept?"✅ usato":"⚠ scartato (anomalo)")}</td><td style="text-align:left;color:var(--dim);font-size:10px;">${m.note}</td></tr>`).join("");
+  const rows=E.models.map(m=>`<tr><td style="text-align:left;">${m.name}</td><td>${m.val!=null?m.val.toFixed(2):"n.d."}</td><td>${m.w}</td><td>${m.val==null?"—":(m.na?"⊘ non applicabile":(m.kept?"✅ usato":"⚠ scartato (anomalo)"))}</td><td style="text-align:left;color:var(--dim);font-size:10px;">${m.note}</td></tr>`).join("");
   const notes=[];
   if(!E.hasRows) notes.push("Bilanci non ancora caricati: premi «CARICA DATI» per calcolare i modelli di fair value.");
   if(E.divergence) notes.push(`⚠ Modelli e analisti divergono molto (target analisti ${E.ratio.toFixed(1)}× il fair value): il valore è incerto, tratta il target realistico come intervallo, non come numero.`);
@@ -4909,7 +4918,7 @@ function renderFvConsolidated(){
     `<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:8px;">${cards}</div>`+
     (rows?`<div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Modello</th><th>Valore</th><th>Peso</th><th>Stato</th><th style="text-align:left;">Come è calcolato</th></tr>${rows}</table></div>`:"")+
     (notes.length?`<div style="font-size:11px;color:var(--gold);margin-top:6px;">${notes.join("<br>")}</div>`:"")+
-    `<div style="font-size:10px;color:var(--dim);margin-top:6px;">Il target realistico è la media ponderata tra fair value dei modelli (anomali esclusi) e target analisti (peso 30-50% in base al numero di analisti), compresa nel range degli analisti (peso ridotto al 25% se divergono molto dai modelli). Stime indicative, non consigli di investimento.</div>`;
+    `<div style="font-size:10px;color:var(--dim);margin-top:6px;">Il target realistico è la media ponderata tra fair value dei modelli (anomali e non applicabili esclusi) e target analisti (peso 30-50% in base al numero di analisti; 70% se la confidenza dei modelli è bassa; 25% se divergono molto dai modelli con confidenza non bassa), compresa nel range degli analisti.${E.clamped?` <b>Qui il risultato era fuori dal range degli analisti ed è stato portato al ${E.clamped} (${E.tgt.toFixed(2)}): i modelli sono molto più prudenti degli analisti, prendi il valore come riferimento minimo.</b>`:""} Stime indicative, non consigli di investimento.</div>`;
   try{ fvFillTargetBoxes(E); }catch(e){ console.error("target box:",e); }
 }
 let altmanChartObj=null;
@@ -4981,7 +4990,8 @@ window.renderFairValueSolidity=function(rows){
     dcfFV=sum+terminal;
   }
 
-  const fvValues=[lynchFV,dcfFV,grahamFV].filter(v=>v!=null && v>0);
+  const grahamNA=(grahamFV!=null&&bvps>0&&price/bvps>5);
+  const fvValues=[lynchFV,dcfFV,grahamNA?null:grahamFV].filter(v=>v!=null && v>0);
   const avgFV=fvValues.length?fvValues.reduce((a,b)=>a+b,0)/fvValues.length:null;
   const upsidePct=avgFV!=null?((avgFV-price)/price*100):null;
   LAST_FAIR_VALUE={avgFV,upsidePct};
@@ -4999,7 +5009,7 @@ window.renderFairValueSolidity=function(rows){
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("fairValueCardsWrap").innerHTML=
     card("Peter Lynch FV", lynchFV!=null?STOCK.currency+" "+lynchFV.toFixed(2):"--","var(--txt)")+
-    card("Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--","var(--txt)")+
+    card(grahamNA?"Graham FV (non applicabile)":"Graham FV", grahamFV!=null?STOCK.currency+" "+grahamFV.toFixed(2):"--",grahamNA?"var(--dim)":"var(--txt)")+
     card("DCF Semplificato", dcfFV!=null?STOCK.currency+" "+dcfFV.toFixed(2):"--","var(--txt)")+
     card("Fair Value Medio", avgFV!=null?STOCK.currency+" "+avgFV.toFixed(2):"--","#ffd23f")+
     card("Prezzo vs Fair Value", upsidePct!=null?(upsidePct>=0?"+":"")+upsidePct.toFixed(1)+"%":"--", upsidePct>0?"#00d4b8":"#ff6b6b", upsidePct>=20)+
@@ -5022,7 +5032,7 @@ window.renderFairValueSolidity=function(rows){
     if(bvps==null || bvps<=0){
       notes.push("⚠️ Graham FV non disponibile: manca un Valore Contabile per Azione positivo (patrimonio netto/azioni).");
     } else {
-      notes.push(`Graham FV: Numero di Graham classico √(22,5 × EPS × BVPS), BVPS = ${STOCK.currency} ${bvps.toFixed(2)}.`);
+      notes.push(`Graham FV: Numero di Graham classico √(22,5 × EPS × BVPS), BVPS = ${STOCK.currency} ${bvps.toFixed(2)}.`+(grahamNA?` ⚠️ Non applicabile: il prezzo è ${(price/bvps).toFixed(1)}× il valore contabile (oltre 5×), tipico di aziende con marchio o intangibili; escluso dal Fair Value Medio.`:""));
     }
     fvGrowthNoteEl.innerHTML=notes.join("<br>");
   }
@@ -7592,7 +7602,7 @@ function computePatternMatches(dates,closes,queryLen,forwardLen,topK=8,minGapDay
 
   return { queryNorm, queryStart, matches:picked, bullish, bearish, probability, robustness, avgCorr,
     avgLongPath:avgPath(bullish), avgShortPath:avgPath(bearish), mostCorrelated:picked[0]||null,
-    minCorr, bestAvailableCorr, totalCandidates };
+    minCorr, bestAvailableCorr, totalCandidates, totalStrong:strongCandidates.length, topK };
 }
 
 // ── VOLATILITÀ EWMA & CONO DI PREZZO ────────────────────────────────
@@ -8257,12 +8267,13 @@ window.runPatternSearch=async function(){
   const queryLen=parseInt(el("patQueryLen").value);
   const forwardLen=parseInt(el("patForwardLen").value);
   const minCorr=parseFloat(el("patMinCorr")?.value)||0.65;
+  const topKSel=parseInt(el("patTopK")?.value)||8;
   el("patStatus").textContent="⏳ Ricerca pattern simili nello storico...";
   el("patResultsWrap").style.display="none";
   el("patSampleWarning").style.display="none";
 
   await new Promise(r=>setTimeout(r,30)); // lascia respirare la UI prima del calcolo (può essere pesante su storici lunghi)
-  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,8,15,minCorr);
+  const result=computePatternMatches(STOCK.dates,STOCK.closes,queryLen,forwardLen,topKSel,15,minCorr);
   LAST_PATTERN_RESULT = result;
   if(!result){
     el("patStatus").textContent="❌ Storico insufficiente per questa combinazione di lunghezze — prova con periodi più corti o carica più storico (tab Grafico → Ultimi N anni).";
@@ -8273,7 +8284,7 @@ window.runPatternSearch=async function(){
     el("patResultsWrap").style.display="none";
     return;
   }
-  el("patStatus").textContent=`✅ Trovati ${result.matches.length}${result.matches.length<8?` (su un massimo di 8)`:""} match storici con correlazione ≥${(result.minCorr*100).toFixed(0)}% (media ${(result.avgCorr*100).toFixed(0)}%, su ${result.totalCandidates} periodi storici esaminati)`;
+  el("patStatus").textContent=`✅ Trovati ${result.matches.length}${result.matches.length>=result.topK?` (limite di ${result.topK} raggiunto: ${result.totalStrong} periodi superano la soglia, i migliori distanziati di almeno 15 sedute — alza «Max match» per vederne di più)`:` (su un massimo di ${result.topK})`} match storici con correlazione ≥${(result.minCorr*100).toFixed(0)}% (media ${(result.avgCorr*100).toFixed(0)}%, su ${result.totalCandidates} periodi storici esaminati)`;
   el("patResultsWrap").style.display="block";
   if(result.matches.length<3){
     el("patSampleWarning").style.display="block";
