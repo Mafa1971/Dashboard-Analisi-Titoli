@@ -1369,6 +1369,9 @@ window.switchTab=function(name){
   el("tabBtn"+name).classList.add("active");
   const tn = el("tn"+name); if(tn) tn.classList.add("active");
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
+  if(name==="Bilancio" && STOCK && typeof LAST_FUND_ROWS!=="undefined" && LAST_FUND_ROWS && window._fundTicker===STOCK.ticker){
+    setTimeout(()=>{ try{ renderFairValueSolidity(LAST_FUND_ROWS); renderPriceFundamentalsChart(LAST_FUND_ROWS); renderValueGeneration(LAST_FUND_ROWS); renderPiotroski(LAST_FUND_ROWS); }catch(e){ console.error("Bilancio redraw:",e); } },30);
+  }
   if(name==="Markov" && STOCK) renderMarkov();
   if(name==="Ergodicita" && STOCK){ renderRisk(); renderErgodicita(); }
   if(name==="Storico") renderHistoryTab();
@@ -2284,7 +2287,7 @@ async function rpBilancio(){
   const tk=STOCK.ticker, has=()=>LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===tk;
   if(!has() && !_fundTried[tk]){
     _fundTried[tk]=true;
-    try{ await loadFundamentals(); }catch(e){ console.error("Bilancio:",e); }
+    try{ await loadFundamentals({yahooOnly:true}); }catch(e){ console.error("Bilancio:",e); }
   }
   if(!has()) return {nd:true,val:'dati di bilancio non disponibili per questo titolo · <a href="javascript:void(0)" onclick="riepLoadFund()" style="color:var(--gold);">riprova</a>'};
   const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
@@ -4141,13 +4144,22 @@ async function tryFetchFundamentalsFromYahoo(ticker){
   }catch(e){ return null; }
 }
 
-window.loadFundamentals=async function(){
-  if(!STOCK){ alert("Analizza prima un titolo"); return; }
+let _fundInflight=null;
+window.loadFundamentals=function(opts){
+  if(!STOCK){ alert("Analizza prima un titolo"); return Promise.resolve(); }
+  const tk=STOCK.ticker;
+  if(_fundInflight && _fundInflight.tk===tk) return _fundInflight.p;
+  const p=_loadFundamentalsCore(opts||{}).finally(()=>{ if(_fundInflight&&_fundInflight.p===p) _fundInflight=null; });
+  _fundInflight={tk,p}; return p;
+};
+async function _loadFundamentalsCore(opts){
+  if(!STOCK){ return; }
   el("fundStatus").textContent="⏳ Provo Yahoo (gratis, senza limiti, buona copertura anche per titoli non-USA)...";
   try{
     let rows=await tryFetchFundamentalsFromYahoo(STOCK.ticker);
     let fundSource="Yahoo (gratis)";
 
+    if(!rows && opts.yahooOnly){ el("fundStatus").textContent="⚠️ Yahoo non ha i bilanci di questo titolo. Premi CARICA DATI per provare Alpha Vantage (usa 3 richieste del limite giornaliero)."; return; }
     if(!rows){
       el("fundStatus").textContent="⏳ Yahoo non disponibile per questo titolo, provo Alpha Vantage (3 richieste, con pausa per rispettare il limite 1/sec)...";
       // Le richieste vanno spaziate: il piano gratuito Alpha Vantage accetta max 1 richiesta/secondo
@@ -4188,19 +4200,20 @@ window.loadFundamentals=async function(){
       fundSource="Alpha Vantage (fallback)";
     }
 
-    renderFundamentals(rows);
     LAST_FUND_ROWS=rows; window._fundTicker=STOCK?STOCK.ticker:null;
-    renderPriceFundamentalsChart(rows);
-    renderValueGeneration(rows);
-    renderFairValueSolidity(rows);
-    renderPiotroski(rows);
-    renderImportedQualityCompare();
+    const _safe=(f,n)=>{ try{ f(); }catch(e){ console.error("Bilancio "+n+":",e); } };
+    _safe(()=>renderFundamentals(rows),"tabella");
+    _safe(()=>renderPriceFundamentalsChart(rows),"prezzo");
+    _safe(()=>renderValueGeneration(rows),"valore");
+    _safe(()=>renderFairValueSolidity(rows),"fair value");
+    _safe(()=>renderPiotroski(rows),"piotroski");
+    _safe(()=>renderImportedQualityCompare(),"confronto");
     saveFundamentalsToHistory(STOCK.ticker, rows); // persiste anno per anno nello Storico, non solo in sessione
     el("fundStatus").textContent=`✅ ${rows.length} anni di bilancio caricati per ${STOCK.ticker} — fonte: ${fundSource}`;
   }catch(err){
     el("fundStatus").textContent="❌ Errore: "+err.message+(err.message.includes("limite")||err.message.toLowerCase().includes("rate")?"":" (se il messaggio parla di frequenza richieste, aspetta un minuto e riprova)");
   }
-};
+}
 
 function fmtBig(v){
   if(v==null) return "--";
