@@ -2413,6 +2413,7 @@ function rpRR(){
   let why=null;
   if(rrL<1.5&&rrS<1.5) why=`nessun lato offre almeno 1,5:1 con i livelli noti: nessun ingresso con un vantaggio chiaro, meglio attendere una zona migliore`;
   else why=`il rapporto migliore è ${rrL>=rrS?"Long":"Short"} (${Math.max(rrL,rrS).toFixed(1)}:1)`;
+  { const wide=[]; if(Math.abs(s15.lo-0.5*atr-px)/px>0.25) wide.push("Long"); if(Math.abs(r15.hi+0.5*atr-px)/px>0.25) wide.push("Short"); if(wide.length) why+=`. Stop molto largo (oltre 25% dal prezzo) per ${wide.join(" e ")}: dimensiona la posizione di conseguenza`; }
   return {val:`ATR ${f(atr)} · Long: ${tL} | Short: ${tS}`, why, rrL, rrS,
     refL:"stop sotto il primo supporto a ≥ 1,5 ATR (−0,5 ATR), target alla prima resistenza a ≥ 1,5 ATR: R/R ≥ 2 ✅ · 1–2 ➖ · < 1 ❌",
     refS:"stop sopra la prima resistenza a ≥ 1,5 ATR (+0,5 ATR), target al primo supporto a ≥ 1,5 ATR: stessa scala", L:sc(rrL), S:sc(rrS)};
@@ -2434,7 +2435,7 @@ function rpLivelli(){
       const s200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0], tDown=s200!=null&&px<s200;
       if(z.distAtr<=1.5&&z.strength>=2){ L=tDown?2:1; why=`prezzo dentro/vicino alla zona ${rng} con ${z.strength} metodi in confluenza: possibile rimbalzo`+(tDown?" (🟡 tattico, contro trend)":""); }
       else { L=(dB!=null&&dB>4)?-1:0; why=`nessun supporto POC vicino: la prima zona di attesa è ${rng} (${_sg(z.distPct)}%, ${_fx(z.distAtr,1)} ATR, ${z.methods.join(" + ")}). Qui valuta un rimbalzo, con conferma di inversione`; }
-      if(r.zones[1]) why+=`. Poi: ${r.zones.slice(1,3).map(q=>_fx(q.mid)+" ("+_sg(q.distPct,0)+"%)").join(", ")}`;
+      if(r.zones[1]) why+=`. Poi: ${r.zones.slice(1,3).map(q=>((q.hi-q.lo>0.005*px)?_fx(q.lo)+"–"+_fx(q.hi):_fx(q.mid))+" ("+_sg(q.distPct,0)+"%)").join(", ")}`;
     } else if(r){ t.push("nessuna zona alternativa sotto: titolo ai minimi"); why="prezzo ai minimi, senza supporti storici noti sotto"; } }catch(e){ console.error("altSupport:",e); }
   }
   return {val:t.join(" · "), why, refL:"supporto POC entro 1,5 ATR (❌ se oltre 4 ATR). Senza POC vicino: zona alternativa (swing, Fibonacci, minimi, numeri tondi) entro 1,5 ATR con almeno 2 metodi → 🟡/✅", refS:"resistenza POC entro 1,5 ATR (❌ se oltre 4 ATR)",
@@ -2657,8 +2658,10 @@ function riepRender(){
   const foot=el("riepFoot"); if(!foot) return;
   if(!n){ foot.innerHTML=""; return; }
   let read="Quadro misto: nessuna direzione prevale con chiarezza.";
-  if(okL>=okS+3&&okL/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#00d4b8;\">Long</strong>.";
-  else if(okS>=okL+3&&okS/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#ff6b6b;\">Short</strong>.";
+  const netL=okL-badL, netS=okS-badS; let dir=null;
+  if(netL-netS>=4&&netL>0){ dir="Long"; read="Direzione prevalente: <strong style=\"color:#00d4b8;\">Long</strong> (saldo allineati−contrari: Long "+netL+", Short "+netS+")."; }
+  else if(netS-netL>=4&&netS>0){ dir="Short"; read="Direzione prevalente: <strong style=\"color:#ff6b6b;\">Short</strong> (saldo allineati−contrari: Short "+netS+", Long "+netL+")."; }
+  read+=riepEntryQuality(dir);
   foot.innerHTML=riepSynth()+`<div style="margin-top:8px;"><strong style="color:#00d4b8;">Long</strong>: ${okL}/${n} allineati · ${badL} contrari &nbsp;|&nbsp; <strong style="color:#ff6b6b;">Short</strong>: ${okS}/${n} allineati · ${badS} contrari</div><div style="color:var(--dim);font-size:11px;margin-top:4px;">${read} Lettura automatica a soglie fisse: non è un consiglio di investimento.</div>`;
 }
 const RIEP_AREA=[
@@ -2689,6 +2692,19 @@ function riepSynth(){
   const lv=g("livelli"); if(lv&&!lv.nd&&/zona alternativa|supporto/.test(lv.val||"")&&lv.why&&/Poi:/.test(lv.why)){ const m=/Poi: (.*)$/.exec(lv.why); if(m) parts.push("zone successive di attesa: "+m[1]); }
   const sentence=parts.length?`<div style="margin:8px 0;padding:8px 10px;border-left:3px solid var(--gold);background:rgba(255,210,63,0.07);"><strong style="color:var(--gold);">Sintesi:</strong> ${parts.join("; ")}.</div>`:"";
   return `<div style="font-weight:700;color:var(--gold);margin:6px 0 4px;">Sintesi per area</div><div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Area</th><th>Long</th><th>Short</th><th style="text-align:left;">Lettura</th></tr>${rowsHtml}</table></div>${sentence}`;
+}
+// Qualità dell'ingresso: la direzione può essere chiara, ma l'ingresso ora può essere sfavorevole
+function riepEntryQuality(dir){
+  const g=id=>_riepRows[id]; const rs=g("rsi"), zs=g("zscore"), rr=g("rr");
+  const over=(rs&&/ipercomprato/.test(rs.val||""))||(zs&&/ESTREMO/.test(zs.val||"")&&/Z \d/.test(zs.val||""));
+  const under=(rs&&/ipervenduto estremo/.test(rs.val||""))||(zs&&/ESTREMO/.test(zs.val||"")&&/Z -/.test(zs.val||""));
+  const why=[];
+  if(dir==="Short"&&under) why.push("ipervenduto estremo: uno Short ora arriva in ritardo, un rimbalzo è probabile");
+  if(dir==="Long"&&over) why.push("ipercomprato estremo: un Long ora arriva in ritardo, un ritracciamento è probabile");
+  if(rr&&!rr.nd&&rr.rrL!=null&&dir){ const v=dir==="Short"?rr.rrS:rr.rrL; if(v<1.5) why.push(`rischio/rendimento ${dir} ${v.toFixed(1)}:1, sotto 1,5:1`); }
+  if(!dir) return "";
+  const tail=dir==="Short"?"attendi un rimbalzo verso una resistenza per entrare con un rapporto migliore":"attendi un ritracciamento verso un supporto per entrare con un rapporto migliore";
+  return why.length?` <div style="margin-top:4px;"><strong style="color:var(--gold);">Qualità dell'ingresso ora: sfavorevole</strong> (${why.join("; ")}) → ${tail}.</div>`:` <div style="margin-top:4px;"><strong style="color:#00d4b8;">Qualità dell'ingresso ora: accettabile</strong> (nessun estremo e R/R adeguato).</div>`;
 }
 window.riepilogoStart=async function(force){
   if(!STOCK||!isOwner()||!el("riepWrap")) return;
