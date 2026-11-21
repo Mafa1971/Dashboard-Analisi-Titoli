@@ -105,6 +105,27 @@ exports.handler = async function (event) {
     }
   }
 
+  // type=calendar: prossima data dei risultati trimestrali (calendarEvents) e storico
+  // delle sorprese sugli utili (earningsHistory). Endpoint separato da quoteSummary così
+  // un eventuale errore qui non tocca il resto dell'app.
+  if (type === "calendar") {
+    const modules = "calendarEvents,earningsHistory";
+    try {
+      const res = await fetchQuoteSummaryAuth(ticker, modules);
+      if (!res.ok) {
+        return { statusCode: res.status, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: `Yahoo calendar ha risposto con status ${res.status}` }) };
+      }
+      const data = await res.json();
+      return {
+        statusCode: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600" },
+        body: JSON.stringify({ calendar: data })
+      };
+    } catch (err) {
+      return { statusCode: 500, headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ error: err.message }) };
+    }
+  }
+
   // type=fundamentals: bilanci annuali (conto economico, stato patrimoniale,
   // flussi di cassa) via l'endpoint "fundamentals-timeseries" — lo stesso
   // che alimenta oggi la pagina Financials di finance.yahoo.com, con una
