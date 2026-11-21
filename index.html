@@ -2205,8 +2205,8 @@ function _renderPocTableCore(){
 // Una riga per analisi: valore attuale · riferimento per l'ingresso · spunte Long/Short.
 // L / S: 1 = allineato, -1 = contrario, 0 = neutro, 2 = favorevole ma contro trend.
 let _riepToken=0, _riepRows={};
-const RIEP_ORDER=["trend","cicli","livelli","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
-const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",livelli:"Livelli POC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
+const RIEP_ORDER=["trend","cicli","setup","livelli","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
+const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
 const RIEP_TAB={target:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
 const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
 const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
@@ -2242,20 +2242,131 @@ function rpTrend(){
     refL:"prezzo sopra SMA200 e: SMA21 > SMA100 > SMA200, oppure prezzo sopra la SMA21 con SMA21 in salita", refS:"l'opposto: sotto SMA200 e: 21 < 100 < 200, oppure prezzo sotto la SMA21 con SMA21 in discesa",
     L: up?1:(px<s200?-1:0), S: dn?1:(px>s200?-1:0)};
 }
+// ---- Cicli Bull/Bear (stile "Bull & Bear Market Dashboard") ----
+// Bear: calo ≥ T% dal massimo; il bear finisce quando il prezzo risale ≥ R% dal minimo.
+// Bull brevi (< minBull sedute) tra due bear vengono assorbiti (rimbalzi di un bear).
+function bbCycles(closes,T,R,minBull){
+  const n=closes.length; if(n<120) return null;
+  const cyc=[]; let state="bull", startIdx=0, peakIdx=0, troughIdx=0;
+  for(let i=1;i<n;i++){
+    const c=closes[i]; if(c==null) continue;
+    if(state==="bull"){
+      if(c>closes[peakIdx]) peakIdx=i;
+      if(c<=closes[peakIdx]*(1-T/100)){ cyc.push({type:"bull",s:startIdx,e:peakIdx}); state="bear"; startIdx=peakIdx; troughIdx=i; }
+    } else {
+      if(c<closes[troughIdx]) troughIdx=i;
+      if(c>=closes[troughIdx]*(1+R/100)){ cyc.push({type:"bear",s:startIdx,e:troughIdx}); state="bull"; startIdx=troughIdx; peakIdx=i; }
+    }
+  }
+  const open={type:state,s:startIdx,e:n-1};
+  const argmin=(a,b)=>{ let m=a; for(let i=a;i<=b;i++) if(closes[i]<closes[m]) m=i; return m; };
+  let ch=true;
+  while(ch){ ch=false;
+    for(let k=1;k<cyc.length-1;k++){
+      if(cyc[k].type==="bull"&&cyc[k].e-cyc[k].s<minBull&&cyc[k-1].type==="bear"&&cyc[k+1].type==="bear"){
+        const s0=cyc[k-1].s, e0=cyc[k+1].e; cyc.splice(k-1,3,{type:"bear",s:s0,e:argmin(s0,e0)}); ch=true; break; } }
+  }
+  if(open.type==="bear"&&cyc.length>=2){ const l=cyc[cyc.length-1], pr=cyc[cyc.length-2];
+    if(l.type==="bull"&&l.e-l.s<minBull&&pr.type==="bear"){ cyc.pop(); cyc.pop(); open.s=pr.s; } }
+  cyc.forEach(x=>{
+    x.days=x.e-x.s;
+    if(x.type==="bear"){ x.ret=closes[x.e]/closes[x.s]-1; x.rec=null; for(let j=x.e+1;j<n;j++){ if(closes[j]>=closes[x.s]){ x.rec=j-x.e; break; } } }
+    else x.ret=closes[x.e]/closes[x.s]-1;
+  });
+  return {cyc,open,T,R};
+}
+function _pctl(arr,p){ const a=arr.filter(v=>v!=null&&isFinite(v)).slice().sort((x,y)=>x-y); if(!a.length) return null; const i=(a.length-1)*p, lo=Math.floor(i), hi=Math.ceil(i); return a[lo]+(a[hi]-a[lo])*(i-lo); }
 function rpCicli(){
-  const C=LAST_CYCLES;
-  if(!C||!C.current) return {nd:true,val:"nessun ciclo rilevato"+(C?" (soglia "+C.threshold+"%)":"")};
-  const c=C.current, up=c.type==="up", ref=up?C.up:C.down, px=_px();
-  if(!ref||ref.avgReturn==null||!(ref.count>=3)) return {nd:true,val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% — pochi cicli storici per un riferimento`};
-  const ph=Math.abs(c.retPct)/Math.abs(ref.avgReturn);
+  const c=STOCK.closes, n=c.length, isIdx=/^\^/.test(STOCK.ticker||"");
+  let res=null, bears=[], bulls=[];
+  for(const T of (isIdx?[20,15]:[30,20,15])){
+    res=bbCycles(c,T,Math.min(20,T),30);
+    if(res){ bears=res.cyc.filter(x=>x.type==="bear"); bulls=res.cyc.filter(x=>x.type==="bull"); if(bears.length>=3&&bulls.length>=3) break; }
+  }
+  if(!res) return {nd:true,val:"storico insufficiente per individuare i cicli (servono almeno ~120 sedute)"};
+  const o=res.open, T=res.T, fd=i=>STOCK.dates[i].toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"2-digit"});
+  const pc=x=>x==null?"n.d.":(x*100).toFixed(1)+"%";
+  const small=(bears.length<5||bulls.length<5)?` · pochi cicli storici (${bears.length} bear, ${bulls.length} bull)`:"";
+  const recs=bears.filter(b=>b.rec!=null).map(b=>b.rec), recTxt=bears.length?`; i bear passati hanno recuperato il massimo in ${recs.length}/${bears.length} casi${recs.length?` (mediana ${Math.round(_pctl(recs,.5))} sedute dal minimo)`:""}`:"";
+  if(o.type==="bear"){
+    let ti=o.s; for(let i=o.s;i<n;i++) if(c[i]<c[ti]) ti=i;
+    const peak=c[o.s], trough=c[ti], depthNow=c[n-1]/peak-1, depthMax=trough/peak-1, bounce=c[n-1]/trough-1, days=n-1-o.s;
+    if(bears.length<3) return {nd:true,val:`BEAR da ${fd(o.s)} (${days} sedute): ${pc(depthNow)} dal massimo ${_fx(peak)} · solo ${bears.length} bear storici con soglia ${T}%: troppo pochi per i percentili`};
+    const dAbs=bears.map(b=>Math.abs(b.ret)), p50=_pctl(dAbs,.5), p90=_pctl(dAbs,.9), dd50=_pctl(bears.map(b=>b.days),.5), dd90=_pctl(bears.map(b=>b.days),.9);
+    const mAbs=Math.abs(depthMax), rank=Math.round(dAbs.filter(v=>v<=mAbs).length/dAbs.length*100);
+    let L,S,why;
+    if(mAbs>p90){ L=0; S=0; why=`profondità oltre il P90 dei bear passati (${pc(-p90)}): evento raro, la statistica storica non è più una guida affidabile${days>dd90?"; anche la durata supera il P90":""}`; }
+    else if(mAbs>=p50){ L=2; S=0; why=`ribasso oltre la profondità mediana dei bear passati (${pc(-p50)}) ma entro il P90: un rimbalzo è possibile, tuttavia il ciclo resta ribassista (Long 🟡 contro trend)`; }
+    else { L=-1; S=1; why=`ribasso ancora sotto la profondità mediana dei bear passati (${pc(-p50)}): storicamente c'era più spazio per scendere`; }
+    why+=recTxt;
+    return {val:`BEAR da ${fd(o.s)} (${days} sedute) · ${pc(depthNow)} dal massimo ${_fx(peak)} · minimo ${_fx(trough)} (${pc(depthMax)}) · rimbalzo dal minimo ${_sg(bounce*100)}% · profondità ${rank===0?"inferiore a tutti i":"al "+rank+"° percentile dei"} bear storici (mediana ${pc(-p50)}, P90 ${pc(-p90)}; durata tipica ${Math.round(dd50)} sedute) · soglia bear ${T}%${small}`,
+      why, refL:`bear oltre la profondità mediana storica ma entro il P90 → 🟡 (rimbalzo contro trend); sotto la mediana ❌; oltre il P90 ➖ (evento raro). Soglia bear ${T}%`,
+      refS:"bear sotto la profondità mediana storica (c'è ancora spazio) ✅; oltre → ➖", L, S};
+  } else {
+    let pi=o.s; for(let i=o.s;i<n;i++) if(c[i]>c[pi]) pi=i;
+    const base=c[o.s], gain=c[n-1]/base-1, ddPk=c[n-1]/c[pi]-1, days=n-1-o.s;
+    if(bulls.length<3) return {nd:true,val:`BULL da ${fd(o.s)} (${days} sedute): ${_sg(gain*100)}% dal minimo · solo ${bulls.length} bull storici con soglia ${T}%: troppo pochi per i percentili`};
+    const g50=_pctl(bulls.map(b=>b.ret),.5), g90=_pctl(bulls.map(b=>b.ret),.9), t50=_pctl(bulls.map(b=>b.days),.5);
+    let L,S,why;
+    if(gain>g90){ L=-1; S=1; why=`rialzo oltre il P90 dei bull passati (${pc(g90)}): fase estesa, il rischio di correzione cresce`; }
+    else if(gain>=g50){ L=0; S=0; why=`rialzo oltre la mediana dei bull passati (${pc(g50)}) ma entro il P90: fase matura`; }
+    else { L=1; S=-1; why=`rialzo ancora sotto la mediana dei bull passati (${pc(g50)}): fase relativamente giovane`; }
+    return {val:`BULL da ${fd(o.s)} (${days} sedute) · ${_sg(gain*100)}% dal minimo ${_fx(base)} · ${pc(ddPk)} dal massimo recente ${_fx(c[pi])} · bull storici: mediana ${pc(g50)}, P90 ${pc(g90)}, durata tipica ${Math.round(t50)} sedute · soglia bear ${T}%${small}`,
+      why, refL:"bull sotto il guadagno mediano storico ✅; oltre il P90 ❌ (esteso)", refS:"bull oltre il P90 ✅ (rialzo esteso); sotto la mediana ❌", L, S};
+  }
+}
+// ---- Setup di inversione (checklist stile "Buy the Dip") ----
+function _quadFit(y){
+  const m=y.length, xs=y.map((_,i)=>i/(m-1));
+  let S0=m,S1=0,S2=0,S3=0,S4=0,T0=0,T1=0,T2=0;
+  for(let i=0;i<m;i++){ const x=xs[i],v=y[i]; S1+=x; S2+=x*x; S3+=x*x*x; S4+=x*x*x*x; T0+=v; T1+=x*v; T2+=x*x*v; }
+  const M=[[S4,S3,S2,T2],[S3,S2,S1,T1],[S2,S1,S0,T0]];
+  for(let i=0;i<3;i++){ let mx=i; for(let r=i+1;r<3;r++) if(Math.abs(M[r][i])>Math.abs(M[mx][i])) mx=r; [M[i],M[mx]]=[M[mx],M[i]]; if(Math.abs(M[i][i])<1e-12) return null;
+    for(let r=0;r<3;r++){ if(r===i) continue; const f=M[r][i]/M[i][i]; for(let k=i;k<4;k++) M[r][k]-=f*M[i][k]; } }
+  const a=M[0][3]/M[0][0], b=M[1][3]/M[1][1], c0=M[2][3]/M[2][2];
+  const mean=T0/m; let ssT=0,ssR=0; for(let i=0;i<m;i++){ const f=a*xs[i]*xs[i]+b*xs[i]+c0; ssT+=(y[i]-mean)**2; ssR+=(y[i]-f)**2; }
+  return {a,b,c:c0,r2:ssT>0?1-ssR/ssT:0,vertex:a!==0?-b/(2*a):null};
+}
+function rpSetup(){
+  const c=STOCK.closes, n=c.length;
+  if(n<260) return {nd:true,val:"storico insufficiente (servono almeno ~260 sedute)"};
+  const lb=Math.min(n,756); let pk=n-lb; for(let i=n-lb;i<n;i++) if(c[i]>c[pk]) pk=i;
+  const dd=c[n-1]/c[pk]-1;
+  if(dd>-0.15) return {nd:true,val:`nessun drawdown significativo (${(dd*100).toFixed(1)}% dal massimo degli ultimi 3 anni): il setup di inversione si applica dopo un calo di almeno -15%`};
+  let ti=pk; for(let i=pk;i<n;i++) if(c[i]<c[ti]) ti=i;
+  const trough=c[ti], bounce=c[n-1]/trough-1, troughAge=n-1-ti;
+  const items=[], risks=[];
+  const add=(label,ok,w,detail)=>{ if(ok==null) return; items.push({label,ok,w,detail}); };
+  add("Fondo formato (minimo di almeno 5 sedute fa e rimbalzo ≥ +5%)", troughAge>=5&&bounce>=0.05, 20, `minimo ${_fx(trough)} ${troughAge} sedute fa, rimbalzo ${_sg(bounce*100)}%`);
+  // POC 90 sedute
+  { const m=Math.min(90,n); let lo=Infinity,hi=-Infinity,vs=0; for(let i=n-m;i<n;i++){ lo=Math.min(lo,STOCK.lows[i]); hi=Math.max(hi,STOCK.highs[i]); vs+=(STOCK.volumes[i]||0); }
+    if(vs>0&&hi>lo){ const B=40, bins=new Array(B).fill(0); for(let i=n-m;i<n;i++){ const tp=(STOCK.highs[i]+STOCK.lows[i]+c[i])/3, k=Math.min(B-1,Math.floor((tp-lo)/(hi-lo)*B)); bins[k]+=(STOCK.volumes[i]||0); }
+      let bi=0; for(let k=1;k<B;k++) if(bins[k]>bins[bi]) bi=k; const poc=lo+(bi+.5)*(hi-lo)/B;
+      add("Prezzo sopra il POC delle ultime 90 sedute", c[n-1]>poc, 15, `POC 90 sedute ${_fx(poc)}, prezzo ${_fx(c[n-1])}`); } }
+  { const N=Math.min(60,n), q=_quadFit(c.slice(n-N));
+    if(q) add("Rounding bottom (curvatura a U sulle ultime 60 sedute)", q.a>0&&q.r2>=0.5&&q.vertex!=null&&q.vertex>=0.05&&q.vertex<=0.9, 15, `R² ${(q.r2*100).toFixed(0)}%, ${q.a>0?"curvatura a U":"curvatura a ∩"}`); }
+  { const rs=rsiSeriesCalc(c,14); const win=rs.slice(-15).filter(v=>v!=null); if(win.length){ const mn=Math.min(...win), now=rs[n-1];
+      add("RSI uscito dall'ipervenduto (era sotto 30, ora sopra)", mn<30&&now>30, 15, `RSI ora ${_fx(now,0)}, minimo recente ${_fx(mn,0)}`); } }
+  { const z=computeRegressionZ(c,50), win=z.slice(-15).filter(v=>v!=null), now=z[n-1]; if(win.length&&now!=null){ const mn=Math.min(...win);
+      add("Z-Score rientrato sopra −2 (era sotto)", mn<-2&&now>-2, 15, `Z ora ${_fx(now)}, minimo recente ${_fx(mn)}`); } }
+  const vol=(end)=>{ let s1=0,s2=0,k=0; for(let i=end-29;i<=end;i++){ const r=Math.log(c[i]/c[i-1]); s1+=r; s2+=r*r; k++; } const m=s1/k; return Math.sqrt(Math.max(0,s2/k-m*m))*Math.sqrt(252)*100; };
+  const v0=vol(n-1), v1=vol(n-11);
+  add("Volatilità a 30 sedute in calo rispetto a 10 sedute fa", v0<v1, 10, `${v0.toFixed(1)}% contro ${v1.toFixed(1)}%`);
+  { const s21=smaSeriesCalc(c,21).slice(-1)[0]; if(s21!=null) add("Prezzo sopra la SMA21", c[n-1]>s21, 10, `SMA21 ${_fx(s21)}`); }
+  const tot=items.reduce((a,x)=>a+x.w,0), got=items.reduce((a,x)=>a+(x.ok?x.w:0),0), score=tot?Math.round(got/tot*100):0;
+  if(troughAge<=5) risks.push(`nuovo minimo ${troughAge===0?"oggi":troughAge+" sedute fa"}: il fondo non si è ancora formato`);
+  if(v0>v1*1.05) risks.push(`volatilità a 30 sedute ancora in aumento (${v0.toFixed(1)}% contro ${v1.toFixed(1)}%)`);
+  { let ath=0; for(let i=0;i<n;i++) if(c[i]>c[ath]) ath=i; if(n-1-ath>1260) risks.push(`massimo storico di ${n-1-ath} sedute fa: rischio di declino strutturale`); }
+  const verdict=score>=70?"CONFERMATO":(score>=40?"IN COSTRUZIONE":"ASSENTE");
+  const s200=smaSeriesCalc(c,200).slice(-1)[0], tDown=s200!=null&&c[n-1]<s200;
   let L=0,S=0;
-  if(up){ L=ph<0.4?1:(ph>0.8?-1:0); S=ph>=1.0?1:(ph<0.4?-1:0); }
-  else  { S=ph<0.4?1:(ph>0.8?-1:0); L=ph>=1.0?1:(ph<0.4?-1:0); }
-  const start=px/(1+c.retPct/100), lvl=start*(1+ref.avgReturn/100);
-  const why=up?`rialzo al ${Math.round(ph*100)}% di quello tipico: l'estensione tipica porta a circa ${_fx(lvl)}`
-              :`ribasso al ${Math.round(ph*100)}% della profondità tipica: un ingresso Long diventa più favorevole verso circa ${_fx(lvl)}`;
-  return {val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% · tipico ${_sg(ref.avgReturn)}% in ${Math.round(ref.avgDays)} gg → fase ${Math.round(ph*100)}%`+(ref.count<5?" (pochi cicli)":""),
-    why, refL:"ciclo rialzista appena iniziato (fase < 40%), oppure ribasso già alla profondità tipica (≥ 100%)", refS:"speculare: ribasso appena iniziato, oppure rialzo esaurito (≥ 100%)", L, S};
+  if(score>=70&&troughAge>5) L=tDown?2:1; else if(score<25) L=-1;
+  if(troughAge<=5&&score<30) S=1; else if(score>=70) S=-1;
+  const lines=items.map(x=>`${x.ok?"✅":"❌"} ${x.label} — ${x.detail}`).concat(risks.map(r=>"⚠ "+r));
+  return {val:`Setup ${verdict} · score ${score}/100 · calo ${(dd*100).toFixed(1)}% dal massimo (${_fx(c[pk])}) · ${items.filter(x=>x.ok).length}/${items.length} conferme${risks.length?` · ${risks.length} rischi`:""}`,
+    why:lines.join("<br>"),
+    refL:"score ≥ 70 senza nuovo minimo recente: ✅ (🟡 se il trend è ribassista); da 25 a 69 ➖ (in costruzione, attendi conferma); sotto 25 ❌ (nessuna inversione in corso)",
+    refS:"nuovo minimo negli ultimi 5 giorni con score < 30: ✅ (il ribasso prosegue); score ≥ 70: ❌", L, S};
 }
 function rpLivelli(){
   const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
@@ -2470,9 +2581,9 @@ function rpScore(){
     why:(mid?`punteggio tra 40 e 60: serve almeno 60 per il Long, sotto 40 per lo Short. `:"")+(thin?`Copertura bassa (${sc.coveragePct}%): mancano ${sc.missing.map(k=>SCORE_LABELS[k]||k).join(", ")}, quindi il punteggio è meno affidabile`:"")||null,
     refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
 }
-const RP={trend:rpTrend,cicli:rpCicli,livelli:rpLivelli,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
+const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
 // ordine di calcolo: prima i rapidi, poi quelli che scaricano dati o aggiornano altre tab (regime → benchmark → bilancio → MC → strategia → score)
-const RIEP_RUN=["trend","cicli","livelli","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
+const RIEP_RUN=["trend","cicli","setup","livelli","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
 
 // Ogni riga ha un tempo massimo: se una tab si blocca, le altre righe vanno avanti.
 function _riepRun(id){
