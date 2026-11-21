@@ -27,6 +27,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Manrope',sans-serif;font
 /* Funzioni in anteprima: visibili solo all'account proprietario (vedi isOwner) */
 [data-owner-only]{display:none !important;}
 body.is-owner [data-owner-only]{display:block !important;}
+body.is-owner #ownOpts{display:flex !important;gap:12px 16px;flex-wrap:wrap;align-items:center;}
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap;gap:8px;}
 .hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .btn{padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-family:'Manrope',sans-serif;font-size:11px;font-weight:700;}
@@ -150,6 +151,11 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <span>📉 GRAFICO A CANDELE</span>
             <a id="tvLink" href="#" target="_blank" style="font-size:10px;color:#4fa3ff;text-decoration:none;white-space:nowrap;">📈 Apri su TradingView →</a>
           </div>
+          <div style="position:relative;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn ghost" id="indBtn" aria-expanded="false" onclick="toggleIndPanel(event)" style="font-size:11px;padding:6px 14px;">📊 Indicatori ▾</button>
+            <span id="indSummary" style="font-size:10.5px;color:var(--dim);"></span>
+            <div id="indPanel" hidden style="position:absolute;z-index:40;top:38px;left:0;width:min(960px,100%);max-height:72vh;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:0 14px 36px rgba(0,0,0,.55);">
+          <div style="font-size:10px;letter-spacing:1px;color:var(--gold);text-transform:uppercase;margin-bottom:6px;">Sul grafico</div>
           <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;">
             <label class="chk"><input type="checkbox" id="chkSMA21" checked onchange="toggleIndicator('sma21',this.checked)"> <span style="color:#00d4b8;">■</span> SMA 21</label>
             <label class="chk"><input type="checkbox" id="chkSMA100" checked onchange="toggleIndicator('sma100',this.checked)"> <span style="color:#ff9f1c;">■</span> SMA 100</label>
@@ -165,11 +171,12 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label class="chk"><input type="checkbox" id="chkTrendline" checked onchange="renderICTOverlays()"> <span style="color:#f9c74f;">■</span> Trendline</label>
             <label class="chk"><input type="checkbox" id="chkPattern" checked onchange="renderICTOverlays()"> <span style="color:#f94144;">■</span> Triangoli/Cunei/Flag</label>
             <label class="chk"><input type="checkbox" id="chkBacktestTrades" onchange="renderICTOverlays()"> <span style="color:#00d4b8;">▲</span> Entrate/Uscite Backtest</label>
-            <span data-owner-only style="display:flex;gap:14px;flex-wrap:wrap;">
+            <div data-owner-only style="flex-basis:100%;font-size:10px;letter-spacing:1px;color:var(--gold);text-transform:uppercase;margin-top:8px;">Z-Score · livelli POC · pattern (solo tu)</div>
+            <span data-owner-only id="ownOpts" style="display:flex;gap:14px;flex-wrap:wrap;">
               <label class="chk"><input type="checkbox" id="chkZScore" checked onchange="renderZChart()"> <span style="color:#29b6f6;">■</span> Z-Score regressione</label>
               <label class="chk"><input type="checkbox" id="chkPocStatic" checked onchange="renderPocLevels()"> <span style="color:#ff9f1c;">■</span> POC statici filtrati</label>
-              <label style="font-size:10px;color:var(--dim);">Finestra Z <input type="number" id="zWindow" value="50" min="20" max="1500" style="width:60px;" onchange="renderZChart();renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:50px;" onchange="renderZChart();renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);">Finestra Z <input type="number" id="zWindow" value="50" min="20" max="1500" style="width:72px;" onchange="renderZChart();renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);">Soglia Z <input type="number" id="zThr" value="2" step="0.1" style="width:66px;" onchange="renderZChart();renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);">Modo POC
                 <select id="pocMode" onchange="renderPocLevels()">
                   <option value="vpseg" selected>Volume Profile a tratti (come Coma Screen)</option>
@@ -181,19 +188,19 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
                 </select></label>
               <label class="chk" title="Un nuovo trigger Z-Score diventa un nuovo POC solo se il suo POC sta più in alto (oltre la distanza minima) dell'ultimo POC accettato: i livelli salgono a gradini, come nello screen"><input type="checkbox" id="pocBreak" checked onchange="renderPocLevels()"> POC solo crescenti (rottura del precedente)</label>
               <label style="font-size:10px;color:var(--dim);">Blocco POC (barre) <input type="number" id="pocBlock" value="60" min="20" max="250" style="width:55px;" onchange="renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini (stessa zona) vale il più recente">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="3" step="0.5" min="0" max="10" style="width:50px;" onchange="renderPocLevels()"></label>
-              <label style="font-size:10px;color:var(--dim);" title="Mostra sul grafico solo i livelli entro questa distanza (%) dal prezzo attuale; 0 = tutti. La strategia usa comunque tutti i livelli.">Mostra entro ±% <input type="number" id="pocNear" value="50" step="5" min="0" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: distanza minima tra due livelli, in multipli di ATR(14). Se due livelli sono più vicini (stessa zona) vale il più recente">Distanza min. (ATR) <input type="number" id="pocGapAtr" value="3" step="0.5" min="0" max="10" style="width:66px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Mostra sul grafico solo i livelli entro questa distanza (%) dal prezzo attuale; 0 = tutti. La strategia usa comunque tutti i livelli.">Mostra entro ±% <input type="number" id="pocNear" value="50" step="5" min="0" style="width:66px;" onchange="renderPocLevels()"></label>
               <label style="font-size:10px;color:var(--dim);" title="Solo modo «Replica screen»: considera solo i trigger dell'ultimo periodo (come l'orizzonte storico dello screen)">Orizzonte
                 <select id="pocHorizon" onchange="renderPocLevels()"><option value="0">tutto</option><option value="10" selected>10 anni</option><option value="5">5 anni</option><option value="3">3 anni</option><option value="1">1 anno</option></select></label>
               <label class="chk" title="Solo modo «Ancora swing low»: un nuovo livello nasce solo se dopo il livello precedente il prezzo ha chiuso almeno una volta sotto di esso (struttura persa e poi riconquistata = cambio di trend, non semplice prosecuzione)"><input type="checkbox" id="pocLoss" checked onchange="renderPocLevels()"> Richiedi livello precedente perso</label>
               <label style="font-size:10px;color:var(--dim);" title="Solo modo «Ancora swing low»: dove finisce il volume profile che genera il POC">Profilo fino a
                 <select id="pocEnd" onchange="renderPocLevels()"><option value="trigger" selected>trigger (congelato)</option><option value="today">oggi (come lo screen)</option></select></label>
               <span id="vpSegBox" style="display:none;gap:10px;flex-wrap:wrap;align-items:center;">
-                <label style="font-size:10px;color:var(--dim);" title="Il massimo conta solo se dopo scende almeno di questa %">Correzione dal max % <input type="number" id="vpCorr" value="10" min="3" max="60" style="width:46px;" onchange="renderPocLevels()"></label>
-                <label style="font-size:10px;color:var(--dim);" title="Rialzo minimo (%) per riconoscere lo swing che parte dal minimo">Swing rialzo % <input type="number" id="vpSwing" value="20" min="5" max="80" style="width:46px;" onchange="renderPocLevels()"></label>
-                <label style="font-size:10px;color:var(--dim);" title="Rimbalzo minimo (%) dopo il massimo per riconoscere l'ultimo minimo importante">Rimbalzo dopo max % <input type="number" id="vpReb" value="30" min="5" max="100" style="width:46px;" onchange="renderPocLevels()"></label>
-                <label style="font-size:10px;color:var(--dim);" title="Se due POC sono più vicini di questa % si cercano swing più importanti o si uniscono i tratti (0 = non unire)">POC vicini entro % <input type="number" id="vpTol" value="3" min="0" max="20" step="0.5" style="width:46px;" onchange="renderPocLevels()"></label>
-                <label style="font-size:10px;color:var(--dim);">Livelli <input type="number" id="vpRows" value="100" min="30" max="300" step="10" style="width:50px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Il massimo conta solo se dopo scende almeno di questa %">Correzione dal max % <input type="number" id="vpCorr" value="10" min="3" max="60" style="width:66px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Rialzo minimo (%) per riconoscere lo swing che parte dal minimo">Swing rialzo % <input type="number" id="vpSwing" value="20" min="5" max="80" style="width:66px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Rimbalzo minimo (%) dopo il massimo per riconoscere l'ultimo minimo importante">Rimbalzo dopo max % <input type="number" id="vpReb" value="30" min="5" max="100" style="width:66px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);" title="Se due POC sono più vicini di questa % si cercano swing più importanti o si uniscono i tratti (0 = non unire)">POC vicini entro % <input type="number" id="vpTol" value="3" min="0" max="20" step="0.5" style="width:66px;" onchange="renderPocLevels()"></label>
+                <label style="font-size:10px;color:var(--dim);">Livelli <input type="number" id="vpRows" value="100" min="30" max="300" step="10" style="width:66px;" onchange="renderPocLevels()"></label>
                 <label class="chk"><input type="checkbox" id="vpHist" checked onchange="renderPocLevels()"> Istogramma</label>
                 <span style="font-size:10px;color:#ff9f1c;">⚠ il profilo di ogni tratto usa anche dati successivi al suo inizio: va bene per leggere il grafico, non per backtest</span>
               </span>
@@ -201,12 +208,15 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <label style="font-size:10px;color:var(--dim);">Mostra
                 <select id="patShow" onchange="renderPatterns()"><option value="level" selected>solo su livello POC</option><option value="all">tutti</option></select></label>
               <label class="chk" title="Un pattern rialzista conta solo dopo un calo (chiusura sotto quella di 5 barre prima); uno ribassista solo dopo un rialzo"><input type="checkbox" id="patCtx" checked onchange="renderPatterns()"> con contesto di trend</label>
-              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="5" step="0.5" min="0" max="30" style="width:50px;" onchange="renderPocLevels()"></label>
+              <label style="font-size:10px;color:var(--dim);" title="Distanza minima (%) tra un POC e il precedente per accettarlo come nuovo livello">Distanza min. POC (%) <input type="number" id="pocGap" value="5" step="0.5" min="0" max="30" style="width:66px;" onchange="renderPocLevels()"></label>
             </span>
           </div>
-          <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+          <div style="font-size:10px;letter-spacing:1px;color:var(--gold);text-transform:uppercase;margin:8px 0 6px;">Struttura ICT</div>
+          <div style="display:flex;gap:14px;align-items:center;margin-bottom:0;flex-wrap:wrap;">
             <label style="font-size:10px;color:var(--dim);">Lunghezza Swing <input type="number" id="swingLen" value="50" min="10" max="200" style="width:55px;" onchange="renderICTOverlays()"></label>
             <label style="font-size:10px;color:var(--dim);">Lunghezza Internal <input type="number" id="internalLen" value="5" min="2" max="30" style="width:55px;" onchange="renderICTOverlays()"></label>
+          </div>
+            </div>
           </div>
           <div style="font-size:9px;color:var(--dim);margin-bottom:8px;">SH/SL = Swing High/Low (cerchio rosso = confermato da volume/volatilità anomali) · FVG = Fair Value Gap · POC = livello a più volume · BOS = Break of Structure (continuazione trend) · CHoCH = Change of Character (possibile inversione) · Le zone colorate sui punti di svolta sono gli Order Block</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -271,8 +281,19 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title">🔄 CICLI RIALZO / RIBASSO (zigzag)</div>
           <div id="cycleStatsWrap"></div>
         </div>
+        <div class="panel" id="riepPanel" data-owner-only>
+          <div class="panel-title">🧭 RIEPILOGO DECISIONALE
+            <button class="btn ghost" style="font-size:10px;padding:3px 10px;" onclick="riepilogoStart(true)">↺ Ricalcola</button>
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Dove si trova il prezzo rispetto a ogni analisi, per un investimento da 1 settimana in su. ✅ allineato · ❌ contrario · ➖ neutro o dato non disponibile · 🟡 favorevole ma contro trend. I riferimenti sono soglie convenzionali, non previsioni. Clicca il nome di un'analisi per aprirne la tab.</div>
+          <div id="riepStatus" style="font-size:11px;color:var(--gold);margin-bottom:6px;"></div>
+          <div id="riepWrap" style="overflow-x:auto;"></div>
+          <div id="riepFoot" style="margin-top:10px;font-size:12px;"></div>
+        </div>
         <div class="panel">
-          <div class="panel-title">📊 VOLUME PROFILE & POC</div>
+          <div class="panel-title">📍 DISTANZA DAI POC</div>
+          <div id="pocTableWrap"></div>
+          <div style="display:none;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
             <div>
               <div style="font-size:10px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Storico completo</div>
@@ -296,6 +317,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <canvas id="vpCustomCanvas" style="width:100%;height:300px;"></canvas>
               <div id="vpCustomInfo" style="font-size:11px;color:var(--dim);margin-top:8px;"></div>
             </div>
+          </div>
           </div>
           <button class="btn primary" style="margin-top:14px;" onclick="askAIAboutTab('grafico')">🤖 Chiedi a Warren AI — interpreta cicli, rendimenti e Volume Profile</button>
           <div id="aiTabGrafico" style="margin-top:12px;"></div>
@@ -1462,7 +1484,8 @@ window.analyzeTicker=async function(){
 
     switchTab("Grafico");
     saveAnalysisToHistory(totalReturn);
-    loadQuickRatios();
+    window._qrPromise=loadQuickRatios();
+    try{ riepilogoStart(); }catch(e){ console.error("Riepilogo:",e); }
     el("analyzeStatus").textContent=`✅ ${ticker}: ${STOCK.dates.length} sessioni analizzate (${STOCK.dates[0].toLocaleDateString("it-IT")} → ${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT")})`;
   }catch(err){
     el("analyzeStatus").textContent="❌ Errore: "+err.message;
@@ -2032,12 +2055,12 @@ function renderPocDiag(diag){
   const rows=diag.map(r=>`<tr style="${r.status==='ACCETTATO'?'background:rgba(255,159,28,0.15);':''}"><td style="padding:3px 8px;">${fmtD(r.idx)}</td><td style="padding:3px 8px;">${r.anchor!=null?fmtD(r.anchor):'--'}</td><td style="padding:3px 8px;text-align:right;">${r.close.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.z.toFixed(2)}</td><td style="padding:3px 8px;text-align:right;">${r.poc!=null?r.poc.toFixed(2):'--'}</td><td style="padding:3px 8px;">${r.status}</td></tr>`).join("");
   box.innerHTML=`<div style="font-size:10px;color:var(--dim);margin:6px 0;">Ogni riga è un incrocio dello Z-Score sopra la soglia. La colonna POC è quello del volume profile (dall'ancora o dal trigger, fino al trigger o a oggi secondo le impostazioni). Le righe evidenziate sono quelle che diventano livelli sul grafico.</div><div style="overflow-x:auto;max-height:320px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr style="color:var(--dim);text-align:left;"><th style="padding:3px 8px;">Data trigger</th><th style="padding:3px 8px;">Ancora (swing low)</th><th style="padding:3px 8px;text-align:right;">Chiusura</th><th style="padding:3px 8px;text-align:right;">Z</th><th style="padding:3px 8px;text-align:right;">POC da qui a oggi</th><th style="padding:3px 8px;">Esito</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="padding:8px;color:var(--dim);">Nessun incrocio della soglia.</td></tr>'}</tbody></table></div>`;
 }
-window.renderPocLevels=function(){ renderPocLevelsCore(); renderPatterns(); };
+window.renderPocLevels=function(){ renderPocLevelsCore(); renderPatterns(); try{ riepRefresh(["livelli","pattern"]); }catch(e){} };
 function renderPocLevelsCore(){
-  window._pocLv=[];
+  window._pocLv=[]; window._pocShown=[];
   pocStaticSeries.forEach(sr=>{ try{ chart.removeSeries(sr); }catch(e){} });
   pocStaticSeries=[];
-  if(!isOwner() || !STOCK || !chart || !el("chkPocStatic").checked) return;
+  if(!isOwner() || !STOCK || !chart || !el("chkPocStatic").checked){ renderPocTable(); return; }
   const blk=parseInt(el("pocBlock").value)||60;
   const gap=parseFloat(el("pocGap").value); const gapPct=isNaN(gap)?5:gap;
   const mode=el("pocMode").value;
@@ -2062,8 +2085,331 @@ function renderPocLevelsCore(){
     try{ sr.setMarkers([{time:t0,position:"aboveBar",color:"#ff9f1c",shape:"circle",size:0.5,text:"POC "+l.poc.toFixed(2)}]); }catch(e){}
     pocStaticSeries.push(sr);
   });
+  window._pocShown=lvShow;
   drawVpSeg();
+  renderPocTable();
 }
+
+
+// ===================== MENU INDICATORI (finestra a comparsa) =====================
+window.toggleIndPanel=function(ev){ if(ev) ev.stopPropagation(); const p=el("indPanel"); if(p) setIndPanel(p.hidden); };
+function setIndPanel(open){
+  const p=el("indPanel"), b=el("indBtn"); if(!p||!b) return;
+  p.hidden=!open; b.setAttribute("aria-expanded",open?"true":"false"); b.textContent=open?"📊 Indicatori ▴":"📊 Indicatori ▾";
+}
+function indSummaryUpdate(){
+  const sp=el("indSummary"), p=el("indPanel"); if(!sp||!p) return;
+  const on=[...p.querySelectorAll("label.chk input:checked")].map(i=>i.parentElement.textContent.replace(/\s+/g," ").replace(/^\s*■\s*/,"").trim()).filter(Boolean);
+  const mode=el("pocMode"); const pocOn=el("chkPocStatic")&&el("chkPocStatic").checked&&mode;
+  const shown=on.slice(0,7).join(" · ")+(on.length>7?" · +"+(on.length-7):"");
+  sp.textContent=on.length?("Attivi: "+shown+(pocOn?" · modo POC: "+mode.options[mode.selectedIndex].text.replace(/\s*\(.*\)\s*$/,""):"")):"Nessun indicatore attivo";
+}
+const IND_KEY="qa_ind_v1";
+function indSave(){
+  try{ const o={}; el("indPanel").querySelectorAll("input[id],select[id]").forEach(x=>{ o[x.id]=(x.type==="checkbox")?x.checked:x.value; }); localStorage.setItem(IND_KEY,JSON.stringify(o)); }catch(e){}
+}
+function indRestore(){
+  try{
+    const o=JSON.parse(localStorage.getItem(IND_KEY)||"null"); if(!o) return;
+    Object.keys(o).forEach(id=>{ const x=el(id); if(!x||!el("indPanel").contains(x)) return; if(x.type==="checkbox") x.checked=!!o[id]; else x.value=o[id]; });
+  }catch(e){}
+}
+(function(){
+  const p=el("indPanel"); if(!p) return;
+  indRestore();
+  p.addEventListener("change",()=>{ indSave(); indSummaryUpdate(); });
+  document.addEventListener("click",e=>{ if(!p.hidden && !p.contains(e.target) && e.target.id!=="indBtn") setIndPanel(false); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") setIndPanel(false); });
+  indSummaryUpdate();
+})();
+
+// ===================== TABELLA DISTANZA DAI POC =====================
+function renderPocTable(){
+  const wrap=el("pocTableWrap"); if(!wrap) return;
+  if(!STOCK){ wrap.innerHTML=""; return; }
+  const lv=(window._pocShown||[]).slice();
+  if(!lv.length){ wrap.innerHTML='<div style="font-size:11px;color:var(--dim);padding:6px 0;">Nessun livello POC da mostrare. Apri «📊 Indicatori» e attiva «POC statici filtrati» (e, se serve, aumenta «Mostra entro ±%»).</div>'; return; }
+  const px=STOCK.closes[STOCK.closes.length-1], atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1], cur=STOCK.currency||"";
+  const fd=(i)=>STOCK.dates[i].toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"2-digit"});
+  const above=lv.filter(l=>l.poc>px).sort((a,b)=>b.poc-a.poc), below=lv.filter(l=>l.poc<=px).sort((a,b)=>b.poc-a.poc);
+  const nA=above.length?above[above.length-1]:null, nB=below.length?below[0]:null;
+  const row=(l,side)=>{
+    const dist=(l.poc/px-1)*100, da=atr>0?(l.poc-px)/atr:null, near=(l===nA||l===nB);
+    const col=side==="sopra"?"#ff9f9f":"#7bd88f";
+    return `<tr style="${near?'background:rgba(255,159,28,0.12);font-weight:700;':''}"><td style="text-align:left;color:${col};">${side==="sopra"?"▲ Sopra":"▼ Sotto"}${near?" · più vicino":""}</td><td>${l.poc.toFixed(2)}</td><td>${fd(l.startIdx)}</td><td>${dist>=0?"+":""}${dist.toFixed(1)}%</td><td>${da!=null?(da>=0?"+":"")+da.toFixed(1):"--"}</td></tr>`;
+  };
+  const sel=el("pocMode"), modeTxt=sel?sel.options[sel.selectedIndex].text:"";
+  wrap.innerHTML=`<div style="font-size:11px;color:var(--dim);margin-bottom:8px;">Ultimo prezzo di chiusura: <strong style="color:var(--txt);">${cur} ${px.toFixed(2)}</strong>`+
+    (nA?` · resistenza più vicina <strong style="color:#ff9f9f;">${nA.poc.toFixed(2)} (${((nA.poc/px-1)*100).toFixed(1)}%)</strong>`:" · nessun POC sopra")+
+    (nB?` · supporto più vicino <strong style="color:#7bd88f;">${nB.poc.toFixed(2)} (${((nB.poc/px-1)*100).toFixed(1)}%)</strong>`:" · nessun POC sotto")+`</div>`+
+    `<div style="overflow-x:auto;"><table><tr><th style="text-align:left;">Posizione</th><th>POC</th><th>Nato il</th><th>Distanza</th><th>In ATR</th></tr>`+
+    above.map(l=>row(l,"sopra")).join("")+
+    `<tr style="background:rgba(255,210,63,0.12);font-weight:800;"><td style="text-align:left;color:var(--gold);">● Prezzo</td><td>${px.toFixed(2)}</td><td>${STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit",year:"2-digit"})}</td><td>—</td><td>—</td></tr>`+
+    below.map(l=>row(l,"sotto")).join("")+`</table></div>`+
+    `<div style="font-size:10px;color:var(--dim);margin-top:6px;">Livelli visibili sul grafico (modo: ${modeTxt.replace(/\s*\(.*\)\s*$/,"")}). L'ATR è quello a 14 giorni${atr>0?` (${atr.toFixed(2)})`:""}.</div>`;
+}
+
+// ===================== RIEPILOGO DECISIONALE =====================
+// Una riga per analisi: valore attuale · riferimento per l'ingresso · spunte Long/Short.
+// L / S: 1 = allineato, -1 = contrario, 0 = neutro, 2 = favorevole ma contro trend.
+let _riepToken=0, _riepRows={};
+const RIEP_ORDER=["trend","cicli","livelli","zscore","vol","rsi","hurst","target","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
+const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",livelli:"Livelli POC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
+const RIEP_TAB={target:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
+const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
+const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
+function _ema(arr,n){ const out=new Array(arr.length).fill(null); if(arr.length<n) return out; let s0=0; for(let i=0;i<n;i++) s0+=arr[i]; let e=s0/n; out[n-1]=e; const a=2/(n+1); for(let i=n;i<arr.length;i++){ e=a*arr[i]+(1-a)*e; out[i]=e; } return out; }
+function _weeklyCloses(dates,closes){
+  const keys=[], vals=[];
+  for(let i=0;i<dates.length;i++){
+    const d=dates[i], dow=(new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())).getUTCDay()+6)%7;
+    const mon=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()-dow);
+    if(keys.length && keys[keys.length-1]===mon) vals[vals.length-1]=closes[i]; else { keys.push(mon); vals.push(closes[i]); }
+  }
+  return {keys,vals};
+}
+const _px=()=>STOCK.closes[STOCK.closes.length-1];
+
+function rpTrend(){
+  const c=STOCK.closes, px=_px();
+  const s21=smaSeriesCalc(c,21).slice(-1)[0], s100=smaSeriesCalc(c,100).slice(-1)[0], s200=smaSeriesCalc(c,200).slice(-1)[0];
+  if(s21==null||s100==null||s200==null) return {nd:true,val:"storico insufficiente per le medie"};
+  const up=px>s200&&s21>s100&&s100>s200, dn=px<s200&&s21<s100&&s100<s200;
+  return {val:`${_fx(px)} · SMA21 ${_fx(s21)} · SMA100 ${_fx(s100)} · SMA200 ${_fx(s200)}`,
+    refL:"prezzo sopra SMA200 e SMA21 > SMA100 > SMA200", refS:"l'opposto: sotto SMA200 e 21 < 100 < 200",
+    L: up?1:(px<s200?-1:0), S: dn?1:(px>s200?-1:0)};
+}
+function rpCicli(){
+  const C=LAST_CYCLES;
+  if(!C||!C.current) return {nd:true,val:"nessun ciclo rilevato"+(C?" (soglia "+C.threshold+"%)":"")};
+  const c=C.current, up=c.type==="up", ref=up?C.up:C.down;
+  if(!ref||ref.avgReturn==null||!(ref.count>=3)) return {nd:true,val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% — pochi cicli storici per un riferimento`};
+  const ph=Math.abs(c.retPct)/Math.abs(ref.avgReturn);
+  let L=0,S=0;
+  if(up){ L=ph<0.4?1:(ph>0.8?-1:0); S=ph>=1.0?1:(ph<0.4?-1:0); }
+  else  { S=ph<0.4?1:(ph>0.8?-1:0); L=ph>=1.0?1:(ph<0.4?-1:0); }
+  return {val:`${up?"Rialzista":"Ribassista"} da ${c.days} gg, ${_sg(c.retPct)}% · tipico ${_sg(ref.avgReturn)}% in ${Math.round(ref.avgDays)} gg → fase ${Math.round(ph*100)}%`+(ref.count<5?" (pochi cicli)":""),
+    refL:"ciclo rialzista appena iniziato (fase < 40%), oppure ribasso già alla profondità tipica (≥ 100%)", refS:"speculare: ribasso appena iniziato, oppure rialzo esaurito (≥ 100%)", L, S};
+}
+function rpLivelli(){
+  const lv=window._pocLv||[], px=_px(), atrA=calcATR(STOCK.highs,STOCK.lows,STOCK.closes,14), atr=atrA[atrA.length-1];
+  if(!lv.length||!(atr>0)) return {nd:true,val:"nessun livello POC (apri «📊 Indicatori» e attiva «POC statici filtrati»)"};
+  let below=null, above=null;
+  lv.forEach(l=>{ if(l.poc<=px){ if(!below||l.poc>below.poc) below=l; } else { if(!above||l.poc<above.poc) above=l; } });
+  const dB=below?(px-below.poc)/atr:null, dA=above?(above.poc-px)/atr:null;
+  const t=[];
+  t.push(below?`supporto ${_fx(below.poc)} (${_sg((below.poc/px-1)*100)}% · ${_fx(dB,1)} ATR)`:"nessun supporto sotto");
+  t.push(above?`resistenza ${_fx(above.poc)} (${_sg((above.poc/px-1)*100)}% · ${_fx(dA,1)} ATR)`:"nessuna resistenza sopra");
+  return {val:t.join(" · "), refL:"supporto POC entro 1,5 ATR (❌ se oltre 4 ATR)", refS:"resistenza POC entro 1,5 ATR (❌ se oltre 4 ATR)",
+    L: dB==null?0:(dB<=1.5?1:(dB>4?-1:0)), S: dA==null?0:(dA<=1.5?1:(dA>4?-1:0))};
+}
+function rpZ(){
+  const W=parseInt(el("zWindow").value)||50, thr=parseFloat(el("zThr").value)||2;
+  const z=computeRegressionZ(STOCK.closes,W), n=z.length, last=z[n-1];
+  if(last==null) return {nd:true,val:"storico insufficiente"};
+  let up=null, dn=null;
+  for(let i=n-1;i>=Math.max(W+1,n-60);i--){ if(z[i]!=null&&z[i-1]!=null){ if(up==null&&z[i]>=thr&&z[i-1]<thr) up=n-1-i; if(dn==null&&z[i]<=-thr&&z[i-1]>-thr) dn=n-1-i; } }
+  const w=10; let L=0,S=0;
+  if(up!=null&&up<=w){ L=1; S=-1; } else if(dn!=null&&dn<=w){ S=1; L=-1; }
+  return {val:`Z ${_fx(last)} (soglia ±${thr})`+(up!=null?` · trigger rialzo ${up} gg fa`:"")+(dn!=null?` · trigger ribasso ${dn} gg fa`:"")+(up==null&&dn==null?" · nessun trigger negli ultimi 60 gg":""),
+    refL:`Z incrociato sopra +${thr} negli ultimi ${w} giorni`, refS:`Z incrociato sotto −${thr} negli ultimi ${w} giorni`, L, S};
+}
+function rpVol(){
+  const g=fitGJR(STOCK.closes);
+  if(!g||!g.histVol) return {nd:true,val:"modello non stimabile (servono almeno 250 barre)"};
+  const v=g.histVol, n=v.length, c=STOCK.closes, cur=v[n-1], prev=v[n-2];
+  if(cur==null||prev==null) return {nd:true,val:"volatilità non disponibile"};
+  const win=v.slice(Math.max(0,n-252)).filter(x=>x!=null), pct=x=>win.filter(y=>y<=x).length/win.length*100;
+  const pCur=pct(cur); let panic=false;
+  for(let k=0;k<5;k++){ const x=v[n-1-k]; if(x!=null&&pct(x)>=85){ panic=true; break; } }
+  const rev=panic&&cur<prev&&c[n-1]>c[n-2], squeeze=pCur<15;
+  const m20=meanArr(v.slice(n-20).filter(x=>x!=null)), e21=_ema(c,21), ce=e21[n-1];
+  let wasAbove=false; for(let k=1;k<=5;k++){ if(e21[n-1-k]!=null&&c[n-1-k]>=e21[n-1-k]){ wasAbove=true; break; } }
+  const exp=cur>1.15*m20&&ce!=null&&c[n-1]<ce&&wasAbove;
+  let L=0,S=0;
+  if(rev||squeeze) L=1; if(exp) L=-1;
+  if(exp) S=1; else if(rev) S=-1;
+  const tag=rev?" · inversione da panico":squeeze?" · squeeze":exp?" · espansione ribassista":panic?" · picco di panico recente":"";
+  return {val:`GJR ${_fx(cur,1)}% · ${Math.round(pCur)}° percentile (252 gg)${tag}`,
+    refL:"oltre 85° e in calo con prezzo che recupera, oppure sotto 15° (squeeze)", refS:"volatilità > 115% della media a 20 gg e chiusura sotto la EMA 21", L, S};
+}
+function rpRsi(){
+  const c=STOCK.closes, r=rsiSeriesCalc(c,14).slice(-1)[0]; if(r==null) return {nd:true,val:"storico insufficiente"};
+  const w=_weeklyCloses(STOCK.dates,c), rw=rsiSeriesCalc(w.vals,14).slice(-1)[0];
+  return {val:`RSI ${_fx(r,0)} (settimanale ${_fx(rw,0)})`, refL:"RSI tra 50 e 75 (❌ sopra 75 o sotto 40)", refS:"RSI tra 25 e 50 (❌ sotto 25 o sopra 60)",
+    L:(r>=50&&r<=75)?1:((r>75||r<40)?-1:0), S:(r>=25&&r<=50)?1:((r<25||r>60)?-1:0)};
+}
+function rpHurst(){
+  const w=_weeklyCloses(STOCK.dates,STOCK.closes); if(w.vals.length<80) return {nd:true,val:"storico settimanale insufficiente"};
+  const H=hurstExponentRS(w.vals); if(H==null) return {nd:true,val:"non calcolabile"};
+  const c=STOCK.closes, px=_px(), s200=smaSeriesCalc(c,200).slice(-1)[0], rsi=rsiSeriesCalc(c,14).slice(-1)[0];
+  const trendUp=s200!=null?px>s200:null;
+  let L=0,S=0;
+  if(H>0.55&&trendUp!=null){ L=trendUp?1:-1; S=trendUp?-1:1; }
+  else if(H<0.45&&rsi!=null){ if(rsi<40){ L=1; S=-1; } else if(rsi>65){ S=1; L=-1; } }
+  return {val:`H ${_fx(H)} · ${H>0.55?"tendenziale":H<0.45?"mean-reverting":"~casuale"}`,
+    refL:"H > 0,55 con trend rialzista (trend following), oppure H < 0,45 con RSI < 40 (mean reversion)", refS:"H > 0,55 con trend ribassista, oppure H < 0,45 con RSI > 65", L, S};
+}
+async function rpTarget(){
+  try{ if(window._qrPromise) await window._qrPromise; }catch(e){}
+  const px=_px(), q=window._quickRatios; let tg=q&&q.targetPrice, src="analisti";
+  const wl=(typeof WATCHLIST!=="undefined")?WATCHLIST.find(w=>w.ticker===STOCK.ticker):null;
+  const man=wl&&wl.analystTarget?parseFloat(String(wl.analystTarget).replace(",",".")):null;
+  if(man!=null&&!isNaN(man)&&man>0){ tg=man; src="inserito da te"; }
+  if(!(tg>0)) return {nd:true,val:"non disponibile (puoi inserirlo a mano nel tab Bilancio o Pattern)"};
+  const up=(tg/px-1)*100;
+  return {val:`target ${_fx(tg)} (${src}) · potenziale ${_sg(up)}%`, refL:"potenziale oltre +10% (❌ se ≤ 0%)", refS:"target almeno 5% sotto il prezzo (❌ se potenziale > +10%)",
+    L:up>=10?1:(up<=0?-1:0), S:up<=-5?1:(up>=10?-1:0)};
+}
+function rpBilancio(){
+  if(!LAST_FUND_ROWS||LAST_FUND_ROWS.length<2||window._fundTicker!==STOCK.ticker)
+    return {nd:true,val:'bilancio non caricato per questo titolo · <a href="javascript:void(0)" onclick="riepLoadFund()" style="color:var(--gold);">carica ora</a> (usa le richieste dell\'API fondamentali)'};
+  const last=LAST_FUND_ROWS[LAST_FUND_ROWS.length-1], prev=LAST_FUND_ROWS[LAST_FUND_ROWS.length-2];
+  const p=computePiotroskiForYear(last,prev), pf=p?p.score:null, b=scoreFromBilancio(), v=(typeof scoreFromValutazione==="function")?scoreFromValutazione():null;
+  const solid=pf!=null&&pf>=6&&(b==null||b>=60), weak=(pf!=null&&pf<=3)||(b!=null&&b<40), veryWeak=pf!=null&&pf<=3&&b!=null&&b<40;
+  return {val:`Piotroski ${pf!=null?pf+"/9":"n.d."} · solidità ${b!=null?Math.round(b)+"/100":"n.d."} · valutazione ${v!=null?Math.round(v)+"/100":"n.d."}`,
+    refL:"Piotroski almeno 6/9 e solidità almeno 60/100 (❌ se Piotroski ≤ 3 o solidità < 40)", refS:"Piotroski ≤ 3 e solidità < 40 (❌ se bilancio solido)",
+    L:solid?1:(weak?-1:0), S:veryWeak?1:(solid?-1:0)};
+}
+async function rpBench(){
+  let ok=true; if(!BENCH) ok=await ensureBenchmarkForRegime("^GSPC");
+  if(!ok||!BENCH) return {nd:true,val:"benchmark non disponibile"};
+  const sw=_weeklyCloses(STOCK.dates,STOCK.closes), bw=_weeklyCloses(BENCH.dates,BENCH.closes), bm=new Map(bw.keys.map((k,i)=>[k,bw.vals[i]]));
+  const com=[]; sw.keys.forEach((k,i)=>{ if(bm.has(k)) com.push([sw.vals[i],bm.get(k)]); });
+  const seg=com.slice(-105); if(seg.length<30) return {nd:true,val:"storico in comune insufficiente"};
+  const rs=[],rb=[]; for(let i=1;i<seg.length;i++){ rs.push(seg[i][0]/seg[i-1][0]-1); rb.push(seg[i][1]/seg[i-1][1]-1); }
+  const ms=meanArr(rs), mb=meanArr(rb); let cv=0,vs=0,vb=0; for(let i=0;i<rs.length;i++){ cv+=(rs[i]-ms)*(rb[i]-mb); vs+=(rs[i]-ms)**2; vb+=(rb[i]-mb)**2; }
+  const corr=(vs>0&&vb>0)?cv/Math.sqrt(vs*vb):null, beta=vb>0?cv/vb:null;
+  const k=Math.min(26,seg.length-1), rel=((seg[seg.length-1][0]/seg[seg.length-1-k][0]-1)-(seg[seg.length-1][1]/seg[seg.length-1-k][1]-1))*100;
+  const bs=smaSeriesCalc(BENCH.closes,200).slice(-1)[0], bpx=BENCH.closes[BENCH.closes.length-1], bUp=bs!=null?bpx>bs:null;
+  let L=0,S=0; if(corr!=null&&corr>=0.6&&bUp!=null){ L=bUp?1:-1; S=bUp?-1:1; }
+  return {val:`${BENCH.ticker}: correlazione ${_fx(corr)} · beta ${_fx(beta)} · forza relativa 26 sett. ${_sg(rel)}% · indice ${bUp==null?"n.d.":bUp?"sopra":"sotto"} SMA200`,
+    refL:"correlato (≥ 0,6): benchmark sopra la SMA200; poco correlato: neutro", refS:"correlato (≥ 0,6): benchmark sotto la SMA200", L, S};
+}
+function rpStagion(){
+  const grid=computeMonthlyGrid(STOCK.dates,STOCK.closes), last=STOCK.dates[STOCK.dates.length-1], m=last.getMonth(), y=last.getFullYear();
+  const arr=Object.keys(grid).map(Number).filter(yy=>yy<y).map(yy=>grid[yy][m]).filter(v=>v!=null);
+  if(arr.length<5) return {nd:true,val:"meno di 5 anni di storico per questo mese"};
+  const avg=meanArr(arr), win=arr.filter(v=>v>0).length/arr.length*100;
+  const names=["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+  const s200=smaSeriesCalc(STOCK.closes,200).slice(-1)[0], tUp=s200!=null?_px()>s200:null;
+  const favL=avg>0&&win>=55, favS=avg<0&&win<=45;
+  let L=favL?(tUp===false?2:1):(favS?-1:0), S=favS?(tUp===true?2:1):(favL?-1:0);
+  const note=(L===2||S===2)?" · ⚠ contro trend":"";
+  return {val:`${names[m]}: ${_sg(avg)}% medio, ${Math.round(win)}% di mesi positivi (${arr.length} anni)${note}`,
+    refL:"media del mese > 0 e almeno 55% positivi (🟡 se il trend è ribassista)", refS:"media < 0 e al massimo 45% positivi (🟡 se il trend è rialzista)", L, S};
+}
+function rpMarkov(){
+  const series=periodReturnSeries(STOCK.dates,STOCK.closes,"weekly"); if(series.length<30) return {nd:true,val:"storico settimanale insufficiente"};
+  const states=classifyStates(series,0.5,1.5), mx=buildTransitionMatrix(states).matrix, cur=states[states.length-1];
+  const filled=mx.map(r=>r.map(v=>v==null?0.2:v)), rowN=n=>(n===1?filled:matPow(filled,n))[cur];
+  const r1=rowN(1), r4=rowN(4), up=r=>r[3]+r[4], dn=r=>r[0]+r[1], pc=x=>Math.round(x*100);
+  return {val:`ora «${STATE_NAMES[cur]}» · rialzo: ${pc(up(r1))}% a 1 sett., ${pc(up(r4))}% a 4 sett. · ribasso a 4 sett. ${pc(dn(r4))}%`,
+    refL:"probabilità di rialzo a 4 settimane ≥ 55%", refS:"probabilità di ribasso a 4 settimane ≥ 55%",
+    L:up(r4)>=0.55?1:(dn(r4)>=0.55?-1:0), S:dn(r4)>=0.55?1:(up(r4)>=0.55?-1:0)};
+}
+function rpRiskErg(){
+  const c=STOCK.closes, r=calcDailyReturns(c); if(r.length<60) return {nd:true,val:"storico insufficiente"};
+  const ens=meanArr(r)*252*100, tavg=(Math.exp(meanArr(r.map(x=>Math.log(1+x)))*252)-1)*100, idx=ens>0?tavg/ens:null;
+  const dd=calcMaxDrawdown(c), vol=calcVolatility(r);
+  return {val:`ergodicità ${_fx(idx)} · crescita geometrica ${_sg(tavg)}%/anno · volatilità ${_fx(vol,0)}% · max drawdown ${_fx(dd,0)}%`,
+    refL:"ergodicità > 0,5 e crescita positiva (❌ se la crescita geometrica è negativa)", refS:"crescita geometrica negativa (❌ se ergodicità > 0,5)",
+    L:(ens>0&&idx!=null&&idx>0.5)?1:(tavg<0?-1:0), S:tavg<0?1:((idx!=null&&idx>0.5)?-1:0)};
+}
+function rpPattern(){
+  const S0=STOCK, n=S0.closes.length, atrA=calcATR(S0.highs,S0.lows,S0.closes,14), lv=window._pocLv||[];
+  const pats=detectCandlePatterns(S0, el("patCtx")?el("patCtx").checked:true).filter(p=>p.idx>=n-5);
+  const names={eng2:"Engulfing 2",eng3:"Engulfing 3",star:"Stella"};
+  const refL="pattern rialzista su livello POC nelle ultime 5 barre", refS="pattern ribassista su livello POC nelle ultime 5 barre";
+  if(!pats.length) return {val:"nessun pattern nelle ultime 5 barre", refL, refS, L:0, S:0};
+  const onL=p=>{ const a=atrA[p.idx]; return lv.some(l=>(l.trigIdx!=null?p.idx>=l.trigIdx:p.idx>=l.startIdx)&&l.poc>=S0.lows[p.idx]-0.5*a&&l.poc<=S0.highs[p.idx]+0.5*a); };
+  let bull=false, bear=false; const txt=[];
+  pats.forEach(p=>{ const on=onL(p); txt.push(`${names[p.type]} ${p.dir>0?"rialzista":"ribassista"} (${n-1-p.idx} gg fa, ${on?"su livello":"fuori livello"})`); if(on){ if(p.dir>0) bull=true; else bear=true; } });
+  let L=0,S=0; if(bull&&!bear){ L=1; S=-1; } else if(bear&&!bull){ S=1; L=-1; }
+  return {val:txt.join(" · "), refL, refS, L, S};
+}
+async function rpMC(){
+  try{ await runMonteCarlo(); }catch(e){}
+  const m=LAST_MC_RESULT; if(!m) return {nd:true,val:"simulazione non riuscita"};
+  const pg=100-m.probLoss;
+  return {val:`prob. di guadagno a ${m.horizon} gg ${_fx(pg,0)}% · rendimento medio ${_sg(m.meanReturn)}% · VaR 95% ${_fx(m.var95,1)}%`,
+    refL:"probabilità di guadagno ≥ 55% (il bootstrap include la deriva storica del titolo)", refS:"probabilità di guadagno ≤ 45%",
+    L:pg>=55?1:(pg<=45?-1:0), S:pg<=45?1:(pg>=55?-1:0)};
+}
+async function rpRegime(){
+  try{ await calcRegime(); }catch(e){}
+  const R=LAST_REGIME_RESULT; if(!R) return {nd:true,val:"regime non calcolato (benchmark non scaricabile)"};
+  return {val:`${R.regime} ${R.score}/100 (${R.benchTicker} ${R.benchTrend>0?"sopra":R.benchTrend<0?"sotto":"in zona"} SMA200)`,
+    refL:"punteggio regime ≥ 60 (RISK-ON o BULL)", refS:"punteggio regime < 40 (RISK-OFF o BEAR)",
+    L:R.score>=60?1:(R.score<40?-1:0), S:R.score<40?1:(R.score>=60?-1:0)};
+}
+function rpStrategia(){
+  try{ calcStrategy(); }catch(e){ console.error(e); }
+  const l=LAST_STRATEGY_LONG, s=LAST_STRATEGY_SHORT; if(!l||l.score==null||!s||s.score==null) return {nd:true,val:"dati insufficienti"};
+  const zA=l.zoneA!=null?` · zona A Long ${_fx(l.zoneA)}${l.zoneAStop!=null?" (stop "+_fx(l.zoneAStop)+")":""}`:"";
+  return {val:`Long ${l.score}/100 · Short ${s.score}/100${zA}`, refL:"punteggio Long ≥ 55 (setup discreto); ❌ sotto 35", refS:"punteggio Short ≥ 55; ❌ sotto 35",
+    L:l.score>=55?1:(l.score<35?-1:0), S:s.score>=55?1:(s.score<35?-1:0)};
+}
+function rpScore(){
+  try{ calcStockScore(); }catch(e){ console.error(e); }
+  const sc=LAST_STOCK_SCORE; if(!sc) return {nd:true,val:"score non calcolabile"};
+  return {val:`${sc.score}/100 · copertura ${sc.coveragePct}% del peso${sc.missing&&sc.missing.length?" ("+sc.missing.length+" aree mancanti)":""}`,
+    refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
+}
+const RP={trend:rpTrend,cicli:rpCicli,livelli:rpLivelli,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
+// ordine di calcolo: prima i rapidi, poi quelli che scaricano dati o aggiornano altre tab (regime → benchmark → bilancio → MC → strategia → score)
+const RIEP_RUN=["trend","cicli","livelli","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","regime","bench","bilancio","mc","strategia","score"];
+
+// Ogni riga ha un tempo massimo: se una tab si blocca, le altre righe vanno avanti.
+function _riepRun(id){
+  return Promise.race([Promise.resolve().then(()=>RP[id]()), new Promise(res=>setTimeout(()=>res({nd:true,val:"tempo scaduto: apri la tab per calcolarlo"}),25000))]);
+}
+function riepRender(){
+  const wrap=el("riepWrap"); if(!wrap) return;
+  const sym=v=>v===1?"✅":v===-1?"❌":v===2?"🟡":"➖";
+  let n=0, okL=0, okS=0, badL=0, badS=0;
+  const rows=RIEP_ORDER.map(id=>{
+    const r=_riepRows[id], lab=RIEP_LABEL[id], tab=RIEP_TAB[id];
+    const lc=tab?`<a href="javascript:void(0)" onclick="switchTab('${tab}')" style="color:var(--txt);text-decoration:underline dotted;">${lab}</a>`:lab;
+    if(!r) return `<tr><td style="text-align:left;font-weight:700;">${lab}</td><td colspan="4" style="text-align:left;color:var(--dim);">⏳ in calcolo…</td></tr>`;
+    if(r.nd) return `<tr><td style="text-align:left;font-weight:700;">${lc}</td><td style="text-align:left;color:var(--dim);">${r.val}</td><td></td><td>➖</td><td>➖</td></tr>`;
+    n++; if(r.L===1) okL++; if(r.S===1) okS++; if(r.L===-1) badL++; if(r.S===-1) badS++;
+    const ref=`<span style="color:var(--dim);font-size:10px;">Long: ${r.refL||""}${r.refS?`<br>Short: ${r.refS}`:""}</span>`;
+    return `<tr><td style="text-align:left;font-weight:700;white-space:nowrap;">${lc}</td><td style="text-align:left;">${r.val}</td><td style="text-align:left;min-width:220px;">${ref}</td><td style="font-size:16px;">${sym(r.L)}</td><td style="font-size:16px;">${sym(r.S)}</td></tr>`;
+  });
+  wrap.innerHTML=`<table><tr><th style="text-align:left;">Analisi</th><th style="text-align:left;">Attuale</th><th style="text-align:left;">Riferimento per l'ingresso</th><th>Long</th><th>Short</th></tr>${rows.join("")}</table>`;
+  const foot=el("riepFoot"); if(!foot) return;
+  if(!n){ foot.innerHTML=""; return; }
+  let read="Quadro misto: nessuna direzione prevale con chiarezza.";
+  if(okL>=okS+3&&okL/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#00d4b8;\">Long</strong>.";
+  else if(okS>=okL+3&&okS/n>=0.5) read="Il quadro è più coerente con un ingresso <strong style=\"color:#ff6b6b;\">Short</strong>.";
+  foot.innerHTML=`<div><strong style="color:#00d4b8;">Long</strong>: ${okL}/${n} allineati · ${badL} contrari &nbsp;|&nbsp; <strong style="color:#ff6b6b;">Short</strong>: ${okS}/${n} allineati · ${badS} contrari</div><div style="color:var(--dim);font-size:11px;margin-top:4px;">${read} Lettura automatica a soglie fisse: non è un consiglio di investimento.</div>`;
+}
+window.riepilogoStart=async function(force){
+  if(!STOCK||!isOwner()||!el("riepWrap")) return;
+  const tok=++_riepToken; _riepRows={}; riepRender();
+  const st=el("riepStatus"); if(st) st.textContent="⏳ Calcolo di tutte le analisi…";
+  for(const id of RIEP_RUN){
+    if(tok!==_riepToken) return;
+    try{ const r=await _riepRun(id); if(tok!==_riepToken) return; _riepRows[id]=r||{nd:true,val:"n.d."}; }
+    catch(e){ console.error("Riepilogo "+id+":",e); if(tok!==_riepToken) return; _riepRows[id]={nd:true,val:"errore di calcolo"}; }
+    riepRender();
+    await new Promise(r=>setTimeout(r,0));
+  }
+  if(tok===_riepToken&&st) st.textContent="✔ Aggiornato per "+STOCK.ticker+" al "+STOCK.dates[STOCK.dates.length-1].toLocaleDateString("it-IT");
+};
+window.riepRefresh=async function(ids){
+  if(!STOCK||!isOwner()||!Object.keys(_riepRows).length) return;
+  const tok=_riepToken;
+  for(const id of ids){ try{ const r=await _riepRun(id); if(tok!==_riepToken) return; _riepRows[id]=r||{nd:true,val:"n.d."}; }catch(e){ console.error(e); } }
+  riepRender();
+};
+window.riepLoadFund=async function(){
+  const st=el("riepStatus"); if(st) st.textContent="⏳ Carico i dati di bilancio…";
+  try{ await loadFundamentals(); }catch(e){ console.error(e); }
+  await riepRefresh(["bilancio","score"]);
+  if(st) st.textContent="✔ Bilancio aggiornato";
+};
 
 // ---- Pattern di candele (solo grafico + statistica; nessuna strategia) ----
 // eng2: la 2a candela, di colore opposto, ingloba il CORPO della 1a.
@@ -2869,6 +3215,7 @@ function drawVolumeProfile(canvasId,profile){
 }
 
 function renderVolumeProfiles(){
+  return; // sostituito dalla tabella «Distanza dai POC» (renderPocTable)
   if(!STOCK) return;
   const fullProfile=computeVolumeProfile(STOCK.closes,STOCK.volumes,24);
   drawVolumeProfile("vpFullCanvas",fullProfile);
@@ -2901,6 +3248,7 @@ window.populateVpCycleOptions=function(){
   }).join("");
 };
 window.renderVolumeProfileCustom=function(){
+  return; // sostituito dalla tabella «Distanza dai POC» (renderPocTable)
   if(!STOCK) return;
   const mode=el("vpMode").value;
   let closesSlice, volumesSlice, label;
@@ -3622,6 +3970,7 @@ window.loadQuickRatios=async function(){
   if(!STOCK){ el("quickRatiosStatus").textContent="Analizza prima un titolo"; return; }
   el("quickRatiosStatus").textContent="⏳ Provo Yahoo (gratis, senza limiti)...";
   el("quickRatiosWrap").innerHTML="";
+  window._quickRatios=null;
 
   let data=null, source=null;
   // 1) TENTATIVO YAHOO — gratis, ma può bloccarsi per via del crumb/cookie
@@ -3674,6 +4023,7 @@ window.loadQuickRatios=async function(){
   }
 
   if(!data){ el("quickRatiosStatus").textContent="❌ Dati di mercato non disponibili per questo ticker"; return; }
+  window._quickRatios=data;
 
   const card=(label,val,col,hl)=>`<div class="card${hl?' card-hl':''}"><div class="v" style="color:${col||'var(--txt)'};">${val}</div><div class="l">${label}</div></div>`;
   el("quickRatiosWrap").innerHTML=
@@ -3807,7 +4157,7 @@ window.loadFundamentals=async function(){
     }
 
     renderFundamentals(rows);
-    LAST_FUND_ROWS=rows;
+    LAST_FUND_ROWS=rows; window._fundTicker=STOCK?STOCK.ticker:null;
     renderPriceFundamentalsChart(rows);
     renderValueGeneration(rows);
     renderFairValueSolidity(rows);
@@ -4263,7 +4613,7 @@ function buildTransitionMatrix(states,nStates=5){
   return {matrix, counts};
 }
 
-function matVecMul(matrix,vec){
+function matVecMulRow(matrix,vec){
   return matrix[0].map((_,j)=> vec.reduce((sum,v,i)=> sum + v*(matrix[i][j]==null?0:matrix[i][j]), 0));
 }
 function matMul(a,b){
@@ -4283,7 +4633,7 @@ function stationaryDist(matrix,iterations=500){
   const n=matrix.length;
   let v=new Array(n).fill(1/n);
   const m=matrix.map(row=>row.map(x=>x==null?1/n:x)); // righe senza dati: assume uniforme
-  for(let it=0;it<iterations;it++) v=matVecMul(m,v);
+  for(let it=0;it<iterations;it++) v=matVecMulRow(m,v);
   return v;
 }
 
@@ -4377,7 +4727,7 @@ window.renderMarkov=function(){
   let hN=`<table><tr><th>Orizzonte</th>${STATE_NAMES.map((n,i)=>`<th style="color:${STATE_COLORS[i]};">${n}</th>`).join("")}</tr>`;
   [1,2,5,10].forEach(n=>{
     const Pn=n===1?matrixFilled:matPow(matrixFilled,n);
-    const dist=matVecMul(Pn,oneHot); // nota: matVecMul fa v*M righe->colonne, coerente con oneHot come vettore riga
+    const dist=matVecMulRow(Pn,oneHot); // nota: matVecMul fa v*M righe->colonne, coerente con oneHot come vettore riga
     hN+=`<tr><td style="font-weight:700;">${n} periodo/i</td>${dist.map((p,i)=>`<td style="color:${i===currentState?'var(--gold)':'var(--txt)'};">${(p*100).toFixed(1)}%</td>`).join("")}</tr>`;
   });
   hN+="</table>";
