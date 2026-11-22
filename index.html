@@ -1419,7 +1419,7 @@ window.showHistoryWithoutAnalysis=function(){
   switchTab("Storico");
 };
 
-window.sideMenuToggle=function(f){ const m=el("sideMenu"),sh=el("sideShade"); const o=(f===undefined)?!m.classList.contains("open"):f; m.classList.toggle("open",o); const st=el("sideTab"); st.style.left=o?"210px":"0"; st.textContent=o?"◀":"☰"; sh.classList.toggle("open",o); if(o&&window.innerWidth>=1000){ document.body.classList.add("side-pin"); } else if(!o){ document.body.classList.remove("side-pin"); } };
+window.sideMenuToggle=function(f){ const m=el("sideMenu"),sh=el("sideShade"); const o=(f===undefined)?!m.classList.contains("open"):f; m.classList.toggle("open",o); const st=el("sideTab"); st.style.left=o?"210px":"0"; st.textContent=o?"◀":"☰"; sh.classList.toggle("open",o); if(o&&window.innerWidth>=1000){ document.body.classList.add("side-pin"); } else if(!o){ document.body.classList.remove("side-pin"); } [30,280].forEach(t=>setTimeout(()=>{ try{ window.dispatchEvent(new Event("resize")); }catch(e){} },t)); };
 window.sideMenuAuto=function(){ if(window.innerWidth<1000) sideMenuToggle(false); };
 window.sideMenuInit=function(){ try{ if(isOwner() && window.innerWidth>=1000){ sideMenuToggle(true); el("sideShade").classList.remove("open"); } }catch(e){} };
 window.switchTab=function(name){
@@ -4910,14 +4910,15 @@ window.renderValueGeneration=function(rows){
   weightedChartObj=new Chart(ctxW.getContext("2d"),{
     type:"bar",
     data:{labels, datasets:[
-      {label:"Ricavi/Az.", data:revPerShare, backgroundColor:"#ffd23f"},
-      {label:"Utile/Az.", data:niPerShare, backgroundColor:"#4fa3ff"},
-      {label:"FCF/Az.", data:fcfPerShare, backgroundColor:"#00d4b8"}
+      {type:"line", label:"Ricavi/Az. (asse destro)", data:revPerShare, yAxisID:"y2", borderColor:"#ffd23f", backgroundColor:"#ffd23f", borderWidth:2, pointRadius:3, tension:0.2, spanGaps:true, order:0},
+      {label:"Utile/Az. (asse sinistro)", data:niPerShare, backgroundColor:"#4fa3ff", yAxisID:"y", order:1},
+      {label:"FCF/Az. (asse sinistro)", data:fcfPerShare, backgroundColor:"#00d4b8", yAxisID:"y", order:1}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:"#eef1f7",font:{size:9}}}},
       scales:{x:{ticks:{color:"#7d8aa3",font:{size:9}},grid:{color:"#1e2d45"}},
-              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+v.toFixed(1)},grid:{color:"#1e2d45"}}}}
+              y:{position:"left",title:{display:true,text:"Utile e FCF per azione",color:"#7d8aa3",font:{size:9}},ticks:{color:"#7d8aa3",font:{size:9},callback:v=>STOCK.currency+" "+v.toFixed(1)},grid:{color:"#1e2d45"}},
+              y2:{position:"right",title:{display:true,text:"Ricavi per azione",color:"#ffd23f",font:{size:9}},ticks:{color:"#ffd23f",font:{size:9},callback:v=>STOCK.currency+" "+v.toFixed(0)},grid:{drawOnChartArea:false}}}}
   });
 
   const first=rows.find(r=>r.sharesOutstanding!=null), last=[...rows].reverse().find(r=>r.sharesOutstanding!=null);
