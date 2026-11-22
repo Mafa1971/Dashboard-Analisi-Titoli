@@ -29,7 +29,7 @@ const pad10 = c => String(c).padStart(10, "0");
 
 // ── bilanci (companyfacts) ────────────────────────────────────────────
 const FORMS = new Set(["10-K", "10-K/A", "10-KT", "20-F", "40-F"]);
-function pick(facts, tags, unit, kind) {
+function pick(facts, tags, unit, kind, earliest) {
   const out = {};
   for (const tag of tags) {
     const node = facts["us-gaap"] && facts["us-gaap"][tag] && facts["us-gaap"][tag].units && facts["us-gaap"][tag].units[unit];
@@ -44,13 +44,13 @@ function pick(facts, tags, unit, kind) {
         if (!(d >= 340 && d <= 380)) continue;
       }
       const cur = tmp[e.end];
-      if (!cur || e.filed > cur.filed) tmp[e.end] = { val: e.val, filed: e.filed };
+      if (!cur || (earliest ? e.filed < cur.filed : e.filed > cur.filed)) tmp[e.end] = { val: e.val, filed: e.filed };
     }
     for (const end in tmp) if (!(end in out)) out[end] = tmp[end].val; // tag successivi riempiono gli anni mancanti (cambi di tassonomia)
   }
   return out;
 }
-function buildRows(json, maxYears) {
+function buildRows(json, maxYears, splits) {
   const f = json.facts || {};
   const rev = pick(f, ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "SalesRevenueGoodsNet", "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD", "flow");
   const ni = pick(f, ["NetIncomeLoss", "ProfitLoss"], "USD", "flow");
@@ -58,7 +58,7 @@ function buildRows(json, maxYears) {
   const ebit = pick(f, ["OperatingIncomeLoss"], "USD", "flow");
   const da = pick(f, ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"], "USD", "flow");
   const opcf = pick(f, ["NetCashProvidedByUsedInOperatingActivities"], "USD", "flow");
-  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], "USD", "flow");
+  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets", "PaymentsForCapitalImprovements", "PaymentsToAcquireOtherPropertyPlantAndEquipment"], "USD", "flow");
   const assets = pick(f, ["Assets"], "USD", "inst");
   const eq = pick(f, ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD", "inst");
   const liab = pick(f, ["Liabilities"], "USD", "inst");
@@ -66,12 +66,14 @@ function buildRows(json, maxYears) {
   const cl = pick(f, ["LiabilitiesCurrent"], "USD", "inst");
   const ltd = pick(f, ["LongTermDebtNoncurrent", "LongTermDebt"], "USD", "inst");
   const re = pick(f, ["RetainedEarningsAccumulatedDeficit"], "USD", "inst");
-  const sh = pick(f, ["CommonStockSharesOutstanding"], "shares", "inst");
-  const shW = pick(f, ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"], "shares", "flow");
+  const sh = pick(f, ["CommonStockSharesOutstanding"], "shares", "inst", true); // valore come riportato all'epoca (prima degli split successivi)
+  const shW = pick(f, ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"], "shares", "flow", true);
   const ends = Array.from(new Set([...Object.keys(rev), ...Object.keys(ni)])).sort();
   return ends.slice(-maxYears).map(end => {
     const g = m => (m[end] != null ? m[end] : null);
-    const revenue = g(rev), netIncome = g(ni), shares = g(sh) != null ? g(sh) : g(shW);
+    const revenue = g(rev), netIncome = g(ni);
+    let shares = g(sh) != null ? g(sh) : g(shW);
+    if (shares != null && splits && splits.length) { const t = Date.parse(end); splits.forEach(s => { if (s.t > t) shares *= s.ratio; }); } // porta le azioni alla base di oggi
     const o = g(opcf), cx = g(capex), e = g(ebit), d = g(da);
     let tl = g(liab); if (tl == null && g(assets) != null && g(eq) != null) tl = g(assets) - g(eq);
     return {
@@ -84,6 +86,18 @@ function buildRows(json, maxYears) {
       sharesOutstanding: shares, opCF: o, fcf: (o != null && cx != null) ? o - Math.abs(cx) : null
     };
   });
+}
+
+// Frazionamenti (split) del titolo da Yahoo: servono per rendere confrontabili le azioni in circolazione nel tempo,
+// perché i prezzi storici sono già corretti per gli split.
+async function getSplits(ticker) {
+  try {
+    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=max&interval=3mo&events=split`, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36" } });
+    if (!r.ok) return null;
+    const j = await r.json(); const ev = j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].events;
+    if (!ev || !ev.splits) return [];
+    return Object.values(ev.splits).map(s => ({ t: (s.date || 0) * 1000, ratio: (s.numerator && s.denominator) ? s.numerator / s.denominator : 1 })).filter(s => s.t > 0 && s.ratio > 0);
+  } catch (e) { return null; }
 }
 
 // ── Form 4 ───────────────────────────────────────────────────────────
@@ -149,8 +163,9 @@ exports.handler = async function (event) {
     if (type === "facts") {
       const r = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${pad10(info.cik)}.json`, { headers: HDR });
       if (!r.ok) return send(r.status, { error: `SEC companyfacts ha risposto con status ${r.status}` });
-      const rows = buildRows(await r.json(), 12);
-      return send(200, { us: true, name: info.name, cik: info.cik, rows }, "public, max-age=21600");
+      const [json, splits] = await Promise.all([r.json(), getSplits(ticker)]);
+      const rows = buildRows(json, 12, splits);
+      return send(200, { us: true, name: info.name, cik: info.cik, rows, splitsApplied: splits ? splits.length : null, splitAdjusted: splits !== null }, "public, max-age=21600");
     }
     if (type === "filings") return send(200, { us: true, ...(await filings(info.cik, info)) }, "public, max-age=1800");
     return send(400, { error: "type non valido" });
