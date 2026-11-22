@@ -137,6 +137,10 @@ async function filings(cik, info) {
 exports.handler = async function (event) {
   const { ticker, type = "facts" } = event.queryStringParameters || {};
   const send = (code, obj, cache) => ({ statusCode: code, headers: { ...CORS, "Content-Type": "application/json", ...(cache ? { "Cache-Control": cache } : {}) }, body: JSON.stringify(obj) });
+  if (type === "debug") {
+    const ua = process.env.SEC_USER_AGENT || "";
+    return send(200, { variabilePresente: !!ua, lunghezza: ua.length, contieneChiocciola: ua.includes("@"), parole: ua.trim().split(/\s+/).filter(Boolean).length });
+  }
   if (!ticker) return send(400, { error: "Parametro 'ticker' mancante" });
   try {
     if (/[:=^]/.test(ticker) || (/\./.test(ticker) && !/^[A-Za-z]+\.[A-Za-z]$/.test(ticker))) return send(404, { error: "non-US", us: false });
