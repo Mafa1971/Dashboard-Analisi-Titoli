@@ -768,8 +768,10 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
               <select id="patTopK"><option value="8" selected>8</option><option value="12">12</option><option value="20">20</option><option value="30">30</option></select>
             </label>
             <button class="btn primary" onclick="runPatternSearch()">🔍 CERCA PATTERN SIMILI</button>
+            <button class="btn" onclick="runPatternBacktest()" title="Verifica se il Pattern ha previsto bene in passato, usando in ogni data solo i dati disponibili allora">🧪 BACKTEST</button>
           </div>
           <div id="patStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="patBt" style="display:none;font-size:11px;line-height:1.6;background:rgba(79,163,255,0.07);border:1px solid rgba(79,163,255,0.35);border-radius:8px;padding:10px 12px;margin-bottom:10px;"></div>
           <div id="patSampleWarning" style="display:none;font-size:11px;color:#ff9f1c;background:rgba(255,159,28,0.1);border:1px solid rgba(255,159,28,0.3);border-radius:8px;padding:8px 12px;margin-bottom:10px;"></div>
         </div>
 
@@ -8281,6 +8283,62 @@ window.runHurstCycles=function(){
 };
 
 let patChartObj=null;
+// ── BACKTEST WALK-FORWARD DEL PATTERN ───────────────────────────────────
+// In ogni data t usa SOLO i dati fino a t: cerca i periodi simili già conclusi (con esito noto
+// prima di t), ne ricava la probabilità di rialzo e la confronta con l'esito realmente avvenuto.
+function patternBacktest(dates,closes,queryLen,forwardLen,minCorr,topK,step){
+  const n=closes.length, minHist=Math.max(queryLen*4,400);
+  if(n<minHist+forwardLen+50) return null;
+  const rows=[]; const norm=(a,b)=>{ const base=closes[a]; const o=new Array(b-a+1); for(let i=a;i<=b;i++) o[i-a]=(closes[i]-base)/base; return o; };
+  const pear=(x,y)=>{ const L=x.length; let mx=0,my=0; for(let i=0;i<L;i++){mx+=x[i];my+=y[i];} mx/=L; my/=L; let nu=0,dx=0,dy=0; for(let i=0;i<L;i++){const a=x[i]-mx,b=y[i]-my; nu+=a*b; dx+=a*a; dy+=b*b;} const d=Math.sqrt(dx*dy); return d>0?nu/d:null; };
+  for(let t=minHist;t+forwardLen<n;t+=step){
+    const qs=t-queryLen+1, q=norm(qs,t), cand=[];
+    const lastEnd=Math.min(t-forwardLen, qs-6); // esito già noto in t e nessuna sovrapposizione con la query
+    for(let st=0; st+queryLen-1<=lastEnd; st++){ const e=st+queryLen-1; const c=pear(q,norm(st,e)); if(c!=null&&c>=minCorr) cand.push({st,e,c,r:closes[e+forwardLen]/closes[e]-1}); }
+    cand.sort((a,b)=>b.c-a.c); const pk=[];
+    for(const c of cand){ if(pk.length>=topK) break; if(pk.every(p=>Math.abs(p.st-c.st)>15)) pk.push(c); }
+    if(pk.length<5) continue;
+    const up=pk.filter(m=>m.r>0).length/pk.length;
+    rows.push({t,up,n:pk.length,act:closes[t+forwardLen]/closes[t]-1});
+  }
+  if(rows.length<10) return {rows:rows.length};
+  const acts=rows.map(r=>r.act), win=a=>a.filter(v=>v>0).length/a.length, avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  const base=win(acts);
+  const sigUp=rows.filter(r=>r.up>=0.6), sigDn=rows.filter(r=>r.up<=0.4), neutral=rows.filter(r=>r.up>0.4&&r.up<0.6);
+  const brier=rows.reduce((a,r)=>a+Math.pow(r.up-(r.act>0?1:0),2),0)/rows.length;
+  const brierBase=rows.reduce((a,r)=>a+Math.pow(base-(r.act>0?1:0),2),0)/rows.length;
+  const hitUp=sigUp.length?win(sigUp.map(r=>r.act)):null, hitDn=sigDn.length?1-win(sigDn.map(r=>r.act)):null;
+  // correlazione tra probabilità prevista e rendimento reale
+  const mx=avg(rows.map(r=>r.up)), my=avg(acts); let nu=0,dx=0,dy=0; rows.forEach(r=>{const a=r.up-mx,b=r.act-my; nu+=a*b;dx+=a*a;dy+=b*b;}); const corr=(dx>0&&dy>0)?nu/Math.sqrt(dx*dy):null;
+  const nEff=Math.max(1,Math.floor(rows.length*step/forwardLen));
+  return {rows:rows.length,nEff,base,sigUp:sigUp.length,sigDn:sigDn.length,neutral:neutral.length,hitUp,hitDn,retUp:avg(sigUp.map(r=>r.act)),retDn:avg(sigDn.map(r=>r.act)),retAll:avg(acts),brier,brierBase,corr,first:dates[rows[0].t],last:dates[rows[rows.length-1].t]};
+}
+window.runPatternBacktest=async function(){
+  if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
+  const box=el("patBt"); box.style.display="block"; box.innerHTML="⏳ Backtest in corso (può richiedere qualche secondo)…";
+  await new Promise(r=>setTimeout(r,40));
+  const queryLen=parseInt(el("patQueryLen").value), forwardLen=parseInt(el("patForwardLen").value);
+  const minCorr=parseFloat(el("patMinCorr")?.value)||0.65, topK=parseInt(el("patTopK")?.value)||8;
+  const step=Math.max(3,Math.round(forwardLen/12));
+  let r; try{ r=patternBacktest(STOCK.dates,STOCK.closes,queryLen,forwardLen,minCorr,topK,step); }catch(e){ box.innerHTML="❌ Errore nel backtest: "+e.message; return; }
+  if(!r){ box.innerHTML="❌ Storico insufficiente per il backtest: servono almeno circa 4× la lunghezza del pattern + la proiezione. Carica più anni nel tab Grafico."; return; }
+  if(r.rows<10||r.base==null){ box.innerHTML=`⚠️ Solo ${r.rows} date con abbastanza match: troppo poche per un backtest. Abbassa la «Correlazione minima» o carica più storico.`; return; }
+  const P=v=>v==null?"--":(v*100).toFixed(0)+"%", R=v=>v==null?"--":(v>=0?"+":"")+(v*100).toFixed(1)+"%";
+  const brierGain=r.brierBase>0?(1-r.brier/r.brierBase)*100:null;
+  let edge=false, lines=[];
+  if(r.hitUp!=null&&r.sigUp>=10&&r.hitUp>r.base+0.05) lines.push("i segnali rialzisti hanno fatto meglio della base");
+  if(r.hitDn!=null&&r.sigDn>=10&&r.hitDn>(1-r.base)+0.05) lines.push("i segnali ribassisti hanno fatto meglio della base");
+  edge = lines.length>0 && brierGain!=null && brierGain>1 && r.nEff>=30;
+  const verdict = edge ? "indizio di vantaggio (da confermare su altri titoli)" : "nessun vantaggio dimostrato";
+  const col = edge?"#00d4b8":"#ff9f1c";
+  box.innerHTML=`<b style="color:${col};">🧪 Backtest walk-forward: ${verdict}</b><br>
+  Date testate: <b>${r.rows}</b> dal ${r.first.toLocaleDateString("it-IT")} al ${r.last.toLocaleDateString("it-IT")} (circa <b>${r.nEff}</b> osservazioni indipendenti) · in ogni data usati solo i dati disponibili allora · pattern ${queryLen} gg, proiezione ${forwardLen} gg, correlazione ≥${(minCorr*100).toFixed(0)}%<br>
+  Base: in un periodo qualsiasi il titolo sale nel <b>${P(r.base)}</b> dei casi (rendimento medio ${R(r.retAll)}).<br>
+  Quando il Pattern diceva <b>rialzo</b> (≥60%): ${r.sigUp} volte · salito davvero nel <b>${P(r.hitUp)}</b> · rendimento medio ${R(r.retUp)}<br>
+  Quando diceva <b>ribasso</b> (≤40%): ${r.sigDn} volte · sceso davvero nel <b>${P(r.hitDn)}</b> · rendimento medio ${R(r.retDn)}<br>
+  Dubbio (40–60%): ${r.neutral} volte · correlazione tra probabilità prevista ed esito reale: <b>${r.corr==null?"--":r.corr.toFixed(2)}</b> · errore di previsione (Brier) ${brierGain==null?"--":(brierGain>=0?"migliore":"peggiore")+" del "+Math.abs(brierGain).toFixed(1)+"%"} rispetto a dire sempre la probabilità di base<br>
+  <span style="color:var(--dim);">Come leggerlo: il Pattern è utile solo se, quando dà rialzo, il titolo sale <i>più spesso della base</i> e quando dà ribasso scende più spesso. Le date si sovrappongono, quindi le osservazioni davvero indipendenti sono molte meno delle date testate. Un solo titolo non basta per concludere: ripeti il test su altri.</span>`;
+};
 window.runPatternSearch=async function(){
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const queryLen=parseInt(el("patQueryLen").value);
