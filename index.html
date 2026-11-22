@@ -65,6 +65,7 @@ select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);pa
 /* menu laterale sinistro (solo owner) */
 #sideTab,#sideMenu,#sideShade{display:none;}
 body.is-owner .topnav,body.is-owner .tab-bar{display:none !important;}
+body.is-owner .patTgt{display:none !important;}
 body.is-owner #sideTab{display:flex;z-index:170 !important;transition:left .2s;position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:150;width:22px;height:64px;align-items:center;justify-content:center;background:var(--panel);border:1px solid var(--line);border-left:none;border-radius:0 10px 10px 0;color:var(--gold);cursor:pointer;font-size:14px;}
 body.is-owner #sideMenu{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:210px;max-width:80vw;background:var(--panel);border-right:1px solid var(--line);z-index:160;padding:10px 8px;gap:2px;overflow-y:auto;transform:translateX(-105%);transition:transform .2s;}
 body.is-owner #sideMenu.open{transform:none;box-shadow:4px 0 18px rgba(0,0,0,.5);}
@@ -415,6 +416,29 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div class="panel-title" style="margin-top:14px;">🔗 AUTOCORRELAZIONE DEI RENDIMENTI (lag 1-5 giorni)</div>
           <div id="autocorrWrap" class="cards" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));"></div>
         </div>
+        <div class="panel" data-owner-only>
+          <div class="panel-title">🌊 CICLI DI HURST (cicli di minimo del titolo)</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Secondo la teoria dei cicli di Hurst il prezzo è la somma di cicli annidati di durata diversa, e i minimi di ciascuna scala tendono a ripetersi a intervalli abbastanza regolari. Qui la durata viene <em>misurata sul singolo titolo</em> (non assunta): per ogni scala si cercano i minimi locali, si misura la distanza tipica tra l'uno e l'altro e quanto è regolare, e si stima a che punto del ciclo ci troviamo oggi. È una stima statistica del <em>timing</em>, non una previsione: se la regolarità è bassa il ciclo non è affidabile per quel titolo.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Scala del ciclo:
+              <select id="hurstScale">
+                <option value="auto" selected>Automatica (la più regolare)</option>
+                <option value="5">Breve (≈ settimane)</option>
+                <option value="10">Medio-breve</option>
+                <option value="20">Medio (≈ mesi)</option>
+                <option value="40">Medio-lungo</option>
+                <option value="80">Lungo (≈ trimestri)</option>
+              </select>
+            </label>
+            <button class="btn primary" onclick="runHurstCycles()">🌊 MISURA CICLI</button>
+          </div>
+          <div id="hurstStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="hurstResultsWrap" style="display:none;">
+            <div class="cards" id="hurstCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px;"></div>
+            <div style="height:340px;"><canvas id="hurstChart"></canvas></div>
+            <div style="overflow-x:auto;margin-top:12px;"><table id="hurstTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB BILANCIO -->
@@ -632,7 +656,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 
       <!-- TAB PATTERN CORRELATION -->
       <div id="tabPattern" class="tab-content">
-        <div class="panel">
+        <div class="panel patTgt">
           <div class="panel-title">🎯 TARGET ANALISTI</div>
           <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Inserisci manualmente il target price degli analisti per questo titolo (lo trovi anche nella colonna K dei file screener — se già presente in Watchlist per questo ticker, viene precompilato qui). Si salva sul titolo corrente e sincronizza con la Watchlist.</div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
@@ -641,29 +665,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </label>
             <button class="btn primary" style="font-size:11px;" onclick="saveAnalystTargetFromPattern()">💾 Salva</button>
             <span id="patternAnalystTargetStatus" style="font-size:10px;color:var(--gold);"></span>
-          </div>
-        </div>
-        <div class="panel" data-owner-only>
-          <div class="panel-title">🌊 CICLI DI HURST (cicli di minimo del titolo)</div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Secondo la teoria dei cicli di Hurst il prezzo è la somma di cicli annidati di durata diversa, e i minimi di ciascuna scala tendono a ripetersi a intervalli abbastanza regolari. Qui la durata viene <em>misurata sul singolo titolo</em> (non assunta): per ogni scala si cercano i minimi locali, si misura la distanza tipica tra l'uno e l'altro e quanto è regolare, e si stima a che punto del ciclo ci troviamo oggi. È una stima statistica del <em>timing</em>, non una previsione: se la regolarità è bassa il ciclo non è affidabile per quel titolo.</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-            <label style="font-size:11px;color:var(--dim);">Scala del ciclo:
-              <select id="hurstScale">
-                <option value="auto" selected>Automatica (la più regolare)</option>
-                <option value="5">Breve (≈ settimane)</option>
-                <option value="10">Medio-breve</option>
-                <option value="20">Medio (≈ mesi)</option>
-                <option value="40">Medio-lungo</option>
-                <option value="80">Lungo (≈ trimestri)</option>
-              </select>
-            </label>
-            <button class="btn primary" onclick="runHurstCycles()">🌊 MISURA CICLI</button>
-          </div>
-          <div id="hurstStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
-          <div id="hurstResultsWrap" style="display:none;">
-            <div class="cards" id="hurstCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:12px;"></div>
-            <div style="height:340px;"><canvas id="hurstChart"></canvas></div>
-            <div style="overflow-x:auto;margin-top:12px;"><table id="hurstTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
           </div>
         </div>
         <div class="panel">
@@ -1211,7 +1212,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
   <button data-st="Grafico" onclick="switchTab('Grafico');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📉</span>Grafico</button>
   <button data-st="Pattern" onclick="switchTab('Pattern');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔮</span>Pattern</button>
   <button data-st="Volatilita" onclick="switchTab('Volatilita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🌊</span>Volatilità</button>
-  <button data-st="Stagionalita" onclick="switchTab('Stagionalita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📅</span>Stagionalità</button>
+  <button data-st="Stagionalita" onclick="switchTab('Stagionalita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📅</span>Stagionalità e cicli</button>
   <button data-st="Markov" onclick="switchTab('Markov');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔗</span>Markov</button>
   <div class="sgrp">Contesto di mercato</div>
   <button data-st="Benchmark" onclick="switchTab('Benchmark');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⚖️</span>Benchmark</button>
@@ -8379,6 +8380,7 @@ window.runHurstCycles=function(){
   if(H!=null){ hLabel=H.toFixed(2)+(H>0.55?" · tendenziale":H<0.45?" · mean-reverting":" · ~casuale"); hCol=H>0.55?"#00d4b8":H<0.45?"#ff9f1c":"var(--txt)"; }
   el("hurstCardsWrap").innerHTML=
     card("Durata tipica ciclo (mediana)", Math.round(chosen.median)+" barre (≈ "+cal(chosen.median)+" gg)")+
+    card("Cicli misurati", chosen.count+(chosen.count<8?" · campione piccolo: stima poco stabile":" · campione discreto"), chosen.count<8?"#ffd23f":"#00d4b8")+
     card("Regolarità del ciclo", regLabel+" ("+(chosen.regularity*100).toFixed(0)+"%)", regCol)+
     card("Ultimo minimo", fmtD(dates[chosen.last])+" ("+chosen.barsSince+" barre fa)")+
     (chosen.lastPeak!=null?card("Ultimo massimo", fmtD(dates[chosen.lastPeak])+" ("+((n-1)-chosen.lastPeak)+" barre fa)", "#ff6b6b"):"")+
