@@ -61,6 +61,20 @@ select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);pa
 .tab-btn.active{color:var(--gold);}
 .tab-icon{font-size:22px;}
 .tab-label{font-size:9px;font-weight:600;text-transform:uppercase;}
+
+/* menu laterale sinistro (solo owner) */
+#sideTab,#sideMenu,#sideShade{display:none;}
+body.is-owner .topnav,body.is-owner .tab-bar{display:none !important;}
+body.is-owner #sideTab{display:flex;z-index:170 !important;transition:left .2s;position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:150;width:22px;height:64px;align-items:center;justify-content:center;background:var(--panel);border:1px solid var(--line);border-left:none;border-radius:0 10px 10px 0;color:var(--gold);cursor:pointer;font-size:14px;}
+body.is-owner #sideMenu{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:210px;max-width:80vw;background:var(--panel);border-right:1px solid var(--line);z-index:160;padding:10px 8px;gap:2px;overflow-y:auto;transform:translateX(-105%);transition:transform .2s;}
+body.is-owner #sideMenu.open{transform:none;box-shadow:4px 0 18px rgba(0,0,0,.5);}
+body.is-owner #sideShade.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:155;}
+#sideMenu button{display:flex;align-items:center;gap:10px;background:none;border:none;color:var(--dim);font-family:'Manrope',sans-serif;font-size:13px;padding:9px 10px;border-radius:8px;cursor:pointer;text-align:left;}
+#sideMenu button:hover{background:rgba(255,255,255,.05);}
+#sideMenu button.active{color:var(--gold);background:rgba(255,210,63,.08);}
+#sideMenu button.ai{margin-top:8px;border-top:2px solid var(--gold);border-radius:0 0 8px 8px;}
+@media(min-width:1000px){body.is-owner.side-pin main{margin-left:220px;max-width:none;}body.is-owner.side-pin main{padding-right:20px;}}
+body.is-owner main{padding-bottom:30px;}
 .tab-content{display:none;}
 .tab-content.active{display:block;}
 table{width:100%;border-collapse:collapse;font-size:11px;}
@@ -126,7 +140,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <div id="resultsWrap" style="display:none;">
       <div class="cards" id="heroCards"></div>
 
-      <nav style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+      <nav class="topnav" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
         <button class="btn tabnav active" onclick="switchTab('Grafico')" id="tnGrafico"><span style="font-size:16px;">📉</span> Grafico</button>
         <button class="btn tabnav" onclick="switchTab('Benchmark')" id="tnBenchmark"><span style="font-size:16px;">⚖️</span> Benchmark</button>
         <button class="btn tabnav" onclick="switchTab('Stagionalita')" id="tnStagionalita"><span style="font-size:16px;">📅</span> Stagionalità</button>
@@ -258,7 +272,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <label style="font-size:11px;color:var(--dim);" title="Z che gira: per il long Z risale sopra questa soglia, per lo short scende sotto la soglia col segno opposto">Soglia Z conferma <input type="number" id="zsZTh" value="0" step="0.1" style="width:50px;"></label>
             <label style="font-size:11px;color:var(--dim);" title="Due livelli entro questa distanza (%) contano come uno solo: vale il più recente">Unisci livelli (%) <input type="number" id="zsMerge" value="5" step="0.5" min="0" style="width:50px;"></label>
             <label style="font-size:11px;color:var(--dim);">Pattern
-              <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (rialzista)</option><option value="star">Stella del mattino</option></select></label>
+              <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (Three Outside Up)</option><option value="star">Stella del mattino</option></select></label>
             <label style="font-size:11px;color:var(--dim);" title="Quando il prezzo raggiunge questo multiplo del rischio (R) a favore, lo stop viene portato al prezzo di ingresso: la posizione non può più andare in perdita (a parte i gap)."><input type="checkbox" id="zsBE" checked> Break-even a <input type="number" id="zsBER" value="1" step="0.5" min="0.5" style="width:45px;"> R</label>
             <label style="font-size:11px;color:var(--dim);">Moltiplicatore stop (×range) <input type="number" id="zsSlMult" value="1.5" step="0.1" style="width:55px;"></label>
             <label style="font-size:11px;color:var(--dim);">Rischio/rendimento (R) <input type="number" id="zsRR" value="3" step="0.1" style="width:55px;"></label>
@@ -1186,6 +1200,25 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     </div></div>
   </main>
 
+<div id="sideShade" onclick="sideMenuToggle(false)"></div>
+<div id="sideTab" onclick="sideMenuToggle()" title="Menu">☰</div>
+<div id="sideMenu">
+  <button data-st="Grafico" onclick="switchTab('Grafico');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📉</span>Grafico</button>
+  <button data-st="Benchmark" onclick="switchTab('Benchmark');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⚖️</span>Benchmark</button>
+  <button data-st="Stagionalita" onclick="switchTab('Stagionalita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📅</span>Stagionalità</button>
+  <button data-st="Bilancio" onclick="switchTab('Bilancio');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📑</span>Bilancio</button>
+  <button data-st="Markov" onclick="switchTab('Markov');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔗</span>Markov</button>
+  <button data-st="Ergodicita" onclick="switchTab('Ergodicita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔄</span>Rischio & Ergodicità</button>
+  <button data-st="Pattern" onclick="switchTab('Pattern');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔮</span>Pattern</button>
+  <button data-st="MonteCarlo" onclick="switchTab('MonteCarlo');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🎲</span>Monte Carlo</button>
+  <button data-st="Regime" onclick="switchTab('Regime');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🌡️</span>Regime</button>
+  <button data-st="Strategia" onclick="switchTab('Strategia');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🎯</span>Strategia</button>
+  <button data-st="Score" onclick="switchTab('Score');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⭐</span>Stock Score</button>
+  <button data-st="Watchlist" onclick="switchTab('Watchlist');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📋</span>Watchlist</button>
+  <button data-st="Portafoglio" onclick="switchTab('Portafoglio');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📊</span>Portafoglio</button>
+  <button data-st="Storico" onclick="switchTab('Storico');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📜</span>Storico</button>
+  <button data-st="AI" class="ai" onclick="switchTab('AI');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🤖</span>AI Claude</button>
+</div>
   <nav class="tab-bar">
     <button class="tab-btn active" onclick="switchTab('Grafico')" id="tabBtnGrafico"><span class="tab-icon">📉</span><span class="tab-label">Grafico</span></button>
     <button class="tab-btn" onclick="switchTab('Benchmark')" id="tabBtnBenchmark"><span class="tab-icon">⚖️</span><span class="tab-label">Benchmark</span></button>
@@ -1293,7 +1326,7 @@ let CURRENT_USER_EMAIL = null;
 function isOwner(){ return (CURRENT_USER_EMAIL||"").toLowerCase()===OWNER_EMAIL; }
 function applyOwnerFlag(session){
   CURRENT_USER_EMAIL = session?.user?.email || null;
-  document.body.classList.toggle("is-owner", isOwner());
+  document.body.classList.toggle("is-owner", isOwner()); try{ if(isOwner() && !window._sideInit){ window._sideInit=1; sideMenuInit(); } }catch(e){}
 }
 // Il sito "beta" (ramo beta di GitHub, indirizzo che inizia con "beta--")
 // è riservato al proprietario: chi entra con un altro account viene
@@ -1385,6 +1418,10 @@ window.showHistoryWithoutAnalysis=function(){
   el("emptyWrap").style.display="none";
   switchTab("Storico");
 };
+
+window.sideMenuToggle=function(f){ const m=el("sideMenu"),sh=el("sideShade"); const o=(f===undefined)?!m.classList.contains("open"):f; m.classList.toggle("open",o); const st=el("sideTab"); st.style.left=o?"210px":"0"; st.textContent=o?"◀":"☰"; sh.classList.toggle("open",o); if(o&&window.innerWidth>=1000){ document.body.classList.add("side-pin"); } else if(!o){ document.body.classList.remove("side-pin"); } };
+window.sideMenuAuto=function(){ if(window.innerWidth<1000) sideMenuToggle(false); };
+window.sideMenuInit=function(){ try{ if(isOwner() && window.innerWidth>=1000){ sideMenuToggle(true); el("sideShade").classList.remove("open"); } }catch(e){} };
 window.switchTab=function(name){
   // Storico e Watchlist non richiedono un'analisi già fatta — forziamo
   // visibile l'area risultati anche se STOCK non è ancora caricato, così
@@ -1399,6 +1436,7 @@ window.switchTab=function(name){
   el("tab"+name).classList.add("active");
   el("tabBtn"+name).classList.add("active");
   const tn = el("tn"+name); if(tn) tn.classList.add("active");
+  try{ document.querySelectorAll("#sideMenu button").forEach(x=>x.classList.toggle("active",x.dataset.st===name)); }catch(e){}
   if(name==="Stagionalita" && STOCK){ renderSeasonality(); renderSeasonalForecast(); }
   if(name==="Bilancio" && STOCK && typeof LAST_FUND_ROWS!=="undefined" && LAST_FUND_ROWS && window._fundTicker===STOCK.ticker){
     setTimeout(()=>{ try{ renderFairValueSolidity(LAST_FUND_ROWS); renderPriceFundamentalsChart(LAST_FUND_ROWS); renderValueGeneration(LAST_FUND_ROWS); renderPiotroski(LAST_FUND_ROWS); }catch(e){ console.error("Bilancio redraw:",e); } },30);
@@ -2936,6 +2974,7 @@ window.riepLoadFund=async function(){
 // eng2: la 2a candela, di colore opposto, ingloba il CORPO della 1a.
 // eng3: la 3a candela ingloba i corpi delle due precedenti (la 1a di colore
 //       opposto alla 3a, e non è già un engulfing a 2 candele).
+//       [v2: definizione classica Three Outside Up/Down, vedi sotto]
 // star: stella del mattino/sera: grande candela contro trend, candela a
 //       corpo piccolo (<=35% della prima), grande candela opposta che
 //       chiude oltre la metà del corpo della prima.
@@ -2950,10 +2989,13 @@ function detectCandlePatterns(S, useCtx){
     let e2=false;
     if(up && C[i-1]<O[i-1] && O[i]<=C[i-1] && C[i]>=O[i-1] && ctxBull){ out.push({idx:i,type:"eng2",dir:1}); e2=true; }
     else if(dn && C[i-1]>O[i-1] && O[i]>=C[i-1] && C[i]<=O[i-1] && ctxBear){ out.push({idx:i,type:"eng2",dir:-1}); e2=true; }
-    // engulfing 3
+    // engulfing 3 (classico "Three Outside Up/Down"): la 2a candela ingloba il corpo della 1a
+    // (engulfing a 2) e la 3a, dello stesso colore della 2a, chiude oltre la chiusura della 2a.
     if(!e2){
-      if(up && C[i-2]<O[i-2] && bb(i)<=Math.min(bb(i-1),bb(i-2)) && bt(i)>=Math.max(bt(i-1),bt(i-2)) && (!useCtx||C[i-2]<C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:1});
-      else if(dn && C[i-2]>O[i-2] && bb(i)<=Math.min(bb(i-1),bb(i-2)) && bt(i)>=Math.max(bt(i-1),bt(i-2)) && (!useCtx||C[i-2]>C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:-1});
+      const b2up = C[i-1]>O[i-1] && C[i-2]<O[i-2] && O[i-1]<=C[i-2] && C[i-1]>=O[i-2];
+      const b2dn = C[i-1]<O[i-1] && C[i-2]>O[i-2] && O[i-1]>=C[i-2] && C[i-1]<=O[i-2];
+      if(up && b2up && C[i]>C[i-1] && (!useCtx||C[i-2]<C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:1});
+      else if(dn && b2dn && C[i]<C[i-1] && (!useCtx||C[i-2]>C[i-7<0?0:i-7]) ) out.push({idx:i,type:"eng3",dir:-1});
     }
     // stella
     const big=bd(i-2)>=0.5*atr[i], small=bd(i-1)<=0.35*bd(i-2);
