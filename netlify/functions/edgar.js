@@ -58,7 +58,9 @@ function buildRows(json, maxYears, splits) {
   const ebit = pick(f, ["OperatingIncomeLoss"], "USD", "flow");
   const da = pick(f, ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet"], "USD", "flow");
   const opcf = pick(f, ["NetCashProvidedByUsedInOperatingActivities"], "USD", "flow");
-  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets", "PaymentsForCapitalImprovements", "PaymentsToAcquireOtherPropertyPlantAndEquipment"], "USD", "flow");
+  // capex: prima le voci note, poi (per gli anni ancora vuoti) qualsiasi voce di pagamento per immobilizzazioni/investimenti produttivi
+  const capexTags = Object.keys(f["us-gaap"] || {}).filter(t => /^Payments(ToAcquire|For)(Productive|PropertyPlant|Property|CapitalImprovements|OtherPropertyPlant)/.test(t) && !/Business|Investment|Intangible$|Software|Land|Mineral|Oil|RealEstate|Equity/i.test(t.replace("PropertyPlantAndEquipmentAndIntangibleAssets", "PPEIA")));
+  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets", "PaymentsForCapitalImprovements", "PaymentsToAcquireOtherPropertyPlantAndEquipment"].concat(capexTags), "USD", "flow");
   const assets = pick(f, ["Assets"], "USD", "inst");
   const eq = pick(f, ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD", "inst");
   const liab = pick(f, ["Liabilities"], "USD", "inst");
