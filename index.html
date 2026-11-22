@@ -771,6 +771,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             <button class="btn" onclick="runPatternBacktest()" title="Verifica se il Pattern ha previsto bene in passato, usando in ogni data solo i dati disponibili allora">🧪 BACKTEST</button>
           </div>
           <div id="patStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div style="font-size:10px;color:var(--dim);background:rgba(255,159,28,0.07);border:1px solid rgba(255,159,28,0.3);border-radius:8px;padding:6px 10px;margin:8px 0;">ℹ️ Nota: il backtest walk-forward di questo Pattern su NVDA e KO non ha dimostrato un vantaggio predittivo. Usalo come contesto visivo (come si è mosso il prezzo in situazioni simili), non come segnale d'ingresso.</div>
           <div data-owner-only style="margin:8px 0;">
             <button class="btn" onclick="runClassicLab()" title="Rileva sullo storico breakout da congestione, pivot point e livelli di Fibonacci e verifica se hanno avuto un vantaggio statistico (scoperta/test + correzione test multipli)">🧬 LABORATORIO PATTERN CLASSICI</button>
             <div id="clsLab" style="display:none;font-size:11px;line-height:1.55;margin-top:8px;"></div>
@@ -4833,7 +4834,7 @@ function fvEngine(){
   if(!STOCK) return null;
   const px=_px(), q=window._quickRatios||{};
   const rows=(typeof LAST_FUND_ROWS!=="undefined"&&LAST_FUND_ROWS&&LAST_FUND_ROWS.length>=2&&window._fundTicker===STOCK.ticker)?LAST_FUND_ROWS:null;
-  const models=[]; const add=(id,name,val,w,note)=>models.push({id,name,val:(val!=null&&isFinite(val)&&val>0)?val:null,w,note,na:false});
+  let dcfScen=null; const models=[]; const add=(id,name,val,w,note)=>models.push({id,name,val:(val!=null&&isFinite(val)&&val>0)?val:null,w,note,na:false});
   const priceAt=(ds)=>{ const t=new Date(ds).getTime(); if(!isFinite(t)) return null; let bi=0,bd=Infinity; STOCK.dates.forEach((d,i)=>{ const df=Math.abs(d.getTime()-t); if(df<bd){ bd=df; bi=i; } }); return bd<=200*86400000?STOCK.closes[bi]:null; };
   if(rows){
     const last=rows[rows.length-1];
@@ -4846,9 +4847,9 @@ function fvEngine(){
     if(g==null||!isFinite(g)){ const rv=rows.map(r=>r.revenue).filter(v=>v!=null); if(rv.length>=2&&rv[0]>0){ g=(Math.pow(rv[rv.length-1]/rv[0],1/(rv.length-1))-1)*100; gsrc="ricavi"; } }
     const gc=(g!=null&&isFinite(g))?Math.min(Math.max(g,0),25):null;
     if(last.fcf!=null&&last.fcf>0&&shares&&gc!=null){
-      let f=last.fcf/shares, sum=0; const rd=0.10, gt=0.025;
-      for(let y=1;y<=10;y++){ const gy=(y<=5?gc:(gc+(3-gc)*(y-5)/5))/100; f*=1+gy; sum+=f/Math.pow(1+rd,y); }
-      add("dcf","DCF a 10 anni (crescita che rallenta)",sum+f*(1+gt)/(rd-gt)/Math.pow(1+rd,10),1,`FCF/azione ${_fx(last.fcf/shares)}, crescita ${_fx(gc,1)}% (da ${gsrc}) per 5 anni poi verso 3%, sconto 10%, crescita terminale 2,5%`);
+      const dcfAt=(rd,gt)=>{ let f=last.fcf/shares, sum=0; for(let y=1;y<=10;y++){ const gy=(y<=5?gc:(gc+(3-gc)*(y-5)/5))/100; f*=1+gy; sum+=f/Math.pow(1+rd,y); } return sum+f*(1+gt)/(rd-gt)/Math.pow(1+rd,10); };
+      dcfScen={prud:dcfAt(0.10,0.02),base:dcfAt(0.09,0.025),ott:dcfAt(0.08,0.03)};
+      add("dcf","DCF a 10 anni (scenario base)",dcfScen.base,1,`FCF/azione ${_fx(last.fcf/shares)}, crescita ${_fx(gc,1)}% (da ${gsrc}) per 5 anni poi verso 3%, sconto 9%, crescita terminale 2,5% · scenari: prudente ${_fx(dcfScen.prud)} (sconto 10%, terminale 2%) · ottimista ${_fx(dcfScen.ott)} (sconto 8%, terminale 3%)`);
     }
     const pes=rows.map(r=>{ const p=priceAt(r.year); return (p&&r.eps>0)?p/r.eps:null; }).filter(v=>v!=null&&v>3&&v<150);
     if(pes.length>=3&&eps){ const m=_pctl(pes,.5); add("pe","P/E storico × EPS",m*eps,1,`P/E mediano storico ${_fx(m,1)}x su ${pes.length} anni × EPS ${_fx(eps)}`); }
@@ -4888,7 +4889,7 @@ function fvEngine(){
     if(conf==="bassa"&&analyst.n>=5) wa=Math.max(wa,0.7); else if(divergence) wa=Math.min(wa,0.25);
     tgt=(1-wa)*fv+wa*analyst.mean; if(analyst.low!=null&&tgt<analyst.low){ tgt=analyst.low; clamped="minimo"; } if(analyst.high!=null&&tgt>analyst.high){ tgt=analyst.high; clamped="massimo"; } }
   else if(fv!=null) tgt=fv; else if(analyst) tgt=analyst.mean;
-  return {px,models,fv,low,high,conf,kept:kept.length,analyst,tgt,clamped,upside:tgt!=null?(tgt/px-1)*100:null,divergence,ratio,hasRows:!!rows};
+  return {px,models,dcfScen,fv,low,high,conf,kept:kept.length,analyst,tgt,clamped,upside:tgt!=null?(tgt/px-1)*100:null,divergence,ratio,hasRows:!!rows};
 }
 function fvFillTargetBoxes(E){
   if(!STOCK||!E||E.tgt==null) return;
@@ -4922,6 +4923,7 @@ function renderFvConsolidated(){
   if(!E.hasRows) notes.push("Bilanci non ancora caricati: premi «CARICA DATI» per calcolare i modelli di fair value.");
   if(E.divergence) notes.push(`⚠ Modelli e analisti divergono molto (target analisti ${E.ratio.toFixed(1)}× il fair value): il valore è incerto, tratta il target realistico come intervallo, non come numero.`);
   if(a&&a.src==="inserito da te") notes.push(`Stai usando il target inserito a mano (${a.mean.toFixed(2)})${a.yahooMean?`; il consenso Yahoo è ${a.yahooMean.toFixed(2)}`:""}. <a href="javascript:void(0)" onclick="fvResetAutoTarget()" style="color:var(--gold);text-decoration:underline;">Ripristina il valore automatico</a>.`);
+  if(E.dcfScen) notes.push(`DCF a scenari (per azione): <b>prudente ${E.dcfScen.prud.toFixed(2)}</b> · <b>base ${E.dcfScen.base.toFixed(2)}</b> · <b>ottimista ${E.dcfScen.ott.toFixed(2)}</b> — il mercato prezza spesso uno scenario ottimista o oltre, per questo i modelli risultano di solito sotto il prezzo.`);
   if(E.conf==="bassa"&&E.fv!=null) notes.push("Confidenza bassa: pochi modelli o molto distanti tra loro.");
   w.innerHTML=`<div style="font-weight:700;color:var(--gold);margin:4px 0 6px;">🧮 Fair Value consolidato e target realistico (automatico)</div>`+
     `<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:8px;">${cards}</div>`+
