@@ -2221,8 +2221,8 @@ function _renderPocTableCore(){
 // Una riga per analisi: valore attuale · riferimento per l'ingresso · spunte Long/Short.
 // L / S: 1 = allineato, -1 = contrario, 0 = neutro, 2 = favorevole ma contro trend.
 let _riepToken=0, _riepRows={};
-const RIEP_ORDER=["trend","ath","cicli","setup","livelli","rr","earn","zscore","vol","rsi","hurst","target","fv","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
-const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",ath:"Massimi storici (ATH)",earn:"Trimestrale (anti-gap)",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",fv:"Fair Value (modelli)",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
+const RIEP_ORDER=["trend","ath","cicli","setup","livelli","rr","earn","insider","zscore","vol","rsi","hurst","target","fv","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
+const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",ath:"Massimi storici (ATH)",earn:"Trimestrale (anti-gap)",insider:"Insider e filing SEC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",fv:"Fair Value (modelli)",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
 const RIEP_TAB={target:"Bilancio",fv:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
 const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
 const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
@@ -2457,6 +2457,42 @@ function rpATH(){
 }
 // ---- Trimestrale: calendario e regola anti-gap ----
 const _calCache={};
+// ── SEC EDGAR: insider (Form 4), 8-K a rischio, ritardi di bilancio ─────────
+const _edgarCache={};
+async function _loadEdgarFilings(tk){
+  if(_edgarCache[tk]!==undefined) return _edgarCache[tk];
+  let out=null;
+  try{ const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(tk)}&type=filings`); const j=await res.json(); out=(j&&j.us)?j:{us:false,error:j&&j.error}; }catch(e){ out={us:null,error:String(e&&e.message||e)}; }
+  _edgarCache[tk]=out; return out;
+}
+async function rpInsider(){
+  const tk=STOCK.ticker;
+  if(/[.:=^]/.test(tk)&&!/^[A-Za-z]+\.[A-Za-z]$/.test(tk)) return {nd:true,val:"non applicabile: la SEC copre solo i titoli quotati negli USA"};
+  const d=await _loadEdgarFilings(tk);
+  if(!d||d.us===false) return {nd:true,val:"non applicabile: titolo non presente negli archivi SEC"};
+  if(d.us===null||d.error&&!d.tx) return {nd:true,val:"dati SEC non disponibili (serve la funzione edgar.js sul sito e la variabile SEC_USER_AGENT): "+(d.error||"")};
+  const fmtD=x=>x>=1e6?(x/1e6).toFixed(1)+" Mln":(x>=1e3?(x/1e3).toFixed(0)+" mila":x.toFixed(0));
+  const buys=d.tx.filter(t=>t.code==="P"), sells=d.tx.filter(t=>t.code==="S");
+  const sellOpen=sells.filter(t=>!t.plan), sellPlan=sells.filter(t=>t.plan);
+  const val=a=>a.reduce((x,t)=>x+(t.value||0),0), who=a=>new Set(a.map(t=>t.owner)).size;
+  const risk=[]; d.eightK.forEach(e=>e.risk.forEach(r=>{ if(["4.02","1.03","3.01","2.04"].includes(r.item)) risk.push(`8-K ${r.item} del ${e.date} (${r.text})`); }));
+  const warn=[]; d.eightK.forEach(e=>e.risk.forEach(r=>{ if(["4.01","5.02","2.06","1.02"].includes(r.item)) warn.push(`8-K ${r.item} del ${e.date} (${r.text})`); }));
+  d.other.forEach(o=>{ if(/^NT 10-/.test(o.form)) risk.push(`${o.form} del ${o.date} (ritardo nel deposito del bilancio)`); });
+  const dil=d.other.filter(o=>/^(S-3|424B|S-1)/.test(o.form)); if(dil.length) warn.push(`${dil.length} depositi di emissione titoli (${dil[0].form}, ultimo ${dil[0].date}): possibile diluizione`);
+  const act=d.other.filter(o=>/13D/.test(o.form)); if(act.length) warn.push(`13D (quota >5% con intenzioni attive) del ${act[0].date}`);
+  const parts=[];
+  parts.push(buys.length?`acquisti insider 90 gg: ${buys.length} operazioni, ${who(buys)} persone, ${fmtD(val(buys))} USD`:"nessun acquisto insider in 90 gg");
+  parts.push(sells.length?`vendite: ${sellOpen.length} libere (${who(sellOpen)} persone, ${fmtD(val(sellOpen))} USD) + ${sellPlan.length} da piano 10b5-1`:"nessuna vendita insider in 90 gg");
+  parts.push(`Form 4 letti: ${d.form4Parsed}/${d.form4Count}`);
+  let L=0,S=0,why=[];
+  if(risk.length){ L=-1; S=1; why.push("segnali di rischio sui conti o sulla quotazione: "+risk.join("; ")); }
+  else if(buys.length&&(who(buys)>=2||val(buys)>=250000)){ L=1; S=-1; why.push(`acquisti sul mercato aperto da ${who(buys)} insider (${fmtD(val(buys))} USD): gli acquisti pesano molto più delle vendite, che spesso sono programmate`); }
+  else if(sellOpen.length&&who(sellOpen)>=3&&val(sellOpen)>=5e6&&!buys.length){ why.push(`vendite libere concentrate (${who(sellOpen)} persone, ${fmtD(val(sellOpen))} USD): da monitorare, ma da sole non sono un segnale ribassista affidabile`); }
+  if(warn.length) why.push("da tenere d'occhio: "+warn.join("; "));
+  if(!why.length) why.push("nessun segnale anomalo nei filing recenti");
+  if(d.form4Count>=30) why.push("elenco Form 4 limitato ai 30 più recenti");
+  return {val:parts.join(" · "), why:why.join(". "), refL:"acquisti insider (≥2 persone o ≥250 mila USD in 90 gg) ✅; segnali di rischio (8-K 4.02/1.03/3.01, ritardo bilancio) ❌", refS:"segnali di rischio ✅; acquisti insider ❌; vendite da sole ➖", L, S};
+}
 async function _loadCalendar(tk){
   if(_calCache[tk]!==undefined) return _calCache[tk];
   let out=null;
@@ -2780,9 +2816,9 @@ function rpScore(){
     why:(mid?`punteggio tra 40 e 60: serve almeno 60 per il Long, sotto 40 per lo Short. `:"")+(thin?`Copertura bassa (${sc.coveragePct}%): mancano ${sc.missing.map(k=>SCORE_LABELS[k]||k).join(", ")}, quindi il punteggio è meno affidabile`:"")||null,
     refL:"score ≥ 60 (❌ sotto 40)", refS:"score < 40 (❌ da 60 in su)", L:sc.score>=60?1:(sc.score<40?-1:0), S:sc.score<40?1:(sc.score>=60?-1:0)};
 }
-const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,rr:rpRR,ath:rpATH,earn:rpEarn,fv:rpFV,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
+const RP={trend:rpTrend,cicli:rpCicli,setup:rpSetup,livelli:rpLivelli,rr:rpRR,ath:rpATH,earn:rpEarn,insider:rpInsider,fv:rpFV,zscore:rpZ,vol:rpVol,rsi:rpRsi,hurst:rpHurst,target:rpTarget,bilancio:rpBilancio,bench:rpBench,stagion:rpStagion,markov:rpMarkov,riskerg:rpRiskErg,pattern:rpPattern,mc:rpMC,regime:rpRegime,strategia:rpStrategia,score:rpScore};
 // ordine di calcolo: prima i rapidi, poi quelli che scaricano dati o aggiornano altre tab (regime → benchmark → bilancio → MC → strategia → score)
-const RIEP_RUN=["trend","ath","cicli","setup","livelli","rr","earn","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","fv","regime","bench","bilancio","mc","strategia","score"];
+const RIEP_RUN=["trend","ath","cicli","setup","livelli","rr","earn","insider","zscore","rsi","hurst","stagion","riskerg","pattern","markov","vol","target","fv","regime","bench","bilancio","mc","strategia","score"];
 
 // Ogni riga ha un tempo massimo: se una tab si blocca, le altre righe vanno avanti.
 function _riepRun(id){
@@ -2816,7 +2852,7 @@ const RIEP_AREA=[
  ["Trend e regime",["trend","regime","bench","hurst","stagion","ath"]],
  ["Timing e livelli",["cicli","setup","livelli","zscore","rsi","vol","pattern","markov"]],
  ["Valore e fondamentali",["target","fv","bilancio","score"]],
- ["Rischio e probabilità",["rr","earn","riskerg","mc","strategia"]]
+ ["Rischio e probabilità",["rr","earn","insider","riskerg","mc","strategia"]]
 ];
 function riepSynth(){
   const g=id=>_riepRows[id]; const sym={1:"✅",[-1]:"❌",2:"🟡"};
@@ -4588,6 +4624,17 @@ async function tryFetchFundamentalsFromYahoo(ticker){
   }catch(e){ return null; }
 }
 
+// Bilanci annuali da SEC EDGAR (companyfacts): fino a 12 anni, gratis, solo titoli USA.
+async function tryFetchFundamentalsFromEdgar(ticker){
+  try{
+    if(/[.:=^]/.test(ticker)&&!/^[A-Za-z]+\.[A-Za-z]$/.test(ticker)) return null;
+    const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(ticker)}&type=facts`);
+    const j=await res.json();
+    if(!j||!j.us||!Array.isArray(j.rows)) return null;
+    const rows=j.rows.filter(r=>r.revenue!=null||r.netIncome!=null);
+    return rows.length>=4?rows:null;
+  }catch(e){ return null; }
+}
 let _fundInflight=null;
 window.loadFundamentals=function(opts){
   if(!STOCK){ alert("Analizza prima un titolo"); return Promise.resolve(); }
@@ -4598,10 +4645,11 @@ window.loadFundamentals=function(opts){
 };
 async function _loadFundamentalsCore(opts){
   if(!STOCK){ return; }
-  el("fundStatus").textContent="⏳ Provo Yahoo (gratis, senza limiti, buona copertura anche per titoli non-USA)...";
+  el("fundStatus").textContent="⏳ Provo SEC EDGAR (titoli USA, fino a 12 anni) e poi Yahoo (gratis, anche titoli non-USA)...";
   try{
-    let rows=await tryFetchFundamentalsFromYahoo(STOCK.ticker);
-    let fundSource="Yahoo (gratis)";
+    let rows=await tryFetchFundamentalsFromEdgar(STOCK.ticker);
+    let fundSource="SEC EDGAR (gratis, fino a 12 anni)";
+    if(!rows){ rows=await tryFetchFundamentalsFromYahoo(STOCK.ticker); fundSource="Yahoo (gratis)"; }
 
     if(!rows && opts.yahooOnly){ el("fundStatus").textContent="⚠️ Yahoo non ha i bilanci di questo titolo. Premi CARICA DATI per provare Alpha Vantage (usa 3 richieste del limite giornaliero)."; return; }
     if(!rows){
