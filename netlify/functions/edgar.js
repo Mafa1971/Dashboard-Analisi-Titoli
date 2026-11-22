@@ -32,7 +32,8 @@ const FORMS = new Set(["10-K", "10-K/A", "10-KT", "20-F", "40-F"]);
 function pick(facts, tags, unit, kind, earliest) {
   const out = {};
   for (const tag of tags) {
-    const node = facts["us-gaap"] && facts["us-gaap"][tag] && facts["us-gaap"][tag].units && facts["us-gaap"][tag].units[unit];
+    const ns = tag.indexOf(":") > 0 ? tag.split(":")[0] : "us-gaap", nm = tag.indexOf(":") > 0 ? tag.split(":")[1] : tag;
+    const node = facts[ns] && facts[ns][nm] && facts[ns][nm].units && facts[ns][nm].units[unit];
     if (!node) continue;
     const tmp = {};
     for (const e of node) {
@@ -60,7 +61,11 @@ function buildRows(json, maxYears, splits) {
   const opcf = pick(f, ["NetCashProvidedByUsedInOperatingActivities"], "USD", "flow");
   // capex: prima le voci note, poi (per gli anni ancora vuoti) qualsiasi voce di pagamento per immobilizzazioni/investimenti produttivi
   const capexTags = Object.keys(f["us-gaap"] || {}).filter(t => /^Payments(ToAcquire|For)(Productive|PropertyPlant|Property|CapitalImprovements|OtherPropertyPlant)/.test(t) && !/Business|Investment|Intangible$|Software|Land|Mineral|Oil|RealEstate|Equity/i.test(t.replace("PropertyPlantAndEquipmentAndIntangibleAssets", "PPEIA")));
-  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets", "PaymentsForCapitalImprovements", "PaymentsToAcquireOtherPropertyPlantAndEquipment"].concat(capexTags), "USD", "flow");
+  // voci personalizzate dell'azienda (altri spazi di nomi, es. "nvda"): acquisti di immobilizzazioni
+  const customCapex = [];
+  Object.keys(f).forEach(ns => { if (ns === "us-gaap" || ns === "dei" || ns === "srt" || ns === "invest") return;
+    Object.keys(f[ns]).forEach(t => { if (/^(Payments|Purchases?)[A-Za-z]*(Property|Equipment|Capital|Productive)/.test(t) && !/Business|Securit|Investment|Acquisition|Lease|Software/i.test(t)) customCapex.push(ns + ":" + t); }); });
+  const capex = pick(f, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets", "PaymentsForCapitalImprovements", "PaymentsToAcquireOtherPropertyPlantAndEquipment"].concat(capexTags, customCapex), "USD", "flow");
   const assets = pick(f, ["Assets"], "USD", "inst");
   const eq = pick(f, ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD", "inst");
   const liab = pick(f, ["Liabilities"], "USD", "inst");
@@ -173,11 +178,12 @@ exports.handler = async function (event) {
       // diagnostica: voci us-gaap di flusso (annuali, da 10-K) il cui nome ricorda pagamenti/investimenti, con gli anni coperti
       const r = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${pad10(info.cik)}.json`, { headers: HDR });
       if (!r.ok) return send(r.status, { error: `SEC companyfacts ha risposto con status ${r.status}` });
-      const f = ((await r.json()).facts || {})["us-gaap"] || {}; const out = {};
-      Object.keys(f).filter(t => /^(Payments|Purchase|Capital)/i.test(t)).forEach(t => {
+      const all = (await r.json()).facts || {}; const out = {};
+      Object.keys(all).filter(ns => ns !== "dei").forEach(ns => { const f = all[ns];
+      Object.keys(f).filter(t => /^(Payments|Purchase|Capital)/i.test(t) && (ns !== "us-gaap" || /Property|Productive|Capital|Equipment/i.test(t))).forEach(t => {
         const ends = new Set(); ((f[t].units && f[t].units.USD) || []).forEach(e => { if (FORMS.has(e.form) && e.start && (!e.fp || e.fp === "FY")) { const d = (Date.parse(e.end) - Date.parse(e.start)) / 864e5; if (d >= 340 && d <= 380) ends.add(e.end.slice(0, 4)); } });
-        if (ends.size) out[t] = Array.from(ends).sort().join(",");
-      });
+        if (ends.size) out[(ns === "us-gaap" ? "" : ns + ":") + t] = Array.from(ends).sort().join(",");
+      }); });
       return send(200, out);
     }
     if (type === "filings") return send(200, { us: true, ...(await filings(info.cik, info)) }, "public, max-age=1800");
