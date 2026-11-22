@@ -69,6 +69,7 @@ body.is-owner #sideTab{display:flex;z-index:170 !important;transition:left .2s;p
 body.is-owner #sideMenu{display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;width:210px;max-width:80vw;background:var(--panel);border-right:1px solid var(--line);z-index:160;padding:10px 8px;gap:2px;overflow-y:auto;transform:translateX(-105%);transition:transform .2s;}
 body.is-owner #sideMenu.open{transform:none;box-shadow:4px 0 18px rgba(0,0,0,.5);}
 body.is-owner #sideShade.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:155;}
+#sideMenu .sgrp{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);opacity:.7;padding:10px 10px 3px;}
 #sideMenu button{display:flex;align-items:center;gap:10px;background:none;border:none;color:var(--dim);font-family:'Manrope',sans-serif;font-size:13px;padding:9px 10px;border-radius:8px;cursor:pointer;text-align:left;}
 #sideMenu button:hover{background:rgba(255,255,255,.05);}
 #sideMenu button.active{color:var(--gold);background:rgba(255,210,63,.08);}
@@ -277,10 +278,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="riepStatus" style="font-size:11px;color:var(--gold);margin-bottom:6px;"></div>
           <div id="riepWrap" style="overflow-x:auto;"></div>
           <div id="riepFoot" style="margin-top:10px;font-size:12px;"></div>
-        </div>
-        <div class="panel" id="garchPanel" data-owner-only>
-          <div class="panel-title">🌡 VOLATILITÀ GJR-GARCH: TERMOMETRO E SEGNALI</div>
-          <div id="garchBody"></div>
         </div>
         <div class="panel">
           <div class="panel-title">📍 DISTANZA DAI POC</div>
@@ -644,59 +641,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </label>
             <button class="btn primary" style="font-size:11px;" onclick="saveAnalystTargetFromPattern()">💾 Salva</button>
             <span id="patternAnalystTargetStatus" style="font-size:10px;color:var(--gold);"></span>
-          </div>
-        </div>
-        <div class="panel" data-owner-only>
-          <div class="panel-title">🌊 VOLATILITÀ EWMA &amp; CONO DI PREZZO</div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Non prevede la <em>direzione</em> del prezzo — stima quanto ampio potrebbe essere il movimento nei prossimi giorni/mesi. Usa l'EWMA (media mobile esponenziale della volatilità, λ=0,94 — lo stesso approccio di RiskMetrics/JP Morgan), che si adatta più in fretta della volatilità storica semplice quando il mercato passa da calmo a turbolento. Il cono è centrato sul prezzo attuale, senza alcuna ipotesi sulla direzione — solo l'ampiezza statisticamente attesa del movimento.</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-            <label style="font-size:11px;color:var(--dim);">Modello:
-              <select id="volModel">
-                <option value="both" selected>Confronto EWMA + GARCH</option>
-                <option value="ewma">Solo EWMA</option>
-                <option value="garch">Solo GARCH(1,1)</option>
-                <option value="gjr">Solo GJR-GARCH (asimmetrico)</option>
-                <option value="all">Confronto EWMA + GARCH + GJR</option>
-              </select>
-            </label>
-            <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ, orizzonte 1 sett.):
-              <input type="number" id="volStopMult" value="1.5" step="0.1" style="width:60px;">
-            </label>
-            <label style="font-size:11px;color:var(--dim);">Target (multiplo R):
-              <input type="number" id="volTargetR" value="2" step="0.1" style="width:60px;">
-            </label>
-            <label style="font-size:11px;color:var(--dim);" title="Se nello storico ci sono variazioni giornaliere enormi (tipicamente split non corretti o errori nei dati) falsano EWMA e GARCH. Spuntando, quei giorni vengono trattati come variazione zero nel calcolo della volatilità."><input type="checkbox" id="volCleanOutliers"> Ignora rendimenti anomali (oltre ±30%)</label>
-            <button class="btn primary" onclick="runVolatilityCone()">📊 CALCOLA VOLATILITÀ &amp; CONO</button>
-          </div>
-          <div id="volStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
-          <div id="volResultsWrap" style="display:none;">
-            <div class="cards" id="volCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:12px;"></div>
-            <div style="height:300px;"><canvas id="volConeChart"></canvas></div>
-            <div id="volProbWrap" style="display:none;margin-top:18px;">
-              <div class="panel-title" style="font-size:12px;">🎲 PROBABILITÀ SIMULATE (distribuzione reale del titolo)</div>
-              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Simulazione storica filtrata: i rendimenti passati del titolo vengono “ripuliti” dalla volatilità del giorno e ripescati a caso migliaia di volte sulla volatilità prevista oggi. Le code (i crolli e i balzi veri) sono quelle storiche del titolo, non quelle di una curva a campana. Deriva zero: misura ampiezza e rischio, non direzione. Stop e target sono quelli calcolati sopra e vengono toccati sulle <em>chiusure</em> giornaliere.</div>
-              <div class="cards" id="volProbCards" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
-              <div id="volProbNote" style="font-size:11px;color:var(--dim);margin-bottom:8px;"></div>
-              <div style="overflow-x:auto;"><table id="volProbTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
-            </div>
-            <div id="volHistWrap" style="display:none;margin-top:18px;">
-              <div class="panel-title" style="font-size:12px;">📊 PREZZO vs VOLATILITÀ CONDIZIONALE GARCH (storico)</div>
-              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">La linea rossa è la volatilità annualizzata stimata dal GARCH(1,1) giorno per giorno. I picchi estremi di volatilità coincidono spesso con capitolazioni e minimi di mercato: i punti rossi sul prezzo segnano i giorni col 5% di volatilità più alta dello storico. È un indicatore di <em>contesto</em>, non un segnale di timing garantito.</div>
-              <div class="cards" id="volSignalWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-                <span style="font-size:10px;color:var(--dim);">Zoom:</span>
-                <button class="btn" onclick="volZoomRange(125)">6M</button>
-                <button class="btn" onclick="volZoomRange(250)">1A</button>
-                <button class="btn" onclick="volZoomRange(750)">3A</button>
-                <button class="btn" onclick="volZoomRange(1250)">5A</button>
-                <button class="btn" onclick="volZoomRange(0)">Tutto</button>
-                <label style="font-size:11px;color:var(--dim);margin-left:8px;"><input type="checkbox" id="volLogScale" onchange="volToggleLog()"> prezzo in scala logaritmica</label>
-                <span style="font-size:10px;color:var(--dim);">oppure rotella del mouse per zoomare e trascina per spostarti</span>
-              </div>
-              <div style="height:340px;"><canvas id="volHistChart"></canvas></div>
-              <div style="font-size:11px;color:var(--dim);margin:12px 0 4px;">Rendimenti logaritmici giornalieri (%)</div>
-              <div style="height:170px;"><canvas id="volRetChart"></canvas></div>
-            </div>
           </div>
         </div>
         <div class="panel" data-owner-only>
@@ -1151,6 +1095,66 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
       </div>
 
       <!-- TAB MONTE CARLO -->
+      <div id="tabVolatilita" class="tab-content">
+        <div class="panel" id="garchPanel" data-owner-only>
+          <div class="panel-title">🌡 VOLATILITÀ GJR-GARCH: TERMOMETRO E SEGNALI</div>
+          <div id="garchBody"></div>
+        </div>
+        <div class="panel" data-owner-only>
+          <div class="panel-title">🌊 VOLATILITÀ EWMA &amp; CONO DI PREZZO</div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:12px;">Non prevede la <em>direzione</em> del prezzo — stima quanto ampio potrebbe essere il movimento nei prossimi giorni/mesi. Usa l'EWMA (media mobile esponenziale della volatilità, λ=0,94 — lo stesso approccio di RiskMetrics/JP Morgan), che si adatta più in fretta della volatilità storica semplice quando il mercato passa da calmo a turbolento. Il cono è centrato sul prezzo attuale, senza alcuna ipotesi sulla direzione — solo l'ampiezza statisticamente attesa del movimento.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+            <label style="font-size:11px;color:var(--dim);">Modello:
+              <select id="volModel">
+                <option value="both" selected>Confronto EWMA + GARCH</option>
+                <option value="ewma">Solo EWMA</option>
+                <option value="garch">Solo GARCH(1,1)</option>
+                <option value="gjr">Solo GJR-GARCH (asimmetrico)</option>
+                <option value="all">Confronto EWMA + GARCH + GJR</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Moltiplicatore Stop (×σ, orizzonte 1 sett.):
+              <input type="number" id="volStopMult" value="1.5" step="0.1" style="width:60px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);">Target (multiplo R):
+              <input type="number" id="volTargetR" value="2" step="0.1" style="width:60px;">
+            </label>
+            <label style="font-size:11px;color:var(--dim);" title="Se nello storico ci sono variazioni giornaliere enormi (tipicamente split non corretti o errori nei dati) falsano EWMA e GARCH. Spuntando, quei giorni vengono trattati come variazione zero nel calcolo della volatilità."><input type="checkbox" id="volCleanOutliers"> Ignora rendimenti anomali (oltre ±30%)</label>
+            <button class="btn primary" onclick="runVolatilityCone()">📊 CALCOLA VOLATILITÀ &amp; CONO</button>
+          </div>
+          <div id="volStatus" style="font-size:11px;color:var(--gold);margin-bottom:10px;"></div>
+          <div id="volResultsWrap" style="display:none;">
+            <div class="cards" id="volCardsWrap" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:12px;"></div>
+            <div style="height:300px;"><canvas id="volConeChart"></canvas></div>
+            <div id="volProbWrap" style="display:none;margin-top:18px;">
+              <div class="panel-title" style="font-size:12px;">🎲 PROBABILITÀ SIMULATE (distribuzione reale del titolo)</div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">Simulazione storica filtrata: i rendimenti passati del titolo vengono “ripuliti” dalla volatilità del giorno e ripescati a caso migliaia di volte sulla volatilità prevista oggi. Le code (i crolli e i balzi veri) sono quelle storiche del titolo, non quelle di una curva a campana. Deriva zero: misura ampiezza e rischio, non direzione. Stop e target sono quelli calcolati sopra e vengono toccati sulle <em>chiusure</em> giornaliere.</div>
+              <div class="cards" id="volProbCards" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
+              <div id="volProbNote" style="font-size:11px;color:var(--dim);margin-bottom:8px;"></div>
+              <div style="overflow-x:auto;"><table id="volProbTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
+            </div>
+            <div id="volHistWrap" style="display:none;margin-top:18px;">
+              <div class="panel-title" style="font-size:12px;">📊 PREZZO vs VOLATILITÀ CONDIZIONALE GARCH (storico)</div>
+              <div style="font-size:10px;color:var(--dim);margin-bottom:8px;">La linea rossa è la volatilità annualizzata stimata dal GARCH(1,1) giorno per giorno. I picchi estremi di volatilità coincidono spesso con capitolazioni e minimi di mercato: i punti rossi sul prezzo segnano i giorni col 5% di volatilità più alta dello storico. È un indicatore di <em>contesto</em>, non un segnale di timing garantito.</div>
+              <div class="cards" id="volSignalWrap" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:10px;"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                <span style="font-size:10px;color:var(--dim);">Zoom:</span>
+                <button class="btn" onclick="volZoomRange(125)">6M</button>
+                <button class="btn" onclick="volZoomRange(250)">1A</button>
+                <button class="btn" onclick="volZoomRange(750)">3A</button>
+                <button class="btn" onclick="volZoomRange(1250)">5A</button>
+                <button class="btn" onclick="volZoomRange(0)">Tutto</button>
+                <label style="font-size:11px;color:var(--dim);margin-left:8px;"><input type="checkbox" id="volLogScale" onchange="volToggleLog()"> prezzo in scala logaritmica</label>
+                <span style="font-size:10px;color:var(--dim);">oppure rotella del mouse per zoomare e trascina per spostarti</span>
+              </div>
+              <div style="height:340px;"><canvas id="volHistChart"></canvas></div>
+              <div style="font-size:11px;color:var(--dim);margin:12px 0 4px;">Rendimenti logaritmici giornalieri (%)</div>
+              <div style="height:170px;"><canvas id="volRetChart"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div id="tabMonteCarlo" class="tab-content">
         <div class="panel">
           <div class="panel-title">🎲 SIMULAZIONE MONTE CARLO</div>
@@ -1203,17 +1207,24 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
 <div id="sideShade" onclick="sideMenuToggle(false)"></div>
 <div id="sideTab" onclick="sideMenuToggle()" title="Menu">☰</div>
 <div id="sideMenu">
+  <div class="sgrp">Analisi del prezzo</div>
   <button data-st="Grafico" onclick="switchTab('Grafico');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📉</span>Grafico</button>
-  <button data-st="Benchmark" onclick="switchTab('Benchmark');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⚖️</span>Benchmark</button>
-  <button data-st="Stagionalita" onclick="switchTab('Stagionalita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📅</span>Stagionalità</button>
-  <button data-st="Bilancio" onclick="switchTab('Bilancio');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📑</span>Bilancio</button>
-  <button data-st="Markov" onclick="switchTab('Markov');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔗</span>Markov</button>
-  <button data-st="Ergodicita" onclick="switchTab('Ergodicita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔄</span>Rischio & Ergodicità</button>
   <button data-st="Pattern" onclick="switchTab('Pattern');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔮</span>Pattern</button>
-  <button data-st="MonteCarlo" onclick="switchTab('MonteCarlo');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🎲</span>Monte Carlo</button>
+  <button data-st="Volatilita" onclick="switchTab('Volatilita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🌊</span>Volatilità</button>
+  <button data-st="Stagionalita" onclick="switchTab('Stagionalita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📅</span>Stagionalità</button>
+  <button data-st="Markov" onclick="switchTab('Markov');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔗</span>Markov</button>
+  <div class="sgrp">Contesto di mercato</div>
+  <button data-st="Benchmark" onclick="switchTab('Benchmark');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⚖️</span>Benchmark</button>
   <button data-st="Regime" onclick="switchTab('Regime');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🌡️</span>Regime</button>
+  <div class="sgrp">Rischio e probabilità</div>
+  <button data-st="Ergodicita" onclick="switchTab('Ergodicita');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🔄</span>Rischio & Ergodicità</button>
+  <button data-st="MonteCarlo" onclick="switchTab('MonteCarlo');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🎲</span>Monte Carlo</button>
+  <div class="sgrp">Fondamentali</div>
+  <button data-st="Bilancio" onclick="switchTab('Bilancio');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📑</span>Bilancio</button>
+  <div class="sgrp">Decisione</div>
   <button data-st="Strategia" onclick="switchTab('Strategia');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">🎯</span>Strategia</button>
   <button data-st="Score" onclick="switchTab('Score');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">⭐</span>Stock Score</button>
+  <div class="sgrp">Il mio lavoro</div>
   <button data-st="Watchlist" onclick="switchTab('Watchlist');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📋</span>Watchlist</button>
   <button data-st="Portafoglio" onclick="switchTab('Portafoglio');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📊</span>Portafoglio</button>
   <button data-st="Storico" onclick="switchTab('Storico');sideMenuAuto()"><span style="font-size:17px;width:22px;text-align:center;">📜</span>Storico</button>
@@ -1226,6 +1237,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
     <button class="tab-btn" onclick="switchTab('Bilancio')" id="tabBtnBilancio"><span class="tab-icon">📑</span><span class="tab-label">Bilancio</span></button>
     <button class="tab-btn" onclick="switchTab('Markov')" id="tabBtnMarkov"><span class="tab-icon">🔗</span><span class="tab-label">Markov</span></button>
     <button class="tab-btn" onclick="switchTab('Ergodicita')" id="tabBtnErgodicita"><span class="tab-icon">🔄</span><span class="tab-label">Risk/Erg.</span></button>
+    <button class="tab-btn" style="display:none;" onclick="switchTab('Volatilita')" id="tabBtnVolatilita"><span class="tab-icon">🌊</span><span class="tab-label">Volat.</span></button>
     <button class="tab-btn" onclick="switchTab('Pattern')" id="tabBtnPattern"><span class="tab-icon">🔮</span><span class="tab-label">Pattern</span></button>
     <button class="tab-btn" onclick="switchTab('MonteCarlo')" id="tabBtnMonteCarlo"><span class="tab-icon">🎲</span><span class="tab-label">M.Carlo</span></button>
     <button class="tab-btn" onclick="switchTab('Regime')" id="tabBtnRegime"><span class="tab-icon">🌡️</span><span class="tab-label">Regime</span></button>
@@ -1447,6 +1459,7 @@ window.switchTab=function(name){
   if(name==="Watchlist") renderWatchlistTable();
   if(name==="Portafoglio" && !CLOUD_PORTFOLIO_DATA) loadPortfoliosFromCloud();
   if(name==="Pattern" && STOCK) prefillAnalystTargetForCurrentStock();
+  if(name==="Volatilita" && STOCK){ try{ renderGarchPanel(); }catch(e){ console.error(e); } }
   if(name==="Bilancio" && STOCK) prefillAnalystTargetForCurrentStock();
 };
 
@@ -2277,7 +2290,7 @@ function _renderPocTableCore(){
 let _riepToken=0, _riepRows={};
 const RIEP_ORDER=["trend","ath","cicli","setup","livelli","rr","earn","insider","zscore","vol","rsi","hurst","target","fv","bilancio","bench","stagion","markov","riskerg","pattern","mc","regime","strategia","score"];
 const RIEP_LABEL={trend:"Trend",cicli:"Cicli bull/bear",setup:"Setup di inversione",livelli:"Livelli POC",rr:"Rischio/Rendimento",ath:"Massimi storici (ATH)",earn:"Trimestrale (anti-gap)",insider:"Insider e filing SEC",zscore:"Z-Score (timing)",vol:"Volatilità GJR-GARCH",rsi:"Momentum RSI",hurst:"Hurst (settimanale)",target:"Target analisti",fv:"Fair Value (modelli)",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalità",markov:"Markov settimanale",riskerg:"Rischio/Ergodicità",pattern:"Pattern candele",mc:"Monte Carlo",regime:"Regime",strategia:"Strategia",score:"Stock Score"};
-const RIEP_TAB={target:"Bilancio",fv:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score"};
+const RIEP_TAB={target:"Bilancio",fv:"Bilancio",bilancio:"Bilancio",bench:"Benchmark",stagion:"Stagionalita",markov:"Markov",riskerg:"Ergodicita",pattern:"Pattern",mc:"MonteCarlo",regime:"Regime",strategia:"Strategia",score:"Score",vol:"Volatilita"};
 const _fx=(v,d=2)=>(v==null||!isFinite(v))?"n.d.":Number(v).toFixed(d);
 const _sg=(v,d=1)=>(v==null||!isFinite(v))?"n.d.":(v>=0?"+":"")+Number(v).toFixed(d);
 function _ema(arr,n){ const out=new Array(arr.length).fill(null); if(arr.length<n) return out; let s0=0; for(let i=0;i<n;i++) s0+=arr[i]; let e=s0/n; out[n-1]=e; const a=2/(n+1); for(let i=n;i<arr.length;i++){ e=a*arr[i]+(1-a)*e; out[i]=e; } return out; }
