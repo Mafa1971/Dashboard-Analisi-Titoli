@@ -338,7 +338,7 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
           </div>
           </div>
-          <button class="btn primary" style="margin-top:14px;" onclick="askAIAboutTab('grafico')">🤖 Chiedi a Warren AI — interpreta cicli, rendimenti e Volume Profile</button>
+          <button class="btn primary" style="margin-top:14px;" onclick="askAIAboutTab('grafico')">🤖 Chiedi a Warren AI — interpreta cicli, Volume Profile e Riepilogo decisionale</button>
           <div id="aiTabGrafico" style="margin-top:12px;"></div>
         </div>
       </div>
@@ -5556,6 +5556,21 @@ async function callClaudeAPI(prompt, imageBase64=null, maxTokens=null){
   return { text: data.text||null, error: data.text?null:(data.error||lastErrMsg||(`Risposta vuota anche dopo un secondo tentativo${stopReasonNote} — riprova tra qualche secondo.`)) };
 }
 
+
+// Digest del Riepilogo decisionale per l'AI (solo owner): righe compatte + sintesi, senza HTML
+window.riepDigestForAI=function(){
+  try{
+    if(!isOwner()||typeof _riepRows==="undefined") return "";
+    const ids=RIEP_ORDER.filter(id=>_riepRows[id]); if(ids.length<8) return "";
+    const tx=h=>String(h==null?"":h).replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();
+    const sym={1:"OK",[-1]:"NO",2:"~",0:"-"};
+    const keyWhy={setup:1,rr:1,livelli:1,insider:1,fv:1,ath:1,cicli:1};
+    const lines=ids.map(id=>{ const r=_riepRows[id]; if(r.nd) return `- ${RIEP_LABEL[id]}: n.d.`;
+      return `- ${RIEP_LABEL[id]} [Long ${sym[r.L]||"-"} / Short ${sym[r.S]||"-"}]: ${tx(r.val).slice(0,190)}`+(keyWhy[id]&&r.why?` | nota: ${tx(r.why).slice(0,170)}`:""); });
+    const foot=el("riepFoot")?tx(el("riepFoot").innerText||el("riepFoot").textContent):"";
+    return `\n\nRIEPILOGO DECISIONALE (calcolato dall'app su soglie fisse, Long/Short: OK allineato, NO contrario, ~ favorevole ma contro trend):\n${lines.join("\n")}\n\nSINTESI DELL'APP: ${foot.slice(0,900)}`;
+  }catch(e){ return ""; }
+};
 window.askAIAboutTab=async function(tabName){
   if(!STOCK){ alert("Analizza prima un titolo"); return; }
   const targetId="aiTab"+tabName.charAt(0).toUpperCase()+tabName.slice(1);
@@ -5612,6 +5627,12 @@ Volume Profile (storico completo):
 - Prezzo attuale: ${STOCK.currency} ${STOCK.closes[STOCK.closes.length-1].toFixed(2)}
 
 Il ciclo in corso è più lungo/corto della media storica? Il prezzo attuale è sopra, dentro o sotto la Value Area — cosa significa questo in pratica (zona di equilibrio, supporto, resistenza)?`;
+    const dg=riepDigestForAI();
+    if(dg){
+      prompt=base.replace("max 200 parole","max 320 parole")+prompt.slice(base.length)+dg+`
+
+COMPITO: usa TUTTI i dati sopra (cicli, Volume Profile e Riepilogo) per dare una lettura operativa, a paragrafi brevi con emoji, in questo ordine: 1) 🧭 Quadro: direzione prevalente e perché, citando le righe che pesano di più; 2) ⚠️ Cosa non torna: contraddizioni tra indicatori, righe a campione piccolo o poco affidabili (stagionalità, Monte Carlo, ecc.) e cautele (ipervenduto/ipercomprato estremo, ingresso in ritardo); 3) 🎯 Suggerimento: Long, Short o ATTENDERE, con livelli di ingresso, stop e target presi dai livelli POC/ATR indicati e il rapporto rischio/rendimento; 4) 🔔 Cosa deve succedere per cambiare idea (condizioni di invalidazione o di conferma). Non inventare numeri che non compaiono nei dati. Se i dati dicono di attendere, dillo chiaramente. Chiudi con una riga: non è un consiglio di investimento.`;
+    }
   }
 
   if(tabName==="stagionalita"){
@@ -5894,7 +5915,7 @@ Se manca un dato scrivi "N/D", non inventarlo. Scrivi sempre le 5 sezioni.`;
     // una risposta molto più corta — i numeri li vede già l'utente nelle card
     // "Quadro Consolidato" sopra, quindi il testo AI può limitarsi alle
     // conclusioni. Tetto basso apposta: genera meno token, finisce prima.
-    const maxTok = tabName==="strategia" ? 900 : null;
+    const maxTok = tabName==="strategia" ? 900 : (tabName==="grafico" && isOwner() ? 1000 : null);
     const { text, error } = await callClaudeAPI(prompt, null, maxTok);
     const answer=text||error;
     box.innerHTML=`<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;line-height:1.6;">${mdToHtml(answer)}</div>`;
