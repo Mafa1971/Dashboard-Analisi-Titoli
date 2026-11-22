@@ -4632,6 +4632,7 @@ async function tryFetchFundamentalsFromEdgar(ticker){
     const j=await res.json();
     if(!j||!j.us||!Array.isArray(j.rows)) return null;
     const rows=j.rows.filter(r=>r.revenue!=null||r.netIncome!=null);
+    window._edgarSplitOk=(j.splitAdjusted!==false);
     return rows.length>=4?rows:null;
   }catch(e){ return null; }
 }
@@ -4649,6 +4650,7 @@ async function _loadFundamentalsCore(opts){
   try{
     let rows=await tryFetchFundamentalsFromEdgar(STOCK.ticker);
     let fundSource="SEC EDGAR (gratis, fino a 12 anni)";
+    if(rows&&window._edgarSplitOk===false) fundSource+=" ⚠️ frazionamenti non corretti (Yahoo non ha risposto): ricarica per rifare il calcolo";
     if(!rows){ rows=await tryFetchFundamentalsFromYahoo(STOCK.ticker); fundSource="Yahoo (gratis)"; }
 
     if(!rows && opts.yahooOnly){ el("fundStatus").textContent="⚠️ Yahoo non ha i bilanci di questo titolo. Premi CARICA DATI per provare Alpha Vantage (usa 3 richieste del limite giornaliero)."; return; }
