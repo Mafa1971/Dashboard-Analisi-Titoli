@@ -169,6 +169,17 @@ exports.handler = async function (event) {
       const rows = buildRows(json, 12, splits);
       return send(200, { us: true, name: info.name, cik: info.cik, rows, splitsApplied: splits ? splits.length : null, splitAdjusted: splits !== null }, "public, max-age=21600");
     }
+    if (type === "tags") {
+      // diagnostica: voci us-gaap di flusso (annuali, da 10-K) il cui nome ricorda pagamenti/investimenti, con gli anni coperti
+      const r = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${pad10(info.cik)}.json`, { headers: HDR });
+      if (!r.ok) return send(r.status, { error: `SEC companyfacts ha risposto con status ${r.status}` });
+      const f = ((await r.json()).facts || {})["us-gaap"] || {}; const out = {};
+      Object.keys(f).filter(t => /^(Payments|Purchase|Capital)/i.test(t)).forEach(t => {
+        const ends = new Set(); ((f[t].units && f[t].units.USD) || []).forEach(e => { if (FORMS.has(e.form) && e.start && (!e.fp || e.fp === "FY")) { const d = (Date.parse(e.end) - Date.parse(e.start)) / 864e5; if (d >= 340 && d <= 380) ends.add(e.end.slice(0, 4)); } });
+        if (ends.size) out[t] = Array.from(ends).sort().join(",");
+      });
+      return send(200, out);
+    }
     if (type === "filings") return send(200, { us: true, ...(await filings(info.cik, info)) }, "public, max-age=1800");
     return send(400, { error: "type non valido" });
   } catch (err) {
