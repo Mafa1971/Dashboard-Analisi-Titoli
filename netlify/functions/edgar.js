@@ -172,7 +172,7 @@ exports.handler = async function (event) {
       if (!r.ok) return send(r.status, { error: `SEC companyfacts ha risposto con status ${r.status}` });
       const [json, splits] = await Promise.all([r.json(), getSplits(ticker)]);
       const rows = buildRows(json, 12, splits);
-      return send(200, { us: true, name: info.name, cik: info.cik, rows, splitsApplied: splits ? splits.length : null, splitAdjusted: splits !== null }, "public, max-age=21600");
+      return send(200, { us: true, name: info.name, cik: info.cik, rows, splitsApplied: splits ? splits.length : null, splitAdjusted: splits !== null }, "public, max-age=900");
     }
     if (type === "tags") {
       // diagnostica: voci us-gaap di flusso (annuali, da 10-K) il cui nome ricorda pagamenti/investimenti, con gli anni coperti
@@ -186,7 +186,7 @@ exports.handler = async function (event) {
       }); });
       return send(200, out);
     }
-    if (type === "filings") return send(200, { us: true, ...(await filings(info.cik, info)) }, "public, max-age=1800");
+    if (type === "filings") return send(200, { us: true, ...(await filings(info.cik, info)) }, "public, max-age=300");
     return send(400, { error: "type non valido" });
   } catch (err) {
     return send(500, { error: err.message });
