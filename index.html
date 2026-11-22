@@ -261,33 +261,6 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
           <div id="volumeChart"></div>
           <div id="volumeSignal" style="margin-top:8px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;"></div>
         </div>
-        <div class="panel" data-owner-only>
-          <div class="panel-title">🚀 STRATEGIA Z-SCORE — ACCELERAZIONE (simulazione sul titolo)</div>
-          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ingresso LONG alla chiusura del giorno in cui lo Z-Score incrocia al rialzo la soglia. Stop = ingresso − moltiplicatore × range della candela; Target = rapporto rischio/rendimento × distanza dello stop; uscita anticipata se lo Z-Score torna sotto zero. Posizione dimensionata sul rischio per trade (% del capitale). Se nella stessa candela toccasse sia stop sia target si assume lo stop (ipotesi prudente); se apre oltre lo stop/target l'uscita avviene all'apertura.</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-            <label style="font-size:11px;color:var(--dim);" title="«Pattern su POC»: ingresso long quando compare il pattern scelto vicino a un livello POC (il POC cade nel range della candela ±0,5 ATR e la chiusura è sopra il POC). Stop sotto il minimo della candela o del POC (il più basso) meno 0,25 ATR; target = R × distanza stop. Usa i livelli del modo POC attivo sopra il grafico.">Ingresso
-              <select id="zsMode"><option value="bounce" selected>Rimbalzo sul POC (long e short)</option><option value="z">Z-Score (originale)</option></select></label>
-            <label style="font-size:11px;color:var(--dim);" title="Rimbalzo sul POC: il prezzo torna su un livello senza romperlo (entro 8 barre) e arriva la conferma. Long se il prezzo sta sopra il livello, short se sta sotto. Stop a 1 ATR oltre il livello.">Conferma
-              <select id="zsConfirm"><option value="pattern" selected>Pattern di inversione</option><option value="z">Z-Score che gira</option><option value="any">Uno dei due</option><option value="both">Entrambi insieme</option></select></label>
-            <label style="font-size:11px;color:var(--dim);" title="Z che gira: per il long Z risale sopra questa soglia, per lo short scende sotto la soglia col segno opposto">Soglia Z conferma <input type="number" id="zsZTh" value="0" step="0.1" style="width:50px;"></label>
-            <label style="font-size:11px;color:var(--dim);" title="Due livelli entro questa distanza (%) contano come uno solo: vale il più recente">Unisci livelli (%) <input type="number" id="zsMerge" value="5" step="0.5" min="0" style="width:50px;"></label>
-            <label style="font-size:11px;color:var(--dim);">Pattern
-              <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (Three Outside Up)</option><option value="star">Stella del mattino</option></select></label>
-            <label style="font-size:11px;color:var(--dim);" title="Quando il prezzo raggiunge questo multiplo del rischio (R) a favore, lo stop viene portato al prezzo di ingresso: la posizione non può più andare in perdita (a parte i gap)."><input type="checkbox" id="zsBE" checked> Break-even a <input type="number" id="zsBER" value="1" step="0.5" min="0.5" style="width:45px;"> R</label>
-            <label style="font-size:11px;color:var(--dim);">Moltiplicatore stop (×range) <input type="number" id="zsSlMult" value="1.5" step="0.1" style="width:55px;"></label>
-            <label style="font-size:11px;color:var(--dim);">Rischio/rendimento (R) <input type="number" id="zsRR" value="3" step="0.1" style="width:55px;"></label>
-            <label style="font-size:11px;color:var(--dim);">Rischio per trade (%) <input type="number" id="zsRisk" value="1" step="0.1" style="width:55px;"></label>
-            <label style="font-size:11px;color:var(--dim);">Posizione max (% capitale) <input type="number" id="zsMaxPos" value="100" step="5" style="width:60px;"></label>
-            <label style="font-size:11px;color:var(--dim);" title="Se il range della candela è molto piccolo lo stop diventa vicinissimo e il segnale poco affidabile: con questa opzione la distanza dello stop non scende sotto 1 ATR(14)."><input type="checkbox" id="zsAtrFloor"> Range minimo = 1 ATR</label>
-            <button class="btn primary" onclick="runZStrategy()">🚀 SIMULA STRATEGIA</button>
-          </div>
-          <div id="zsStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
-          <div id="zsResultsWrap" style="display:none;">
-            <div class="cards" id="zsCards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:10px;"></div>
-            <div id="zsNote" style="font-size:11px;color:var(--dim);margin-bottom:8px;"></div>
-            <div style="overflow-x:auto;"><table id="zsTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
-          </div>
-        </div>
         <div class="panel">
           <div class="panel-title">📊 RENDIMENTI PER PERIODO</div>
           <div id="periodStatsWrap"></div>
@@ -806,6 +779,33 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
             </div>
             <div id="zsOut" style="display:none;font-size:11px;line-height:1.55;margin-top:10px;"></div>
           </div>
+        <div data-owner-only style="margin:10px 0;border:1px solid rgba(255,159,28,0.4);border-radius:8px;padding:10px 12px;background:rgba(255,159,28,0.04);">
+          <div class="panel-title">🚀 STRATEGIA POC + PATTERN / Z-SCORE (simulazione sul titolo) <span style="font-weight:400;color:var(--dim);font-size:10px;">· spostata dal Grafico · le frecce compaiono sul tab Grafico</span></div>
+          <div style="font-size:10px;color:var(--dim);margin-bottom:10px;">Ingresso LONG alla chiusura del giorno in cui lo Z-Score incrocia al rialzo la soglia. Stop = ingresso − moltiplicatore × range della candela; Target = rapporto rischio/rendimento × distanza dello stop; uscita anticipata se lo Z-Score torna sotto zero. Posizione dimensionata sul rischio per trade (% del capitale). Se nella stessa candela toccasse sia stop sia target si assume lo stop (ipotesi prudente); se apre oltre lo stop/target l'uscita avviene all'apertura.</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <label style="font-size:11px;color:var(--dim);" title="«Pattern su POC»: ingresso long quando compare il pattern scelto vicino a un livello POC (il POC cade nel range della candela ±0,5 ATR e la chiusura è sopra il POC). Stop sotto il minimo della candela o del POC (il più basso) meno 0,25 ATR; target = R × distanza stop. Usa i livelli del modo POC attivo sopra il grafico.">Ingresso
+              <select id="zsMode"><option value="bounce" selected>Rimbalzo sul POC (long e short)</option><option value="z">Z-Score (originale)</option></select></label>
+            <label style="font-size:11px;color:var(--dim);" title="Rimbalzo sul POC: il prezzo torna su un livello senza romperlo (entro 8 barre) e arriva la conferma. Long se il prezzo sta sopra il livello, short se sta sotto. Stop a 1 ATR oltre il livello.">Conferma
+              <select id="zsConfirm"><option value="pattern" selected>Pattern di inversione</option><option value="z">Z-Score che gira</option><option value="any">Uno dei due</option><option value="both">Entrambi insieme</option></select></label>
+            <label style="font-size:11px;color:var(--dim);" title="Z che gira: per il long Z risale sopra questa soglia, per lo short scende sotto la soglia col segno opposto">Soglia Z conferma <input type="number" id="zsZTh" value="0" step="0.1" style="width:50px;"></label>
+            <label style="font-size:11px;color:var(--dim);" title="Due livelli entro questa distanza (%) contano come uno solo: vale il più recente">Unisci livelli (%) <input type="number" id="zsMerge" value="5" step="0.5" min="0" style="width:50px;"></label>
+            <label style="font-size:11px;color:var(--dim);">Pattern
+              <select id="zsPattern"><option value="eng2" selected>Engulfing 2 candele (rialzista)</option><option value="eng3">Engulfing 3 candele (Three Outside Up)</option><option value="star">Stella del mattino</option></select></label>
+            <label style="font-size:11px;color:var(--dim);" title="Quando il prezzo raggiunge questo multiplo del rischio (R) a favore, lo stop viene portato al prezzo di ingresso: la posizione non può più andare in perdita (a parte i gap)."><input type="checkbox" id="zsBE" checked> Break-even a <input type="number" id="zsBER" value="1" step="0.5" min="0.5" style="width:45px;"> R</label>
+            <label style="font-size:11px;color:var(--dim);">Moltiplicatore stop (×range) <input type="number" id="zsSlMult" value="1.5" step="0.1" style="width:55px;"></label>
+            <label style="font-size:11px;color:var(--dim);">Rischio/rendimento (R) <input type="number" id="zsRR" value="3" step="0.1" style="width:55px;"></label>
+            <label style="font-size:11px;color:var(--dim);">Rischio per trade (%) <input type="number" id="zsStratRisk" value="1" step="0.1" style="width:55px;"></label>
+            <label style="font-size:11px;color:var(--dim);">Posizione max (% capitale) <input type="number" id="zsMaxPos" value="100" step="5" style="width:60px;"></label>
+            <label style="font-size:11px;color:var(--dim);" title="Se il range della candela è molto piccolo lo stop diventa vicinissimo e il segnale poco affidabile: con questa opzione la distanza dello stop non scende sotto 1 ATR(14)."><input type="checkbox" id="zsAtrFloor"> Range minimo = 1 ATR</label>
+            <button class="btn primary" onclick="runZStrategy()">🚀 SIMULA STRATEGIA</button>
+          </div>
+          <div id="zsStatus" style="font-size:11px;color:var(--gold);margin-bottom:8px;"></div>
+          <div id="zsResultsWrap" style="display:none;">
+            <div class="cards" id="zsCards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:10px;"></div>
+            <div id="zsNote" style="font-size:11px;color:var(--dim);margin-bottom:8px;"></div>
+            <div style="overflow-x:auto;"><table id="zsTable" style="width:100%;border-collapse:collapse;font-size:11px;"></table></div>
+          </div>
+        </div>
           <div id="patBt" style="display:none;font-size:11px;line-height:1.6;background:rgba(79,163,255,0.07);border:1px solid rgba(79,163,255,0.35);border-radius:8px;padding:10px 12px;margin-bottom:10px;"></div>
           <div id="patSampleWarning" style="display:none;font-size:11px;color:#ff9f1c;background:rgba(255,159,28,0.1);border:1px solid rgba(255,159,28,0.3);border-radius:8px;padding:8px 12px;margin-bottom:10px;"></div>
         </div>
@@ -3197,7 +3197,7 @@ window.runZStrategy=function(){
   if(!STOCK){ alert("Analizza prima un titolo nel tab Grafico"); return; }
   const p={ W:parseInt(el("zWindow").value)||504, thr:parseFloat(el("zThr").value)||2,
     slMult:parseFloat(el("zsSlMult").value)||1.5, rr:parseFloat(el("zsRR").value)||3,
-    riskPct:parseFloat(el("zsRisk").value)||1, maxPos:parseFloat(el("zsMaxPos").value)||100, atrFloor:el("zsAtrFloor").checked,
+    riskPct:parseFloat(el("zsStratRisk").value)||1, maxPos:parseFloat(el("zsMaxPos").value)||100, atrFloor:el("zsAtrFloor").checked,
     be:el("zsBE").checked, beR:parseFloat(el("zsBER").value)||1, mode:el("zsMode").value, confirm:el("zsConfirm").value, zTh:parseFloat(el("zsZTh").value)||0, mergePct:parseFloat(el("zsMerge").value)||0, pattern:el("zsPattern").value, ctx:el("patCtx")?el("patCtx").checked:true, levels:window._pocLv||[] };
   if(p.mode==="bounce" && !p.levels.length){ el("zsStatus").textContent="❌ Nessun livello POC sul grafico: attiva «POC statici filtrati» e controlla il modo POC."; el("zsResultsWrap").style.display="none"; return; }
   if(STOCK.closes.length<p.W+30){ el("zsStatus").textContent=`❌ Storico insufficiente: servono almeno ${p.W+30} barre con finestra Z = ${p.W}.`; el("zsResultsWrap").style.display="none"; return; }
