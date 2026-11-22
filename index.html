@@ -336,12 +336,14 @@ td{padding:6px 6px;border-top:1px solid #1a2030;text-align:center;}
         <div class="panel">
           <div class="panel-title">🔮 FORECAST STAGIONALE</div>
           <div style="display:flex;gap:6px;margin-bottom:10px;">
-            <button class="btn primary" id="seasonModeMediaBtn" onclick="setSeasonMode('media')">📊 Anno Corrente vs Media Storica</button>
+            <button class="btn primary" id="seasonModeMedianaBtn" onclick="setSeasonMode('mediana')">📈 Mediana + fascia</button>
+            <button class="btn ghost" id="seasonModeMediaBtn" onclick="setSeasonMode('media')">📊 Medie multiple (classico)</button>
             <button class="btn ghost" id="seasonModeSingoliBtn" onclick="setSeasonMode('singoli')">🎨 Confronto Anni Singoli</button>
           </div>
 
           <div id="seasonMediaControls" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
             <span style="font-size:10px;color:var(--dim);">Media calcolata su:</span>
+            <label id="seasonDetrendWrap" class="chk" title="Toglie dalla curva di ogni anno la crescita media storica del titolo, così si vede la forma stagionale e non il trend. Anche l'anno corrente è corretto allo stesso modo."><input type="checkbox" id="seasonDetrend" checked onchange="renderSeasonalForecast()"> Al netto del trend storico</label>
             <button class="btn ghost seasonAvgBtn" data-n="3" onclick="setSeasonAvgN(3)">Ultimi 3</button>
             <button class="btn ghost seasonAvgBtn" data-n="5" onclick="setSeasonAvgN(5)">Ultimi 5</button>
             <button class="btn ghost seasonAvgBtn" data-n="7" onclick="setSeasonAvgN(7)">Ultimi 7</button>
@@ -3990,20 +3992,24 @@ window.quickSelectYears=function(n){
   renderSeasonalForecast();
 };
 
-let SEASON_VIEW_MODE="media"; // 'media' (nuovo default, vera stagionalità) o 'singoli' (vecchio spaghetti chart)
+let SEASON_VIEW_MODE="mediana"; // 'media' (nuovo default, vera stagionalità) o 'singoli' (vecchio spaghetti chart)
 
 window.setSeasonMode=function(mode){
   SEASON_VIEW_MODE=mode;
   document.getElementById("seasonModeMediaBtn").className="btn "+(mode==="media"?"primary":"ghost");
+  document.getElementById("seasonModeMedianaBtn").className="btn "+(mode==="mediana"?"primary":"ghost");
+  document.getElementById("seasonDetrendWrap").style.display=mode==="mediana"?"flex":"none";
+  if(mode==="mediana"){ const mx=Math.max(...SEASON_AVG_NS); SEASON_AVG_NS=new Set([mx]); document.querySelectorAll(".seasonAvgBtn").forEach(b=>{ b.className="btn "+(SEASON_AVG_NS.has(parseInt(b.dataset.n))?"primary":"ghost")+" seasonAvgBtn"; }); }
   document.getElementById("seasonModeSingoliBtn").className="btn "+(mode==="singoli"?"primary":"ghost");
-  document.getElementById("seasonMediaControls").style.display=mode==="media"?"flex":"none";
+  document.getElementById("seasonMediaControls").style.display=(mode==="media"||mode==="mediana")?"flex":"none";
   document.getElementById("seasonSingoliControls").style.display=mode==="singoli"?"block":"none";
   renderSeasonalForecast();
 };
 let SEASON_AVG_NS=new Set([10]); // insieme di N selezionati, non più un singolo valore
 
 window.setSeasonAvgN=function(n){
-  if(SEASON_AVG_NS.has(n)){
+  if(SEASON_VIEW_MODE==="mediana"){ SEASON_AVG_NS=new Set([n]); }
+  else if(SEASON_AVG_NS.has(n)){
     if(SEASON_AVG_NS.size>1) SEASON_AVG_NS.delete(n); // tieni sempre almeno una media selezionata
   } else {
     SEASON_AVG_NS.add(n);
@@ -4015,7 +4021,9 @@ window.setSeasonAvgN=function(n){
 window.renderSeasonalForecast=function(){
   if(!STOCK) return;
   if(SEASON_ALL_YEARS.length===0) populateSeasonYearChecks();
-  if(SEASON_VIEW_MODE==="media") renderSeasonalForecastMedia();
+  try{ el("correlationCardsWrap").style.cssText=SEASON_VIEW_MODE==="mediana"?"display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;overflow-x:auto;":"overflow-x:auto;"; }catch(e){}
+  if(SEASON_VIEW_MODE==="mediana") renderSeasonalForecastMediana();
+  else if(SEASON_VIEW_MODE==="media") renderSeasonalForecastMedia();
   else renderSeasonalForecastSingoli();
 };
 
@@ -4050,7 +4058,72 @@ function fillGapsLinear(arr){
 function buildFilledYearArray(byYear,year){
   const raw=new Array(366).fill(null);
   (byYear[year]||[]).forEach(pt=>{ raw[pt.doy-1]=pt.cumRet; });
-  return fillGapsLinear(raw);
+  const f=fillGapsLinear(raw);
+  let last=null; for(let i=0;i<f.length;i++){ if(f[i]!=null) last=f[i]; else if(last!=null) f[i]=last; } // dopo l'ultima seduta dell'anno si mantiene l'ultimo valore: niente code artefatte
+  return f;
+}
+
+// ── MODALITÀ MEDIANA + FASCIA (nuova): mediana e percentili 25-75 su una sola finestra ──
+function renderSeasonalForecastMediana(){
+  const byYear=buildYearCurves(STOCK.dates,STOCK.closes);
+  const currentYear=SEASON_CURRENT_YEAR;
+  const hist=SEASON_ALL_YEARS.filter(y=>y!==currentYear).sort((a,b)=>b-a);
+  const N=Math.max(...SEASON_AVG_NS);
+  const used=(N>=9999?hist:hist.slice(0,N)).filter(y=>{ const c=byYear[y]; return c&&c.length>=200; });
+  const wrapC=el("correlationCardsWrap"), note=el("seasonForecastNote");
+  if(used.length<3){
+    if(seasonForecastChartObj){ seasonForecastChartObj.destroy(); seasonForecastChartObj=null; }
+    wrapC.innerHTML=`<div style="color:var(--dim);font-size:11px;">Servono almeno 3 anni storici completi (escluso quello in corso): ne ho ${used.length}. Prova "Tutti" o carica più storico.</div>`; note.textContent=""; return;
+  }
+  const detr=!!(el("seasonDetrend")&&el("seasonDetrend").checked);
+  const toL=c=>Math.log(1+c/100);
+  const filled={}; used.forEach(y=>{ filled[y]=buildFilledYearArray(byYear,y); });
+  // trend medio annuo (log) dei soli anni usati: lo togliamo in modo lineare lungo l'anno
+  const yearLog=used.map(y=>{ const a=filled[y]; return toL(a[364]!=null?a[364]:0); });
+  const drift=detr?yearLog.reduce((a,b)=>a+b,0)/yearLog.length:0;
+  const adj=(c,doy)=>{ const L=toL(c)-drift*(doy/365); return (Math.exp(L)-1)*100; };
+  const med=new Array(365).fill(null), lo=new Array(365).fill(null), hi=new Array(365).fill(null);
+  for(let d=1;d<=365;d++){
+    const v=used.map(y=>filled[y][d-1]).filter(x=>x!=null).map(c=>adj(c,d));
+    if(v.length>=3){ med[d-1]=+_pctl(v,.5).toFixed(2); lo[d-1]=+_pctl(v,.25).toFixed(2); hi[d-1]=+_pctl(v,.75).toFixed(2); }
+  }
+  const cur=new Array(365).fill(null); const cc=byYear[currentYear]||[];
+  cc.forEach(pt=>{ if(pt.doy<=365) cur[pt.doy-1]=+adj(pt.cumRet,pt.doy).toFixed(2); });
+  const datasets=[
+    {label:"_hi",data:hi,borderWidth:0,pointRadius:0,backgroundColor:"rgba(199,125,255,0.18)",fill:"+1",spanGaps:true,order:5},
+    {label:"_lo",data:lo,borderWidth:0,pointRadius:0,fill:false,spanGaps:true,order:5},
+    {label:`Mediana ${used.length} anni${detr?" (senza trend)":""}`,data:med,borderColor:"#c77dff",backgroundColor:"#c77dff",borderWidth:2.5,pointRadius:0,tension:0.05,spanGaps:true,order:2},
+    {label:`Anno corrente ${currentYear}${detr?" (senza trend)":""}`,data:cur,borderColor:"#2563eb",backgroundColor:"#2563eb",borderWidth:3,pointRadius:0,tension:0.05,spanGaps:true,order:0}
+  ];
+  const ctx=el("seasonForecastChart"); if(seasonForecastChartObj) seasonForecastChartObj.destroy();
+  seasonForecastChartObj=new Chart(ctx.getContext("2d"),{type:"line",
+    data:{labels:Array.from({length:365},(_,i)=>i+1),datasets},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:"#eef1f7",font:{size:10},filter:i=>!i.text.startsWith("_")}},
+        tooltip:{mode:"index",intersect:false,filter:i=>!i.dataset.label.startsWith("_"),callbacks:{title:it=>dayOfYearToLabel(it[0].parsed.x+1)}}},
+      scales:{x:{ticks:{color:"#7d8aa3",font:{size:9},callback:(v,i)=>{ const mi=MONTH_STARTS.indexOf(i+1); return mi>=0?MONTH_NAMES_SHORT[mi]:""; },autoSkip:false,maxRotation:0},grid:{color:"#1e2d45"}},
+              y:{ticks:{color:"#7d8aa3",font:{size:9},callback:v=>v+"%"},grid:{color:"#1e2d45"}}},
+      interaction:{mode:"index",intersect:false}}});
+  note.textContent=`Linea viola: mediana del rendimento cumulato dall'inizio dell'anno su ${used.length} anni (${used.slice().sort((a,b)=>a-b)[0]}–${used.slice().sort((a,b)=>b-a)[0]}); fascia: dal 25° al 75° percentile, cioè metà degli anni è caduta lì dentro.`+(detr?` Corretta per il trend medio del titolo (${((Math.exp(drift)-1)*100).toFixed(1)}% l'anno), quindi mostra la forma stagionale e non la crescita.`:" Senza correzione: include la crescita storica del titolo.")+` Le linee non vanno oltre l'ultima seduta reale.`;
+  // da oggi in avanti
+  const last=cc[cc.length-1]; const card=(l,v,col)=>`<div class="card"><div class="v" style="color:${col||'var(--txt)'};font-size:14px;">${v}</div><div class="l">${l}</div></div>`;
+  let html="";
+  if(last){
+    html+=card(`Anno ${currentYear} da inizio anno`, fmtPct(last.cumRet), last.cumRet>=0?"#00d4b8":"#ff6b6b");
+    const rawAt=(y,d)=>{ const a=filled[y]; return a[Math.min(364,d-1)]; };
+    [[14,"2 settimane"],[30,"1 mese"],[90,"3 mesi"]].forEach(([h,lab])=>{
+      const d0=Math.min(last.doy,365); if(d0+h>365){ return; }
+      const fw=used.map(y=>{ const a=rawAt(y,d0),b=rawAt(y,d0+h); return (a!=null&&b!=null)?((1+b/100)/(1+a/100)-1)*100:null; }).filter(v=>v!=null);
+      if(fw.length<3) return;
+      // base: stessa finestra su tutti i giorni dello stesso periodo di anni
+      let tot=0,pos=0; used.forEach(y=>{ for(let d=1;d+h<=365;d+=3){ const a=rawAt(y,d),b=rawAt(y,d+h); if(a!=null&&b!=null){ tot++; if(b>a) pos++; } } });
+      const base=tot?pos/tot*100:null, med=_pctl(fw,.5), pp=fw.filter(v=>v>0).length/fw.length*100;
+      const small=fw.length<8?" · ⚠ campione piccolo":"";
+      html+=card(`Da oggi, ${lab} avanti: mediana storica · anni positivi (base ${base!=null?base.toFixed(0)+"%":"n.d."}) · ${fw.length} anni${small}`, `${med>=0?"+":""}${med.toFixed(1)}% · ${pp.toFixed(0)}%`, pp>=base+15?"#00d4b8":(pp<=base-15?"#ff6b6b":"var(--txt)"));
+    });
+    html+=`<div style="grid-column:1/-1;font-size:10px;color:var(--dim);margin-top:4px;">«Base» = percentuale di giorni positivi su QUALSIASI giorno dell'anno per lo stesso orizzonte: la stagionalità conta solo se la percentuale di oggi si discosta nettamente dalla base e con almeno 8 anni. Dati storici, non previsioni.</div>`;
+  } else html=`<div style="color:var(--dim);font-size:11px;">Nessun dato ancora disponibile per l'anno corrente.</div>`;
+  wrapC.innerHTML=html;
 }
 
 function renderSeasonalForecastMedia(){
@@ -4090,7 +4163,7 @@ function renderSeasonalForecastMedia(){
 
   avgSeries.forEach(s=>{
     s.meanData=new Array(366).fill(null); s.stdUpData=new Array(366).fill(null); s.stdDownData=new Array(366).fill(null);
-    for(let doy=1;doy<=366;doy++){
+    for(let doy=1;doy<=365;doy++){
       const vals=s.usedYears.map(y=>getFilled(y)[doy-1]).filter(v=>v!=null);
       if(vals.length>=2){
         const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
