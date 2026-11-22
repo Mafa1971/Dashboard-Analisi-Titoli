@@ -2462,7 +2462,7 @@ const _edgarCache={};
 async function _loadEdgarFilings(tk){
   if(_edgarCache[tk]!==undefined) return _edgarCache[tk];
   let out=null;
-  try{ const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(tk)}&type=filings`); const j=await res.json(); out=(j&&j.us)?j:{us:false,error:j&&j.error}; }catch(e){ out={us:null,error:String(e&&e.message||e)}; }
+  try{ const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(tk)}&type=filings&v=3`); const j=await res.json(); out=(j&&j.us)?j:{us:false,error:j&&j.error}; }catch(e){ out={us:null,error:String(e&&e.message||e)}; }
   _edgarCache[tk]=out; return out;
 }
 async function rpInsider(){
@@ -4628,7 +4628,7 @@ async function tryFetchFundamentalsFromYahoo(ticker){
 async function tryFetchFundamentalsFromEdgar(ticker){
   try{
     if(/[.:=^]/.test(ticker)&&!/^[A-Za-z]+\.[A-Za-z]$/.test(ticker)) return null;
-    const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(ticker)}&type=facts`);
+    const res=await fetch(`/.netlify/functions/edgar?ticker=${encodeURIComponent(ticker)}&type=facts&v=3`);
     const j=await res.json();
     if(!j||!j.us||!Array.isArray(j.rows)) return null;
     const rows=j.rows.filter(r=>r.revenue!=null||r.netIncome!=null);
