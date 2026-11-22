@@ -116,7 +116,7 @@ function parseForm4(xml) {
   const flag = t => { const v = tag1(relB, t); return v === "1" || v === "true"; };
   const title = tag1(relB, "officerTitle");
   const role = flag("isOfficer") ? (title || "dirigente") : (flag("isDirector") ? "consigliere" : (flag("isTenPercentOwner") ? "azionista >10%" : "altro"));
-  const plan = /10b5-1/i.test(xml);
+  const plan = /10b5-1/i.test(xml) || /<aff10b5One>\s*(1|true)\s*<\/aff10b5One>/i.test(xml); // casella "operazione eseguita secondo un piano 10b5-1" (Form 4 dal 2023) o nota
   const txs = [];
   const re = /<nonDerivativeTransaction>([\s\S]*?)<\/nonDerivativeTransaction>/g; let m;
   while ((m = re.exec(xml))) {
