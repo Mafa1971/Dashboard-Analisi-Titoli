@@ -2482,7 +2482,7 @@ async function rpInsider(){
   const act=d.other.filter(o=>/13D/.test(o.form)); if(act.length) warn.push(`13D (quota >5% con intenzioni attive) del ${act[0].date}`);
   const parts=[];
   parts.push(buys.length?`acquisti insider 90 gg: ${buys.length} operazioni, ${who(buys)} persone, ${fmtD(val(buys))} USD`:"nessun acquisto insider in 90 gg");
-  parts.push(sells.length?`vendite: ${sellOpen.length} libere (${who(sellOpen)} persone, ${fmtD(val(sellOpen))} USD) + ${sellPlan.length} da piano 10b5-1`:"nessuna vendita insider in 90 gg");
+  parts.push(sells.length?`vendite: ${sellOpen.length} libere (${who(sellOpen)} ${who(sellOpen)===1?"persona":"persone"}, ${fmtD(val(sellOpen))} USD) + ${sellPlan.length} da piano 10b5-1`:"nessuna vendita insider in 90 gg");
   parts.push(`Form 4 letti: ${d.form4Parsed}/${d.form4Count}`);
   let L=0,S=0,why=[];
   if(risk.length){ L=-1; S=1; why.push("segnali di rischio sui conti o sulla quotazione: "+risk.join("; ")); }
